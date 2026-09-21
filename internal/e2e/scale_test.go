@@ -2,9 +2,9 @@
 
 package e2e
 
-// timeoutScale multiplies every waiting time in the end-to-end tests. A normal
-// build needs no extra room.
-const timeoutScale = 1
+// buildTimeoutScale is how much room this build needs on top of the times the
+// tests ask for. A normal build needs none.
+const buildTimeoutScale = 1
 
 // zeroLossRounds is how many rounds of concurrent edits the no-silent-overwrite
 // test runs. Every round waits for both nodes to converge, so the count is the

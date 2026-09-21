@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -26,16 +27,14 @@ import (
 
 // Test timings. They are short so a cycle happens within a test, and long
 // enough that a loaded machine still makes progress. The waiting times are
-// multiplied by timeoutScale, which the race build raises: under the race
-// detector, and with the other packages of the tree being tested at the same
-// time, a folder takes noticeably longer to converge.
+// multiplied by timeoutScale, which the race build raises on its own and
+// SYNCTHIS_E2E_TIMEOUT_SCALE raises further: a machine running something else
+// at the same time can need several times longer for a folder to converge.
 const (
 	testChunkSize      = 16 << 10
 	testRescanInterval = 300 * time.Millisecond
 	testSyncInterval   = 200 * time.Millisecond
 	testDebounce       = 50 * time.Millisecond
-	convergeTimeout    = 60 * time.Second * timeoutScale
-	daemonTimeout      = 30 * time.Second * timeoutScale
 	folderID           = folder.ID("docs")
 	// extraID is the second folder some tests configure. It is always
 	// sendreceive on both sides, so a file put in it and waited for proves
@@ -43,6 +42,29 @@ const (
 	// that something else did not happen.
 	extraID = folder.ID("extra")
 )
+
+// Waiting times. They are variables rather than constants because the scale
+// they are multiplied by is read from the environment.
+var (
+	convergeTimeout = 60 * time.Second * timeoutScale
+	daemonTimeout   = 30 * time.Second * timeoutScale
+)
+
+// timeoutScale multiplies every waiting time: what this build needs, times
+// what SYNCTHIS_E2E_TIMEOUT_SCALE asks for on top of it.
+var timeoutScale = buildTimeoutScale * envTimeoutScale()
+
+// envTimeoutScale reads SYNCTHIS_E2E_TIMEOUT_SCALE, a whole number of times to
+// stretch every waiting time by, for a machine too loaded to keep up with the
+// defaults. Anything unset, unreadable or below one means no stretching: a
+// scale is only ever allowed to give the tests more room, never less.
+func envTimeoutScale() time.Duration {
+	scale, err := strconv.Atoi(os.Getenv("SYNCTHIS_E2E_TIMEOUT_SCALE"))
+	if err != nil || scale < 1 {
+		return 1
+	}
+	return time.Duration(scale)
+}
 
 // node is one daemon with its own data directory and synchronized folder.
 type node struct {

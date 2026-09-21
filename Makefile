@@ -11,13 +11,18 @@ LDFLAGS := $(if $(VERSION),-X github.com/wesbragagt/syncthis/internal/cli.Versio
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/syncthis ./cmd/syncthis
 
+# The end-to-end tests run last and on their own: two daemons over loopback
+# compete with the rest of the tree for the machine, and a sync cycle that does
+# not get the CPU it needs looks like a test that hangs. Set
+# SYNCTHIS_E2E_TIMEOUT_SCALE to a whole number to give them more room still.
 test:
-	go test ./...
+	go test $$(go list ./... | grep -v '/internal/e2e$$')
+	go test -p 1 -count=1 ./internal/e2e/
 
 # The end-to-end tests run two daemons over loopback. They are kept out of the
 # rest of the tree so they get the machine to themselves.
 e2e:
-	go test ./internal/e2e/ -race -count=1
+	go test ./internal/e2e/ -race -count=1 -p 1
 
 fmt:
 	gofmt -l -w .

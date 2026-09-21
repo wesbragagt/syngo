@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -11,13 +12,14 @@ import (
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syncthis/internal/cli"
 	"github.com/wesbragagt/syncthis/internal/domain/conflict"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
 // settle is how long a converged pair is watched to confirm that it stays that
 // way and stops transferring.
-const settle = 500 * time.Millisecond * timeoutScale
+var settle = 500 * time.Millisecond * timeoutScale
 
 // conflictRow is one row of `conflict list --json`.
 type conflictRow struct {
@@ -27,6 +29,7 @@ type conflictRow struct {
 	ConflictPath string `json:"conflict_path"`
 	Reason       string `json:"reason"`
 	Resolved     bool   `json:"resolved"`
+	Stale        bool   `json:"stale"`
 }
 
 // pauseFolder stops a node from syncing and serving its folder, which is how
@@ -374,6 +377,107 @@ func TestTwoWay_NoSilentOverwrite(t *testing.T) {
 						round, content, n.name, have)
 				}
 			}
+		}
+	}
+}
+
+// cliRefused runs a command that must be refused with a given exit code.
+func cliRefused(t *testing.T, n *node, want int, args ...string) {
+	t.Helper()
+	code, stdout := runCLI(t, n.DataDir, args...)
+	if code != want {
+		t.Fatalf("%v on %s exited %d, want %d:\n%s", args, n.name, code, want, stdout)
+	}
+}
+
+// staleRow returns the conflict row with the given id, or fails.
+func staleRow(t *testing.T, n *node, id string) conflictRow {
+	t.Helper()
+	for _, row := range conflictsOf(t, n) {
+		if row.ID == id {
+			return row
+		}
+	}
+	t.Fatalf("%s no longer reports conflict %s", n.name, id)
+	return conflictRow{}
+}
+
+func TestTwoWay_ResolvingAStaleConflictIsRefused(t *testing.T) {
+	d := divergeOn(t, "tw.txt")
+	waitConverged(t, d.a, d.b)
+
+	rows := conflictsOf(t, d.loser)
+	if len(rows) != 1 {
+		t.Fatalf("%s reports %+v, want one conflict", d.loser.name, rows)
+	}
+	first := rows[0].ID
+
+	// A second round of edits moves the path on while the first conflict
+	// is still open, so what is at the path is neither version the first
+	// conflict recorded.
+	pauseFolder(t, d.b)
+	writeFile(t, d.a, "tw.txt", []byte("round two on a"))
+	writeFile(t, d.b, "tw.txt", []byte("round two on b"))
+	resumeFolder(t, d.b)
+	waitConverged(t, d.a, d.b)
+
+	if row := staleRow(t, d.loser, first); !row.Stale {
+		t.Fatalf("conflict %s = %+v, want it marked stale", first, row)
+	}
+
+	before := map[string]map[string]string{
+		d.a.name: contentsOf(t, d.a), d.b.name: contentsOf(t, d.b),
+	}
+	cliRefused(t, d.loser, cli.ExitIntegrity, "conflict", "resolve", first, "--keep", "local", "--yes")
+
+	// Nothing moved on either side, and the first conflict is still open.
+	for _, n := range []*node{d.a, d.b} {
+		after := contentsOf(t, n)
+		if !maps.Equal(after, before[n.name]) {
+			t.Fatalf("%s went from %v to %v, want the refusal to change nothing",
+				n.name, before[n.name], after)
+		}
+	}
+	if row := staleRow(t, d.loser, first); row.Resolved {
+		t.Fatalf("conflict %s = %+v, want it still open", first, row)
+	}
+
+	// Keeping both is what closes it, and it too leaves every file alone.
+	cliOK(t, d.loser, "conflict", "resolve", first, "--keep", "both")
+	for _, n := range []*node{d.a, d.b} {
+		if after := contentsOf(t, n); !maps.Equal(after, before[n.name]) {
+			t.Fatalf("%s went from %v to %v, want --keep both to change nothing",
+				n.name, before[n.name], after)
+		}
+	}
+}
+
+func TestTwoWay_ResolvingWithAnEditedCopyIsRefused(t *testing.T) {
+	d := divergeOn(t, "tw.txt")
+	waitConverged(t, d.a, d.b)
+
+	rows := conflictsOf(t, d.loser)
+	if len(rows) != 1 || rows[0].ConflictPath == "" {
+		t.Fatalf("%s reports %+v, want one conflict with a copy", d.loser.name, rows)
+	}
+
+	// The copy is edited by hand, as a merge would leave it. Removing it
+	// now would be the only copy of that content gone.
+	merged := d.kept + "\n" + d.moved
+	writeFile(t, d.loser, rows[0].ConflictPath, []byte(merged))
+	waitConverged(t, d.a, d.b)
+
+	cliRefused(t, d.loser, cli.ExitIntegrity,
+		"conflict", "resolve", rows[0].ID, "--keep", "remote", "--yes")
+
+	for _, n := range []*node{d.a, d.b} {
+		files := contentsOf(t, n)
+		if files[rows[0].ConflictPath] != merged {
+			t.Fatalf("%s: the copy = %q, want the merge untouched",
+				n.name, files[rows[0].ConflictPath])
+		}
+		if files["tw.txt"] != d.kept {
+			t.Fatalf("%s: tw.txt = %q, want %q", n.name, files["tw.txt"], d.kept)
 		}
 	}
 }
