@@ -49,21 +49,38 @@ type node struct {
 	done   chan error
 }
 
-// startNode initializes a data directory, adds one folder and runs a daemon
-// against it until the test ends.
+// folderConfig is how a node's folder is configured. A zero DeletePolicy
+// means the default, propagate.
+type folderConfig struct {
+	Mode         folder.Mode
+	DeletePolicy folder.DeletePolicy
+}
+
+// startNode initializes a data directory, adds one folder in the given mode
+// and runs a daemon against it until the test ends.
 func startNode(t *testing.T, name string, mode folder.Mode) *node {
 	t.Helper()
+	return startNodeWith(t, name, folderConfig{Mode: mode})
+}
+
+// startNodeWith initializes a data directory, adds one folder and runs a
+// daemon against it until the test ends.
+func startNodeWith(t *testing.T, name string, cfg folderConfig) *node {
+	t.Helper()
+	if cfg.DeletePolicy == "" {
+		cfg.DeletePolicy = folder.DeletePropagate
+	}
 	n := &node{
-		t: t, name: name, mode: mode,
+		t: t, name: name, mode: cfg.Mode,
 		DataDir: t.TempDir(), Root: t.TempDir(),
 	}
 
-	cfg := jsonconfig.Default()
-	cfg.ChunkSize = testChunkSize
-	cfg.Listen = "127.0.0.1:0"
-	cfg.RescanInterval = jsonconfig.Duration(testRescanInterval)
-	cfg.SyncInterval = jsonconfig.Duration(testSyncInterval)
-	if err := jsonconfig.Save(n.DataDir, cfg); err != nil {
+	config := jsonconfig.Default()
+	config.ChunkSize = testChunkSize
+	config.Listen = "127.0.0.1:0"
+	config.RescanInterval = jsonconfig.Duration(testRescanInterval)
+	config.SyncInterval = jsonconfig.Duration(testSyncInterval)
+	if err := jsonconfig.Save(n.DataDir, config); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -75,7 +92,7 @@ func startNode(t *testing.T, name string, mode folder.Mode) *node {
 	n.ID = app.Identity.DeviceID()
 
 	_, err = app.Folders.Add(context.Background(), folder.Folder{
-		ID: folderID, Path: n.Root, Mode: mode, DeletePolicy: folder.DeletePropagate,
+		ID: folderID, Path: n.Root, Mode: cfg.Mode, DeletePolicy: cfg.DeletePolicy,
 		Symlinks: folder.SymlinkStore, KeepEmptyDirs: true,
 	})
 	if err != nil {

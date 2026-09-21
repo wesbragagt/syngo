@@ -34,6 +34,28 @@ func statusJSON(t *testing.T, dataDir string) status.Report {
 	return report
 }
 
+// runCLI runs a syncthis command against a data directory and returns its
+// exit code and standard output.
+func runCLI(t *testing.T, dataDir string, args ...string) (int, string) {
+	t.Helper()
+	var stdout, stderr strings.Builder
+	full := append([]string{"--data-dir", dataDir}, args...)
+	code := cli.Execute(full, strings.NewReader(""), &stdout, &stderr)
+	if stderr.Len() > 0 {
+		t.Logf("%v stderr: %s", args, stderr.String())
+	}
+	return code, stdout.String()
+}
+
+// contains reports whether output holds s.
+func contains(output, s string) bool { return strings.Contains(output, s) }
+
+// transferChunks returns how many chunks a file of the given size is split
+// into.
+func transferChunks(size, chunkSize int) int {
+	return (size + chunkSize - 1) / chunkSize
+}
+
 // partFiles lists the partial downloads of a folder.
 func partFiles(t *testing.T, root string) []string {
 	t.Helper()
