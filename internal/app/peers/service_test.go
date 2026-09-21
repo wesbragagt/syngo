@@ -15,6 +15,7 @@ import (
 // Device IDs used by the tests; only the syntax matters here.
 const (
 	peerID  = device.ID("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	selfID  = device.ID("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 	otherID = device.ID("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
 )
 
@@ -35,7 +36,7 @@ func newFixture(t *testing.T, probe ports.ProbeResult) fixture {
 	dialer := fakes.NewDialer()
 	dialer.Set("nas:22000", fakes.PeerScript{Probe: probe})
 	return fixture{
-		service: peers.New(store, dialer, fakes.NewClock(now), 22000),
+		service: peers.New(store, dialer, fakes.NewClock(now), fakes.NewIdentity(selfID, "self"), 22000),
 		store:   store,
 		dialer:  dialer,
 	}
@@ -257,5 +258,32 @@ func TestAdd_CompletesTheAddressWithTheDefaultPort(t *testing.T) {
 		if result.Device.Address != want {
 			t.Fatalf("Add(%q) stored %q, want %q", given, result.Device.Address, want)
 		}
+	}
+}
+
+func TestAdd_RefusesThisDeviceItself(t *testing.T) {
+	f := newFixture(t, ports.ProbeResult{DeviceID: selfID, Name: "self", Accepted: true})
+
+	_, err := f.service.Add(context.Background(), peers.AddOptions{Address: "nas", Confirm: accept})
+	if !errors.Is(err, peers.ErrSelf) {
+		t.Fatalf("Add error = %v, want ErrSelf", err)
+	}
+	list, err := f.store.ListDevices(context.Background())
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("stored %d peers, want none", len(list))
+	}
+}
+
+func TestAdd_InvalidAddressIsReported(t *testing.T) {
+	f := newFixture(t, ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true})
+
+	if _, err := f.service.Add(context.Background(), peers.AddOptions{Address: "nas:", Confirm: accept}); !errors.Is(err, peers.ErrInvalidAddress) {
+		t.Fatalf("Add error = %v, want ErrInvalidAddress", err)
+	}
+	if _, err := f.service.Test(context.Background(), "nas:"); !errors.Is(err, peers.ErrInvalidAddress) {
+		t.Fatalf("Test error = %v, want ErrInvalidAddress", err)
 	}
 }

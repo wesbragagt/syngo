@@ -250,3 +250,47 @@ func TestDaemonRun_InterfaceBindsLoopback(t *testing.T) {
 		t.Fatalf("daemon listen = %q, want the loopback interface address", listen)
 	}
 }
+
+func TestPeerAdd_OwnAddressExit2(t *testing.T) {
+	e, addr := startPeerDaemon(t, "a")
+
+	code, _, stderr := e.run("", "peer", "add", addr, "--yes")
+	if code != cli.ExitUsage {
+		t.Fatalf("peer add exit = %d, want %d (stderr: %s)", code, cli.ExitUsage, stderr)
+	}
+	if !strings.Contains(stderr, "this device") {
+		t.Fatalf("stderr = %q, want it to say the address is this device", stderr)
+	}
+	if peers := peerReport(t, e).Peers; len(peers) != 0 {
+		t.Fatalf("peers = %+v, want none", peers)
+	}
+}
+
+func TestPeerTest_UnparsableAddressExit2(t *testing.T) {
+	e := newEnv(t)
+	e.init(t)
+
+	code, _, stderr := e.run("", "peer", "test", "foo:")
+	if code != cli.ExitUsage {
+		t.Fatalf("peer test exit = %d, want %d (stderr: %s)", code, cli.ExitUsage, stderr)
+	}
+	if !strings.Contains(stderr, "port") {
+		t.Fatalf("stderr = %q, want it to explain the address", stderr)
+	}
+}
+
+func TestDaemonRun_UnknownInterfaceExit2(t *testing.T) {
+	if _, err := net.InterfaceByName("nosuch0"); err == nil {
+		t.Skip("this machine has an interface called nosuch0")
+	}
+	e := newEnv(t)
+	e.init(t)
+
+	code, _, stderr := e.run("", "daemon", "run", "--interface", "nosuch0")
+	if code != cli.ExitUsage {
+		t.Fatalf("daemon run exit = %d, want %d (stderr: %s)", code, cli.ExitUsage, stderr)
+	}
+	if !strings.Contains(stderr, "nosuch0") {
+		t.Fatalf("stderr = %q, want it to name the interface", stderr)
+	}
+}

@@ -383,3 +383,30 @@ func TestResolveListen_LoopbackInterface(t *testing.T) {
 		t.Fatal("ResolveListen accepted an interface that does not exist")
 	}
 }
+
+func TestHandshake_ServerSendsHelloBeforeReadingOne(t *testing.T) {
+	server, client := newIdentity(t, "server"), newIdentity(t, "client")
+	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+
+	conn, err := tls.Dial("tcp", ln.Addr(), tcpwire.ClientTLS(client.cert, server.id))
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+
+	// The client says nothing: pairing needs the server's identity before
+	// the client can pin it, so the server must not wait to be greeted.
+	frame, err := tcpwire.ReadFrame(conn)
+	if err != nil {
+		t.Fatalf("read hello: %v", err)
+	}
+	if frame.Type != tcpwire.MsgHello {
+		t.Fatalf("frame type = %s, want %s", frame.Type, tcpwire.MsgHello)
+	}
+	if !strings.Contains(string(frame.Header), string(server.id)) {
+		t.Fatalf("hello header = %s, want the server device id", frame.Header)
+	}
+}

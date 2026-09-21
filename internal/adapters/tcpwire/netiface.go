@@ -10,6 +10,10 @@ import (
 // or its private network. Binding one needs an explicit opt-in.
 var ErrPublicAddress = errors.New("refusing to listen on a public address")
 
+// ErrListenAddress reports a listen address or interface the daemon cannot
+// bind because of what it was given, not because of the network.
+var ErrListenAddress = errors.New("invalid listen address")
+
 // tailscaleRange is the CGNAT range Tailscale hands out. Addresses in it are
 // treated as private: reaching them already requires being on the tailnet.
 var tailscaleRange = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
@@ -21,7 +25,7 @@ var tailscaleRange = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(1
 func ResolveListen(listen, iface string, allowPublic bool) (string, error) {
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
-		return "", fmt.Errorf("listen address %q must be host:port: %w", listen, err)
+		return "", fmt.Errorf("%w: %q must be host:port: %v", ErrListenAddress, listen, err)
 	}
 
 	if iface != "" {
@@ -51,11 +55,11 @@ func ResolveListen(listen, iface string, allowPublic bool) (string, error) {
 func firstIPv4(name string) (string, error) {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
-		return "", fmt.Errorf("interface %q: %w", name, err)
+		return "", fmt.Errorf("%w: interface %q: %v", ErrListenAddress, name, err)
 	}
 	addrs, err := iface.Addrs()
 	if err != nil {
-		return "", fmt.Errorf("addresses of interface %q: %w", name, err)
+		return "", fmt.Errorf("%w: addresses of interface %q: %v", ErrListenAddress, name, err)
 	}
 	for _, addr := range addrs {
 		ipNet, ok := addr.(*net.IPNet)
@@ -66,7 +70,7 @@ func firstIPv4(name string) (string, error) {
 			return ip.String(), nil
 		}
 	}
-	return "", fmt.Errorf("interface %q has no IPv4 address", name)
+	return "", fmt.Errorf("%w: interface %q has no IPv4 address", ErrListenAddress, name)
 }
 
 // resolveHost turns a host, which may be a name, into an IP address.
@@ -76,10 +80,10 @@ func resolveHost(host string) (net.IP, error) {
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		return nil, fmt.Errorf("resolve listen host %q: %w", host, err)
+		return nil, fmt.Errorf("%w: resolve listen host %q: %v", ErrListenAddress, host, err)
 	}
 	if len(ips) == 0 {
-		return nil, fmt.Errorf("resolve listen host %q: no addresses", host)
+		return nil, fmt.Errorf("%w: resolve listen host %q: no addresses", ErrListenAddress, host)
 	}
 	return ips[0], nil
 }

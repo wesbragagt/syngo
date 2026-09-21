@@ -38,6 +38,10 @@ var ErrNotInitialized = identityfile.ErrNotInitialized
 // address reachable from outside this machine without --allow-public.
 var ErrPublicAddress = tcpwire.ErrPublicAddress
 
+// ErrListenAddress is returned when the daemon is given a listen address or
+// interface it cannot make sense of.
+var ErrListenAddress = tcpwire.ErrListenAddress
+
 // DatabaseFile is the name of the SQLite database inside the data directory.
 const DatabaseFile = "state.db"
 
@@ -204,7 +208,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		}, logger)
 		app.PeerHandler = handler
 		app.Dialer = dialer
-		app.Peers = peers.New(store, dialer, clock, listenPort(cfg.Listen))
+		app.Peers = peers.New(store, dialer, clock, identity, listenPort(cfg.Listen))
 	}
 	return app, nil
 }

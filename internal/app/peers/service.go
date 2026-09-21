@@ -18,6 +18,14 @@ import (
 // device it was about to trust.
 var ErrNotConfirmed = errors.New("device identity was not confirmed")
 
+// ErrInvalidAddress reports a peer address the service cannot make sense of.
+// It is a mistake in what the user typed, not a connection failure.
+var ErrInvalidAddress = errors.New("invalid peer address")
+
+// ErrSelf reports that the address answered with this device's own identity.
+// A device cannot be its own peer.
+var ErrSelf = errors.New("that address is this device")
+
 // DefaultPort is the port used when an address names only a host.
 const DefaultPort = 22000
 
@@ -26,16 +34,19 @@ type Service struct {
 	store       ports.DeviceStore
 	dialer      ports.Dialer
 	clock       ports.Clock
+	identity    ports.Identity
 	defaultPort int
 }
 
-// New returns a peer service. defaultPort completes addresses given without
-// one; 0 means DefaultPort.
-func New(store ports.DeviceStore, dialer ports.Dialer, clock ports.Clock, defaultPort int) *Service {
+// New returns a peer service. identity is this device, which may not be added
+// as a peer of itself. defaultPort completes addresses given without one; 0
+// means DefaultPort.
+func New(store ports.DeviceStore, dialer ports.Dialer, clock ports.Clock,
+	identity ports.Identity, defaultPort int) *Service {
 	if defaultPort == 0 {
 		defaultPort = DefaultPort
 	}
-	return &Service{store: store, dialer: dialer, clock: clock, defaultPort: defaultPort}
+	return &Service{store: store, dialer: dialer, clock: clock, identity: identity, defaultPort: defaultPort}
 }
 
 // AddOptions describes the peer to add.
@@ -75,6 +86,10 @@ func (s *Service) Add(ctx context.Context, o AddOptions) (AddResult, error) {
 	probe, err := s.dialer.Probe(ctx, addr)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("contacting %s: %w", addr, err)
+	}
+	if s.identity != nil && probe.DeviceID == s.identity.DeviceID() {
+		return AddResult{}, fmt.Errorf("%w: %s answers as %s",
+			ErrSelf, addr, probe.DeviceID.Short())
 	}
 	if o.ExpectID != "" && probe.DeviceID != o.ExpectID {
 		return AddResult{}, fmt.Errorf("%w: %s answers as %s, want %s",
@@ -203,18 +218,18 @@ func (s *Service) address(target string) (string, error) {
 	port := ":" + strconv.Itoa(s.defaultPort)
 	switch {
 	case host == "":
-		return "", errors.New("address is empty")
+		return "", fmt.Errorf("%w: address is empty", ErrInvalidAddress)
 	case strings.HasPrefix(host, "["):
 		// A bracketed IPv6 address, with or without a port.
 		end := strings.LastIndex(host, "]")
 		if end < 0 {
-			return "", fmt.Errorf("address %q has no closing bracket", target)
+			return "", fmt.Errorf("%w: %q has no closing bracket", ErrInvalidAddress, target)
 		}
 		if end == len(host)-1 {
 			return host + port, nil
 		}
 		if !strings.HasPrefix(host[end+1:], ":") {
-			return "", fmt.Errorf("address %q must be HOST or HOST:PORT", target)
+			return "", fmt.Errorf("%w: %q must be HOST or HOST:PORT", ErrInvalidAddress, target)
 		}
 		return host, nil
 	case strings.Count(host, ":") > 1:
@@ -222,7 +237,7 @@ func (s *Service) address(target string) (string, error) {
 		return "[" + host + "]" + port, nil
 	case strings.Contains(host, ":"):
 		if strings.HasSuffix(host, ":") {
-			return "", fmt.Errorf("address %q has no port", target)
+			return "", fmt.Errorf("%w: %q has no port", ErrInvalidAddress, target)
 		}
 		return host, nil
 	}

@@ -83,6 +83,11 @@ func codeOf(err error) int {
 		return ExitPeerUnreachable
 	case errors.Is(err, peers.ErrNotConfirmed):
 		return ExitConfirmationRequired
+	case errors.Is(err, peers.ErrInvalidAddress), errors.Is(err, peers.ErrSelf):
+		// Both are mistakes in what the user typed.
+		return ExitUsage
+	case errors.Is(err, compose.ErrListenAddress):
+		return ExitUsage
 	case errors.Is(err, compose.ErrPublicAddress):
 		// The refusal is about the flags the daemon was given.
 		return ExitUsage
