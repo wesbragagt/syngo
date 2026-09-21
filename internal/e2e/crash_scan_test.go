@@ -88,12 +88,17 @@ func makeTree(root string, dirs, files int) (int64, error) {
 	return total, nil
 }
 
-// child is a syncthis process the test can kill.
+// child is a syncthis process the test can kill. Everything the process
+// writes, and its exit status, is only read once Wait has returned: os/exec
+// fills both from goroutines of its own.
 type child struct {
-	cmd    *exec.Cmd
-	stderr bytes.Buffer
-	stdout bytes.Buffer
-	exited chan error
+	cmd            *exec.Cmd
+	stdout, stderr bytes.Buffer
+	// done is closed once Wait returned, after which err, state and the
+	// output buffers are settled.
+	done  chan struct{}
+	err   error
+	state *os.ProcessState
 }
 
 // startChild runs the binary against a data directory and returns as soon as
@@ -101,26 +106,41 @@ type child struct {
 func startChild(t *testing.T, dataDir string, args ...string) *child {
 	t.Helper()
 	binary := requireBinary(t)
-	c := &child{exited: make(chan error, 1)}
+	c := &child{done: make(chan struct{})}
 	c.cmd = exec.Command(binary, append([]string{"--data-dir", dataDir}, args...)...)
 	c.cmd.Stdout = &c.stdout
 	c.cmd.Stderr = &c.stderr
 	if err := c.cmd.Start(); err != nil {
 		t.Fatalf("start %v: %v", args, err)
 	}
-	go func() { c.exited <- c.cmd.Wait() }()
+	go func() {
+		c.err = c.cmd.Wait()
+		c.state = c.cmd.ProcessState
+		close(c.done)
+	}()
 	t.Cleanup(func() {
-		if c.cmd.ProcessState == nil {
-			_ = c.cmd.Process.Kill()
-			<-c.exited
+		if c.finished() {
+			return
 		}
+		_ = c.cmd.Process.Kill()
+		<-c.done
 	})
 	return c
 }
 
+// finished reports whether the process has been waited for.
+func (c *child) finished() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // signal sends a signal to the child and reports whether it was still running.
 func (c *child) signal(sig syscall.Signal) bool {
-	if c.cmd.ProcessState != nil {
+	if c.finished() {
 		return false
 	}
 	return c.cmd.Process.Signal(sig) == nil
@@ -130,21 +150,31 @@ func (c *child) signal(sig syscall.Signal) bool {
 func (c *child) wait(t *testing.T, timeout time.Duration) error {
 	t.Helper()
 	select {
-	case err := <-c.exited:
-		return err
+	case <-c.done:
+		return c.err
 	case <-time.After(timeout):
 		_ = c.cmd.Process.Kill()
-		t.Fatalf("the child did not exit within %s (stderr: %s)", timeout, c.stderr.String())
+		<-c.done
+		t.Fatalf("the child did not exit within %s (stderr: %s)", timeout, c.errorOutput())
 		return nil
 	}
 }
 
+// errorOutput returns what the child wrote to standard error. It is only
+// readable once the process has been waited for.
+func (c *child) errorOutput() string {
+	if !c.finished() {
+		return "(the child is still running)"
+	}
+	return truncate(c.stderr.String())
+}
+
 // killAfter lets the child run for d, then sends SIGKILL if it is still there.
-// It reports whether the signal landed on a running process.
+// It reports whether the process was killed rather than finishing on its own.
 func (c *child) killAfter(t *testing.T, d time.Duration) bool {
 	t.Helper()
 	select {
-	case <-c.exited:
+	case <-c.done:
 		return false
 	case <-time.After(d):
 	}
@@ -153,10 +183,9 @@ func (c *child) killAfter(t *testing.T, d time.Duration) bool {
 	}
 	_ = c.wait(t, 30*time.Second*timeoutScale)
 
-	state := c.cmd.ProcessState
-	status, ok := state.Sys().(syscall.WaitStatus)
+	status, ok := c.state.Sys().(syscall.WaitStatus)
 	if !ok {
-		t.Fatalf("process state = %v, want a wait status", state)
+		t.Fatalf("process state = %v, want a wait status", c.state)
 	}
 	// The process may have finished between the timer firing and the
 	// signal being delivered. That is a completed attempt, not a kill.
@@ -164,7 +193,7 @@ func (c *child) killAfter(t *testing.T, d time.Duration) bool {
 		return false
 	}
 	if status.Signal() != syscall.SIGKILL {
-		t.Fatalf("process state = %v, want it killed by SIGKILL", state)
+		t.Fatalf("process state = %v, want it killed by SIGKILL", c.state)
 	}
 	return true
 }
@@ -336,7 +365,7 @@ func TestCrash_ScanKilledMidWayLeavesARecoverableDatabase(t *testing.T) {
 		// The scanner logs "scan completed" once it has written its
 		// result, so a process killed before that line was in the
 		// middle of the walk or of the write.
-		midScan := !strings.Contains(c.stderr.String(), "scan completed")
+		midScan := !strings.Contains(c.errorOutput(), "scan completed")
 		t.Logf("kill after %s: SIGKILL landed on a running scan, mid-scan = %t", delay, midScan)
 		if midScan {
 			killedMidScan++
@@ -366,7 +395,7 @@ func TestCrash_DaemonKilledDuringStartupScan(t *testing.T) {
 		return err == nil
 	})
 	if !first.killAfter(t, 100*time.Millisecond*timeoutScale) {
-		t.Fatalf("the daemon exited on its own (stderr: %s)", truncate(first.stderr.String()))
+		t.Fatalf("the daemon exited on its own (stderr: %s)", first.errorOutput())
 	}
 	// A killed process cleans nothing up: this is what the next daemon has
 	// to deal with.
@@ -379,12 +408,11 @@ func TestCrash_DaemonKilledDuringStartupScan(t *testing.T) {
 		return statusOf(t, dataDir).Daemon.Running
 	})
 	if !second.signal(syscall.SIGTERM) {
-		t.Fatalf("the second daemon is not running any more (stderr: %s)",
-			truncate(second.stderr.String()))
+		t.Fatalf("the second daemon is not running any more (stderr: %s)", second.errorOutput())
 	}
 	if err := second.wait(t, daemonTimeout); err != nil {
 		t.Fatalf("the second daemon exited with %v, want a clean shutdown (stderr: %s)",
-			err, truncate(second.stderr.String()))
+			err, second.errorOutput())
 	}
 
 	assertRecovers(t, dataDir, total)
