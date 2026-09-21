@@ -182,3 +182,37 @@ func TestResume_MissingPartialFileStartsTheTransferOver(t *testing.T) {
 	b.Restart()
 	waitTreeEqual(t, a, b)
 }
+
+// assertNoConflicts fails when a node saw a conflict, whether it recorded a
+// row for it or only warned about it.
+func assertNoConflicts(t *testing.T, n *node) {
+	t.Helper()
+	if got := n.Events.Count("sync.conflict"); got != 0 {
+		t.Fatalf("%s reported %d conflicts, want none", n.name, got)
+	}
+	if got := n.Status().Conflicts.Unresolved; got != 0 {
+		t.Fatalf("%s holds %d unresolved conflicts, want none", n.name, got)
+	}
+}
+
+// TestResume_SenderRestartIsNotAConflict covers the sender of a file that dies
+// in the middle of serving it. What comes back to it from the peer afterwards
+// is its own version, not an independent edit, so neither side may call it a
+// conflict.
+func TestResume_SenderRestartIsNotAConflict(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendReceive)
+	b := startNode(t, "b", folder.ModeSendReceive)
+	writeFile(t, a, "big.bin", payload(hugeFileSize, 31))
+	pair(t, a, b)
+
+	if !b.Events.Wait("transfer.chunk_verified", 10, convergeTimeout) {
+		t.Fatalf("the receiver verified %d chunks, want at least 10",
+			b.Events.Count("transfer.chunk_verified"))
+	}
+	a.Restart()
+
+	waitTreeEqual(t, a, b)
+	waitTreeEqual(t, b, a)
+	assertNoConflicts(t, a)
+	assertNoConflicts(t, b)
+}
