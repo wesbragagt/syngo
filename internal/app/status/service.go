@@ -156,6 +156,7 @@ func transfersSection(list []transfer.Transfer) Transfers {
 			ChunksTotal: len(t.Chunks),
 			ChunksDone:  done,
 			BytesDone:   t.BytesDone(),
+			CreatedAt:   rfc3339(t.CreatedAt),
 			UpdatedAt:   rfc3339(t.UpdatedAt),
 			Error:       nonEmpty(t.Error),
 		})

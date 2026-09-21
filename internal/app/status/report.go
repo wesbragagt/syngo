@@ -94,6 +94,7 @@ type Transfer struct {
 	ChunksTotal int     `json:"chunks_total"`
 	ChunksDone  int     `json:"chunks_done"`
 	BytesDone   int64   `json:"bytes_done"`
+	CreatedAt   *string `json:"created_at"`
 	UpdatedAt   *string `json:"updated_at"`
 	Error       *string `json:"error"`
 }

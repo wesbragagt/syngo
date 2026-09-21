@@ -630,7 +630,11 @@ $ syncthis conflict export 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a /tmp/review
 ### `syncthis completion bash|zsh|fish|powershell`
 
 Writes a completion script to stdout. It is a shell script, not JSON, whatever
-`--json` says.
+`--json` says. `--help` is the other exemption: it prints the usage text on
+stdout whatever `--json` says, because help is for a person to read. Asking a
+command group such as `syncthis folder` for its subcommand list with `--json`
+is a usage error (exit 2) rather than help text, so a script never gets prose
+where it expects a document.
 
 ### `syncthis version`
 

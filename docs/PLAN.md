@@ -1029,7 +1029,8 @@ Makefile                          add `e2e` target (`go test ./internal/e2e/ -ra
 make lint && make test && make e2e
 for c in "status" "folder list" "peer list" "transfer list" "version"; do syncthis --data-dir $A $c --json | python3 -m json.tool >/dev/null && echo "ok: $c"; done
 syncthis --data-dir $A folder remove docs --no-input; echo "exit=$?"    # 9
-syncthis --data-dir $A daemon run --interface lo --listen 0.0.0.0:22001; echo "exit=$?"   # refuses without --allow-public
+syncthis --data-dir $A daemon run --listen 0.0.0.0:22001; echo "exit=$?"   # 2: refuses a wildcard bind without --allow-public
+syncthis --data-dir $A daemon run --interface lo --listen 0.0.0.0:22001   # binds 127.0.0.1:22001: the interface replaces the host
 ```
 
 ---

@@ -113,8 +113,14 @@ the payload; the receiver verifies it before the bytes reach the disk.
 
 A request the peer refuses for an application reason is answered with an Error
 frame whose `code` is `folder_unknown`, `folder_receive_only` or `paused`, and
-the connection stays up. An Error frame that answers nothing, or one with code
-`bad_request`, ends the connection: the peers no longer agree on the protocol.
+the connection stays up. `internal` is the code for a failure that is none of
+those, such as a file the peer cannot read; the connection stays up for it too.
+
+An Error frame that answers nothing, or one with code `bad_request`, ends the
+connection: the peers no longer agree on the protocol. So does `unknown_device`,
+which the server sends when the client has been removed from its `devices`
+table since the handshake. The server checks the table before every request, so
+a peer removed while it is connected stops being served at once.
 
 ## Handshake
 

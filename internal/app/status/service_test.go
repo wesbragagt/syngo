@@ -90,6 +90,14 @@ func TestReport_WithoutDaemon(t *testing.T) {
 		item.Direction != "in" || item.State != string(transfer.StateActive) {
 		t.Fatalf("transfer item = %+v", item)
 	}
+	// The items are the objects `transfer list` prints, which docs/CLI.md
+	// promises, so they carry the same timestamps.
+	if item.CreatedAt == nil || *item.CreatedAt != "2026-09-20T10:00:00Z" {
+		t.Fatalf("created_at = %v, want the time the transfer started", item.CreatedAt)
+	}
+	if item.UpdatedAt == nil {
+		t.Fatal("updated_at is missing from the status transfer item")
+	}
 	if report.Conflicts.Unresolved != 0 {
 		t.Fatalf("conflicts = %+v, want none", report.Conflicts)
 	}

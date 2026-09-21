@@ -225,6 +225,9 @@ func (s *Service) address(target string) (string, error) {
 		if end < 0 {
 			return "", fmt.Errorf("%w: %q has no closing bracket", ErrInvalidAddress, target)
 		}
+		if !isIPv6Literal(host[1:end]) {
+			return "", fmt.Errorf("%w: %q is not an IPv6 address", ErrInvalidAddress, target)
+		}
 		if end == len(host)-1 {
 			return host + port, nil
 		}
@@ -234,6 +237,9 @@ func (s *Service) address(target string) (string, error) {
 		return host, nil
 	case strings.Count(host, ":") > 1:
 		// A bare IPv6 address needs brackets before a port.
+		if !isIPv6Literal(host) {
+			return "", fmt.Errorf("%w: %q is not an IPv6 address", ErrInvalidAddress, target)
+		}
 		return "[" + host + "]" + port, nil
 	case strings.Contains(host, ":"):
 		if strings.HasSuffix(host, ":") {
@@ -242,6 +248,67 @@ func (s *Service) address(target string) (string, error) {
 		return host, nil
 	}
 	return host + port, nil
+}
+
+// isIPv6Literal reports whether host is an IPv6 address written out: groups of
+// up to four hexadecimal digits separated by colons, with at most one "::" and
+// an optional dotted IPv4 tail. It is a syntax check the caller makes before
+// handing the address to the transport, so a typo is reported as a mistake in
+// what the user typed rather than as a peer that could not be reached.
+func isIPv6Literal(host string) bool {
+	if host == "" || strings.Count(host, "::") > 1 {
+		return false
+	}
+	compressed := strings.Contains(host, "::")
+	// A leading or trailing "::" stands for the groups it replaces, so the
+	// empty group it leaves at that end is not a missing one.
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(host, "::"), "::")
+	if trimmed == "" {
+		return compressed
+	}
+
+	groups := strings.Split(strings.Replace(trimmed, "::", ":", 1), ":")
+	if len(groups) > 8 || (!compressed && len(groups) != 8) {
+		return false
+	}
+	for i, group := range groups {
+		// The last group may be a dotted IPv4 address, as in "::ffff:10.0.0.1".
+		if i == len(groups)-1 && strings.Contains(group, ".") {
+			if !isIPv4Literal(group) {
+				return false
+			}
+			continue
+		}
+		if len(group) == 0 || len(group) > 4 {
+			return false
+		}
+		for _, r := range group {
+			if !isHexDigit(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isIPv4Literal reports whether s is four decimal octets separated by dots.
+func isIPv4Literal(s string) bool {
+	octets := strings.Split(s, ".")
+	if len(octets) != 4 {
+		return false
+	}
+	for _, octet := range octets {
+		n, err := strconv.Atoi(octet)
+		if err != nil || n < 0 || n > 255 || len(octet) > 3 {
+			return false
+		}
+	}
+	return true
+}
+
+// isHexDigit reports whether r is a hexadecimal digit.
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
 
 // confirm asks the caller to approve an identity.

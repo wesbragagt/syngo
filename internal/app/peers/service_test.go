@@ -246,6 +246,7 @@ func TestAdd_CompletesTheAddressWithTheDefaultPort(t *testing.T) {
 		"::1":         "[::1]:22000",
 		"[::1]":       "[::1]:22000",
 		"[::1]:22000": "[::1]:22000",
+		"2001:db8::1": "[2001:db8::1]:22000",
 	}
 	for given, want := range cases {
 		f := newFixture(t, ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true})
@@ -285,5 +286,22 @@ func TestAdd_InvalidAddressIsReported(t *testing.T) {
 	}
 	if _, err := f.service.Test(context.Background(), "nas:"); !errors.Is(err, peers.ErrInvalidAddress) {
 		t.Fatalf("Test error = %v, want ErrInvalidAddress", err)
+	}
+}
+
+// TestAdd_AddressThatIsNotAnIPv6LiteralIsReported covers what looks like a
+// bare IPv6 address but is not one. It is a typo, not a peer that is down, so
+// it is refused before anything is dialled.
+func TestAdd_AddressThatIsNotAnIPv6LiteralIsReported(t *testing.T) {
+	for _, target := range []string{":::", "[:::]", "::1::2", "[gg::1]:22000", "1:2:3:4:5:6:7"} {
+		f := newFixture(t, ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true})
+
+		_, err := f.service.Add(context.Background(), peers.AddOptions{Address: target, Confirm: accept})
+		if !errors.Is(err, peers.ErrInvalidAddress) {
+			t.Fatalf("Add(%q) error = %v, want ErrInvalidAddress", target, err)
+		}
+		if probed := f.dialer.Probed(); len(probed) != 0 {
+			t.Fatalf("Add(%q) probed %v, want nothing dialled", target, probed)
+		}
 	}
 }
