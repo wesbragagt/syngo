@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
@@ -107,8 +106,10 @@ func TestModeChange_PropagatesWithoutTransferringContent(t *testing.T) {
 	waitMode(t, b, "flat/file.txt", 0o700)
 
 	// Both sides settle on the new mode instead of handing it back and
-	// forth, and the content never moved.
-	time.Sleep(settle)
+	// forth, and the content never moved. The marker travels through the
+	// same subtree, so its arrival means a cycle covered the file too.
+	writeFile(t, a, "flat/marker.txt", []byte("a cycle ran"))
+	waitPresent(t, b, "flat/marker.txt")
 	if got := modeOf(t, a, "flat/file.txt"); got != 0o700 {
 		t.Fatalf("mode on a = %v, want 0700", got)
 	}
@@ -137,7 +138,11 @@ func TestModeChange_IsNotAppliedToALocallyModifiedFile(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 
-	time.Sleep(settle)
+	// The marker is written after the chmod and lives in the same subtree,
+	// so the scan that picked it up picked the new mode up as well: b
+	// pulling the marker means b saw the mode change and left it alone.
+	writeFile(t, a, "flat/marker.txt", []byte("a cycle ran"))
+	waitPresent(t, b, "flat/marker.txt")
 	if got := modeOf(t, b, "flat/file.txt"); got != 0o644 {
 		t.Fatalf("mode on b = %v, want the local 0644 kept", got)
 	}

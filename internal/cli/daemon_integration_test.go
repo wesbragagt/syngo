@@ -479,3 +479,96 @@ func TestRepair_WithDaemonRunsInTheDaemon(t *testing.T) {
 		t.Fatalf("repair output = %q, want a report for docs", stdout)
 	}
 }
+
+func TestPauseResume_WithoutAFolderWhileTheDaemonRuns(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+	second := filepath.Join(filepath.Dir(e.folderPath), "photos")
+	if err := os.MkdirAll(second, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", second, err)
+	}
+	if code, _, stderr := e.run("", "folder", "add", second, "--id", "photos"); code != cli.ExitOK {
+		t.Fatalf("folder add exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	startDaemon(t, e)
+	waitForDaemon(t, e)
+
+	// No folder argument means every folder, and the running daemon is the
+	// one that does it.
+	if code, _, stderr := e.run("", "pause"); code != cli.ExitOK {
+		t.Fatalf("pause exit = %d (stderr %q)", code, stderr)
+	}
+	waitForStatus(t, e, "both folders to be paused", func(r statusReport) bool {
+		if len(r.Folders) != 2 {
+			return false
+		}
+		return r.Folders[0].Paused && r.Folders[1].Paused
+	})
+
+	if code, _, stderr := e.run("", "resume"); code != cli.ExitOK {
+		t.Fatalf("resume exit = %d (stderr %q)", code, stderr)
+	}
+	waitForStatus(t, e, "both folders to be resumed", func(r statusReport) bool {
+		if len(r.Folders) != 2 {
+			return false
+		}
+		return !r.Folders[0].Paused && !r.Folders[1].Paused
+	})
+}
+
+func TestResume_AfterTheDaemonStopped(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+	daemon := startDaemon(t, e)
+	waitForDaemon(t, e)
+
+	if code, _, stderr := e.run("", "pause", "docs"); code != cli.ExitOK {
+		t.Fatalf("pause exit = %d (stderr %q)", code, stderr)
+	}
+	waitForStatus(t, e, "the paused folder", func(r statusReport) bool { return r.Folders[0].Paused })
+	if code := daemon.stop(); code != cli.ExitOK {
+		t.Fatalf("daemon exit = %d, want 0", code)
+	}
+
+	// With no daemon answering, the command writes the database itself
+	// rather than failing.
+	if code, _, stderr := e.run("", "resume"); code != cli.ExitOK {
+		t.Fatalf("resume without a daemon exit = %d (stderr %q)", code, stderr)
+	}
+	report := status(t, e)
+	if report.Daemon.Running {
+		t.Fatal("the daemon is still answering after it was stopped")
+	}
+	if report.Folders[0].Paused {
+		t.Fatal("the folder is still paused after `resume` with no daemon")
+	}
+}
+
+func TestFolderAdd_WhileTheDaemonRunsIsPickedUpAtOnce(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+	startDaemon(t, e)
+	waitForDaemon(t, e)
+
+	second := filepath.Join(filepath.Dir(e.folderPath), "photos")
+	if err := os.MkdirAll(second, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", second, err)
+	}
+	if err := os.WriteFile(filepath.Join(second, "holiday.jpg"), []byte("jpeg"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if code, _, stderr := e.run("", "folder", "add", second, "--id", "photos"); code != cli.ExitOK {
+		t.Fatalf("folder add exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	// The rescan interval is ten minutes, so the folder being watched and
+	// scanned within seconds is the reload the command asked for.
+	waitForStatus(t, e, "the new folder to be scanned", func(r statusReport) bool {
+		for _, f := range r.Folders {
+			if f.ID == "photos" && f.Files == 1 {
+				return true
+			}
+		}
+		return false
+	})
+}

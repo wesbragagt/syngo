@@ -36,6 +36,11 @@ const (
 	convergeTimeout    = 60 * time.Second * timeoutScale
 	daemonTimeout      = 30 * time.Second * timeoutScale
 	folderID           = folder.ID("docs")
+	// extraID is the second folder some tests configure. It is always
+	// sendreceive on both sides, so a file put in it and waited for proves
+	// that a sync cycle ran, which is what a test needs before it can say
+	// that something else did not happen.
+	extraID = folder.ID("extra")
 )
 
 // node is one daemon with its own data directory and synchronized folder.
@@ -46,43 +51,59 @@ type node struct {
 	Events        *fakes.Events
 	App           *compose.App
 	DataDir, Root string
-	ID            device.ID
-	Listen        string
+	// Extra is the root of the second folder, empty unless the node was
+	// configured with one.
+	Extra  string
+	ID     device.ID
+	Listen string
+	rescan time.Duration
 
 	cancel context.CancelFunc
 	done   chan error
 }
 
-// folderConfig is how a node's folder is configured. A zero DeletePolicy
-// means the default, propagate.
-type folderConfig struct {
+// nodeConfig is how a node and its folder are set up. A zero DeletePolicy
+// means the default, propagate, and a zero RescanInterval means the short one
+// the tests share.
+type nodeConfig struct {
 	Mode         folder.Mode
 	DeletePolicy folder.DeletePolicy
+	// NoFolder starts the daemon with nothing configured, so a test can
+	// add the folder through the CLI while the daemon runs.
+	NoFolder bool
+	// ExtraFolder adds a second, always sendreceive folder to the node.
+	ExtraFolder bool
+	// RescanInterval overrides how often the node re-reads its tables. A
+	// long one proves that something other than the tick did the work.
+	RescanInterval time.Duration
 }
 
 // startNode initializes a data directory, adds one folder in the given mode
 // and runs a daemon against it until the test ends.
 func startNode(t *testing.T, name string, mode folder.Mode) *node {
 	t.Helper()
-	return startNodeWith(t, name, folderConfig{Mode: mode})
+	return startNodeWith(t, name, nodeConfig{Mode: mode})
 }
 
 // startNodeWith initializes a data directory, adds one folder and runs a
 // daemon against it until the test ends.
-func startNodeWith(t *testing.T, name string, cfg folderConfig) *node {
+func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 	t.Helper()
 	if cfg.DeletePolicy == "" {
 		cfg.DeletePolicy = folder.DeletePropagate
 	}
+	if cfg.RescanInterval == 0 {
+		cfg.RescanInterval = testRescanInterval
+	}
 	n := &node{
-		t: t, name: name, mode: cfg.Mode,
+		t: t, name: name, mode: cfg.Mode, rescan: cfg.RescanInterval,
 		DataDir: t.TempDir(), Root: t.TempDir(),
 	}
 
 	config := jsonconfig.Default()
 	config.ChunkSize = testChunkSize
 	config.Listen = "127.0.0.1:0"
-	config.RescanInterval = jsonconfig.Duration(testRescanInterval)
+	config.RescanInterval = jsonconfig.Duration(cfg.RescanInterval)
 	config.SyncInterval = jsonconfig.Duration(testSyncInterval)
 	if err := jsonconfig.Save(n.DataDir, config); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -95,17 +116,29 @@ func startNodeWith(t *testing.T, name string, cfg folderConfig) *node {
 	n.App = app
 	n.ID = app.Identity.DeviceID()
 
-	_, err = app.Folders.Add(context.Background(), folder.Folder{
-		ID: folderID, Path: n.Root, Mode: cfg.Mode, DeletePolicy: cfg.DeletePolicy,
-		Symlinks: folder.SymlinkStore, KeepEmptyDirs: true,
-	})
-	if err != nil {
-		t.Fatalf("add folder on %s: %v", name, err)
+	if !cfg.NoFolder {
+		n.addFolder(t, folderID, n.Root, cfg.Mode, cfg.DeletePolicy)
+	}
+	if cfg.ExtraFolder {
+		n.Extra = t.TempDir()
+		n.addFolder(t, extraID, n.Extra, folder.ModeSendReceive, folder.DeletePropagate)
 	}
 
 	n.run()
 	t.Cleanup(n.Stop)
 	return n
+}
+
+// addFolder configures one folder of the node, before the daemon starts.
+func (n *node) addFolder(t *testing.T, id folder.ID, root string, mode folder.Mode, policy folder.DeletePolicy) {
+	t.Helper()
+	_, err := n.App.Folders.Add(context.Background(), folder.Folder{
+		ID: id, Path: root, Mode: mode, DeletePolicy: policy,
+		Symlinks: folder.SymlinkStore, KeepEmptyDirs: true,
+	})
+	if err != nil {
+		t.Fatalf("add folder %s on %s: %v", id, n.name, err)
+	}
 }
 
 // options are the composition options of the node, with a fresh event
@@ -141,7 +174,7 @@ func (n *node) run() {
 		n.done <- n.App.RunDaemon(ctx, compose.DaemonOptions{
 			Listen:         listen,
 			Debounce:       testDebounce,
-			RescanInterval: testRescanInterval,
+			RescanInterval: n.rescan,
 			SyncInterval:   testSyncInterval,
 			Ready:          ready,
 		})
@@ -210,16 +243,19 @@ func (n *node) Status() status.Report {
 // pair makes two nodes known to each other, which is what `peer add` writes.
 func pair(t *testing.T, a, b *node) {
 	t.Helper()
-	ctx := context.Background()
-	now := time.Now()
-	for _, pairing := range []struct{ from, to *node }{{a, b}, {b, a}} {
-		err := pairing.from.App.Store.SaveDevice(ctx, device.Device{
-			ID: pairing.to.ID, Name: pairing.to.name, Address: pairing.to.Listen,
-			Verified: true, AddedAt: now,
-		})
-		if err != nil {
-			t.Fatalf("pair %s with %s: %v", pairing.from.name, pairing.to.name, err)
-		}
+	saveDevice(t, a, b)
+	saveDevice(t, b, a)
+}
+
+// saveDevice makes one node trust another, in that direction only.
+func saveDevice(t *testing.T, from, to *node) {
+	t.Helper()
+	err := from.App.Store.SaveDevice(context.Background(), device.Device{
+		ID: to.ID, Name: to.name, Address: to.Listen,
+		Verified: true, AddedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("pair %s with %s: %v", from.name, to.name, err)
 	}
 }
 
@@ -360,7 +396,13 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool)
 // writeFile creates a file inside a node's folder, with its parents.
 func writeFile(t *testing.T, n *node, rel string, data []byte) {
 	t.Helper()
-	full := filepath.Join(n.Root, rel)
+	writeFileIn(t, n.Root, rel, data)
+}
+
+// writeFileIn creates a file inside a folder root, with its parents.
+func writeFileIn(t *testing.T, root, rel string, data []byte) {
+	t.Helper()
+	full := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("create parent of %s: %v", rel, err)
 	}

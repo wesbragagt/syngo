@@ -3,18 +3,43 @@ package e2e
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
-// settle is how long a test waits for sync cycles that must not change
-// anything. It covers several sync intervals.
-const settle = 5 * testSyncInterval
+// waitScanned waits until a node's folder reports at least the given number of
+// files, which is how a test knows a local change has reached the manifest the
+// peers ask for.
+func waitScanned(t *testing.T, n *node, id folder.ID, files int64) {
+	t.Helper()
+	waitFor(t, fmt.Sprintf("%d files in %s on %s", files, id, n.name), convergeTimeout, func() bool {
+		for _, f := range n.Status().Folders {
+			if f.ID == string(id) && f.Files >= files {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// marker puts a file in the second folder of from and waits for it to arrive
+// in the second folder of to. Both sides keep that folder sendreceive, so its
+// arrival proves that to ran a pull cycle against from. A test that has to
+// show something did *not* happen waits for the marker first, instead of
+// sleeping for a while and hoping.
+func marker(t *testing.T, from, to *node, name string) {
+	t.Helper()
+	writeFileIn(t, from.Extra, name, []byte(name))
+	waitFor(t, name+" in the second folder of "+to.name, convergeTimeout, func() bool {
+		_, err := os.Lstat(filepath.Join(to.Extra, name))
+		return err == nil
+	})
+}
 
 // waitPresent waits until a path exists inside a node's folder.
 func waitPresent(t *testing.T, n *node, rel string) {
@@ -41,18 +66,21 @@ func exists(t *testing.T, n *node, rel string) bool {
 }
 
 func TestSendOnly_NeverPullsFromThePeer(t *testing.T) {
-	a := startNode(t, "a", folder.ModeSendOnly)
-	b := startNode(t, "b", folder.ModeSendReceive)
+	a := startNodeWith(t, "a", nodeConfig{Mode: folder.ModeSendOnly, ExtraFolder: true})
+	b := startNodeWith(t, "b", nodeConfig{Mode: folder.ModeSendReceive, ExtraFolder: true})
 	writeFile(t, a, "from-a.txt", []byte("a"))
 	writeFile(t, b, "from-b.txt", []byte("b"))
 	pair(t, a, b)
 
-	// The send-only side hands its file over.
+	// The send-only side hands its file over, and the file the other side
+	// has is in the manifest a asks for.
 	waitPresent(t, b, "from-a.txt")
+	waitScanned(t, b, folderID, 2)
 
-	// What the other side has stays there: a send-only folder installs
-	// nothing, however many cycles run.
-	time.Sleep(settle)
+	// A file put in the second folder afterwards arrives on a, which
+	// proves a ran a pull cycle against b with from-b.txt on offer. What a
+	// send-only folder does with that offer is nothing.
+	marker(t, b, a, "cycle-ran.txt")
 	if exists(t, a, "from-b.txt") {
 		t.Fatal("the send-only folder pulled a file from the peer")
 	}
@@ -62,10 +90,11 @@ func TestSendOnly_NeverPullsFromThePeer(t *testing.T) {
 }
 
 func TestReceiveOnly_NeverServesItsManifest(t *testing.T) {
-	a := startNode(t, "a", folder.ModeSendReceive)
-	b := startNode(t, "b", folder.ModeReceiveOnly)
+	a := startNodeWith(t, "a", nodeConfig{Mode: folder.ModeSendReceive, ExtraFolder: true})
+	b := startNodeWith(t, "b", nodeConfig{Mode: folder.ModeReceiveOnly, ExtraFolder: true})
 	writeFile(t, b, "local.txt", []byte("b"))
 	pair(t, a, b)
+	waitScanned(t, b, folderID, 1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), daemonTimeout)
 	defer cancel()
@@ -81,12 +110,20 @@ func TestReceiveOnly_NeverServesItsManifest(t *testing.T) {
 
 	// The folder is still announced, with the mode that explains the
 	// refusal, so the peer knows not to ask again.
-	adverts := conn.RemoteHello().Folders
-	if len(adverts) != 1 || adverts[0].ID != folderID || adverts[0].Mode != folder.ModeReceiveOnly {
-		t.Fatalf("hello folders = %+v, want the receive-only docs folder", adverts)
+	var advertised *folder.Mode
+	for _, advert := range conn.RemoteHello().Folders {
+		if advert.ID == folderID {
+			mode := advert.Mode
+			advertised = &mode
+		}
+	}
+	if advertised == nil || *advertised != folder.ModeReceiveOnly {
+		t.Fatalf("hello folders = %+v, want docs announced as receive-only", conn.RemoteHello().Folders)
 	}
 
-	time.Sleep(settle)
+	// The marker proves a pulled from b after local.txt was in b's
+	// manifest; the file itself never crosses.
+	marker(t, b, a, "cycle-ran.txt")
 	if exists(t, a, "local.txt") {
 		t.Fatal("the receive-only folder served a file after all")
 	}
@@ -94,7 +131,7 @@ func TestReceiveOnly_NeverServesItsManifest(t *testing.T) {
 
 func TestDeletePolicyNever_KeepsTheFileAndNamesTheReason(t *testing.T) {
 	a := startNode(t, "a", folder.ModeSendReceive)
-	b := startNodeWith(t, "b", folderConfig{Mode: folder.ModeReceiveOnly, DeletePolicy: folder.DeleteNever})
+	b := startNodeWith(t, "b", nodeConfig{Mode: folder.ModeReceiveOnly, DeletePolicy: folder.DeleteNever})
 	writeFile(t, a, "keep.bin", payload(4096, 41))
 	pair(t, a, b)
 	waitPresent(t, b, "keep.bin")
