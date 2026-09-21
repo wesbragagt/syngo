@@ -73,5 +73,7 @@ $ bin/syncthis --data-dir /tmp/b/data status
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) — the wire protocol between two daemons.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the package layout and the
   dependency rules a test enforces.
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — the domain language: every word the
+  other documents and the code use, defined once.
 - [docs/PLAN.md](docs/PLAN.md) — the implementation plan, milestone by
   milestone.
