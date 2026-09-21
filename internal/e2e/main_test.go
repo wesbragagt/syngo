@@ -5,22 +5,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
 // syncthisBinary is the binary the crash tests kill. It is empty when the
-// build was skipped or failed; buildErr says which.
+// build was skipped or failed; buildErr says which. Both are only settled once
+// binary() has run.
 var (
 	syncthisBinary string
 	buildErr       error
+	buildOnce      sync.Once
 	// buildDir holds the binary and the fixture tree the crash tests share.
 	buildDir string
 )
 
-// TestMain builds the syncthis binary once for the whole package, because the
-// crash tests need a real process to send SIGKILL to and building it per test
-// would cost more than the tests themselves. A missing Go toolchain is not a
-// failure here: the tests that need the binary skip.
+// binary builds cmd/syncthis on the first call and returns it. It is built
+// lazily so a run that needs no child process, such as one under -short, pays
+// nothing for it.
+func binary() (string, error) {
+	buildOnce.Do(func() { syncthisBinary, buildErr = buildBinary(buildDir) })
+	return syncthisBinary, buildErr
+}
+
+// TestMain makes the directory the binary and the fixture tree of the crash
+// tests share. The binary itself is built by the first test that asks for it,
+// once for the whole package: those tests need a real process to send SIGKILL
+// to, and building it per test would cost more than the tests themselves. A
+// missing Go toolchain is not a failure: the tests that need the binary skip.
 func TestMain(m *testing.M) {
 	code := func() int {
 		dir, err := os.MkdirTemp("", "syncthis-e2e-")
@@ -30,7 +42,6 @@ func TestMain(m *testing.M) {
 		}
 		defer func() { _ = os.RemoveAll(dir) }()
 		buildDir = dir
-		syncthisBinary, buildErr = buildBinary(dir)
 		return m.Run()
 	}()
 	os.Exit(code)
@@ -50,4 +61,17 @@ func buildBinary(dir string) (string, error) {
 		return "", fmt.Errorf("go build: %v: %s", err, out)
 	}
 	return binary, nil
+}
+
+// TestBuild_OnlyHappensWhenABinaryIsNeeded checks that a run which needs no
+// child process does not pay for compiling one. It only claims anything under
+// -short, where every test that wants the binary skips before asking for it.
+func TestBuild_OnlyHappensWhenABinaryIsNeeded(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("the other tests build the binary; run with -short")
+	}
+	if syncthisBinary != "" || buildErr != nil {
+		t.Fatalf("the binary was built (%q, %v) although no test asked for one",
+			syncthisBinary, buildErr)
+	}
 }

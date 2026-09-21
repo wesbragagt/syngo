@@ -23,21 +23,21 @@ const (
 	crashFiles     = crashDirs * crashFilesEach
 )
 
-// crashKillDelays are how long each attempt lets the scan run before it kills
-// it. They grow, so an attempt that lands after the scan finished on a fast
-// machine is followed by ones that land earlier on a slow one; the test needs
-// one kill in the middle of a scan, not six.
-var crashKillDelays = []time.Duration{
-	5 * time.Millisecond, 20 * time.Millisecond, 60 * time.Millisecond,
-	150 * time.Millisecond, 400 * time.Millisecond, time.Second,
-}
+// crashMutatedDirs is how much of the tree an attempt rewrites before it
+// scans: 20 directories of 100 files each, so the scan has 2,000 changes to
+// write in one transaction and a kill has something to interrupt.
+const crashMutatedDirs = 20
 
-// crashFixture is the file tree the crash tests scan, built once.
+// crashFixture is the file tree the crash tests scan, built once and rewritten
+// in place by each attempt. The revision is what the current contents were
+// written at, and the byte count follows it, so the tests share one tree and
+// still know what a complete scan of it must record.
 var (
-	crashFixtureOnce  sync.Once
-	crashFixtureRoot  string
-	crashFixtureBytes int64
-	crashFixtureErr   error
+	crashFixtureOnce     sync.Once
+	crashFixtureRoot     string
+	crashFixtureBytes    int64
+	crashFixtureRevision int
+	crashFixtureErr      error
 )
 
 // requireBinary skips the test when it cannot have a child process to kill.
@@ -46,10 +46,11 @@ func requireBinary(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("builds the binary and kills it mid-scan; run without -short")
 	}
-	if syncthisBinary == "" {
-		t.Skipf("no syncthis binary to kill: %v", buildErr)
+	path, err := binary()
+	if err != nil {
+		t.Skipf("no syncthis binary to kill: %v", err)
 	}
-	return syncthisBinary
+	return path
 }
 
 // fixtureTree returns the shared file tree and the total size of its files.
@@ -76,16 +77,49 @@ func makeTree(root string, dirs, files int) (int64, error) {
 			return 0, err
 		}
 		for f := range files {
-			size := 32 + (d*files+f)%225
-			content := bytes.Repeat([]byte{byte('a' + (d+f)%26)}, size)
-			path := filepath.Join(dir, fmt.Sprintf("f%03d.txt", f))
-			if err := os.WriteFile(path, content, 0o644); err != nil {
+			if err := writeFixtureFile(root, d, f, 0); err != nil {
 				return 0, err
 			}
-			total += int64(size)
+			total += int64(fixtureSize(d, f, 0))
 		}
 	}
 	return total, nil
+}
+
+// fixtureSize is the size a file has at a revision. Consecutive revisions of
+// the same file always differ in size, so a scan cannot miss the change
+// whatever the file system says about modification times.
+func fixtureSize(dir, file, revision int) int {
+	return 32 + (dir*crashFilesEach+file+revision*37)%225
+}
+
+// writeFixtureFile writes one file of the tree at the given revision.
+func writeFixtureFile(root string, dir, file, revision int) error {
+	size := fixtureSize(dir, file, revision)
+	content := bytes.Repeat([]byte{byte('a' + (dir+file+revision)%26)}, size)
+	path := filepath.Join(root, fmt.Sprintf("d%03d", dir), fmt.Sprintf("f%03d.txt", file))
+	return os.WriteFile(path, content, 0o644)
+}
+
+// mutateFixture rewrites the first crashMutatedDirs directories at the next
+// revision and returns the root and the new total size of the tree. It is what
+// gives the next scan a large write to be interrupted in: a scan of a tree
+// that was already recorded writes nothing, and killing it proves nothing.
+func mutateFixture(t *testing.T) (string, int64) {
+	t.Helper()
+	root, total := fixtureTree(t)
+	revision := crashFixtureRevision + 1
+	for d := range crashMutatedDirs {
+		for f := range crashFilesEach {
+			if err := writeFixtureFile(root, d, f, revision); err != nil {
+				t.Fatalf("rewrite the fixture tree: %v", err)
+			}
+			total += int64(fixtureSize(d, f, revision) - fixtureSize(d, f, revision-1))
+		}
+	}
+	crashFixtureRevision = revision
+	crashFixtureBytes = total
+	return root, total
 }
 
 // child is a syncthis process the test can kill. Everything the process
@@ -105,9 +139,9 @@ type child struct {
 // the process is started.
 func startChild(t *testing.T, dataDir string, args ...string) *child {
 	t.Helper()
-	binary := requireBinary(t)
+	path := requireBinary(t)
 	c := &child{done: make(chan struct{})}
-	c.cmd = exec.Command(binary, append([]string{"--data-dir", dataDir}, args...)...)
+	c.cmd = exec.Command(path, append([]string{"--data-dir", dataDir}, args...)...)
 	c.cmd.Stdout = &c.stdout
 	c.cmd.Stderr = &c.stderr
 	if err := c.cmd.Start(); err != nil {
@@ -202,8 +236,8 @@ func (c *child) killAfter(t *testing.T, d time.Duration) bool {
 // standard output.
 func runBinary(t *testing.T, dataDir string, args ...string) (int, string) {
 	t.Helper()
-	binary := requireBinary(t)
-	cmd := exec.Command(binary, append([]string{"--data-dir", dataDir}, args...)...)
+	path := requireBinary(t)
+	cmd := exec.Command(path, append([]string{"--data-dir", dataDir}, args...)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -270,23 +304,29 @@ func statusOf(t *testing.T, dataDir string) crashStatus {
 	return report
 }
 
-// assertRecovers runs the checks every kill in these tests is followed by: the
-// database opens and holds either the old manifest or the new one and nothing
-// in between, repair finds nothing it cannot fix, and a rescan converges on
-// the whole tree without finding anything left to do afterwards.
-func assertRecovers(t *testing.T, dataDir string, total int64) {
-	t.Helper()
+// folderState is what the store holds for the scanned folder.
+type folderState struct {
+	Files int64
+	Bytes int64
+}
 
+// stateOf reads the recorded file count and total size of the folder.
+func stateOf(t *testing.T, dataDir string) folderState {
+	t.Helper()
 	report := statusOf(t, dataDir)
 	if len(report.Folders) != 1 {
 		t.Fatalf("folders = %+v, want one", report.Folders)
 	}
-	// The scan writes its result in one transaction, so a kill leaves the
-	// manifest it found or the one that was there, never a part of either.
-	if files := report.Folders[0].Files; files != 0 && files != crashFiles {
-		t.Fatalf("files = %d after the kill, want 0 or %d: the scan write is not atomic",
-			files, crashFiles)
-	}
+	return folderState{Files: report.Folders[0].Files, Bytes: report.Folders[0].Bytes}
+}
+
+// assertRecovers runs the checks every kill in these tests is followed by: the
+// database opens, repair finds nothing it cannot fix, and a rescan converges
+// on the whole tree without finding anything left to do afterwards. What the
+// store held right after the kill is checked by the caller, which knows what
+// was there before.
+func assertRecovers(t *testing.T, dataDir string, total int64) {
+	t.Helper()
 
 	code, out := runBinary(t, dataDir, "repair", "docs", "--dry-run", "--json")
 	if code != 0 && code != 10 {
@@ -326,12 +366,8 @@ func assertRecovers(t *testing.T, dataDir string, total int64) {
 		t.Fatalf("a repeated scan found %d changes, want none", scan.Summary.Changes)
 	}
 
-	report = statusOf(t, dataDir)
-	if got := report.Folders[0].Files; got != crashFiles {
-		t.Fatalf("files = %d after the rescan, want %d", got, crashFiles)
-	}
-	if got := report.Folders[0].Bytes; got != total {
-		t.Fatalf("bytes = %d after the rescan, want %d", got, total)
+	if got, want := stateOf(t, dataDir), (folderState{Files: crashFiles, Bytes: total}); got != want {
+		t.Fatalf("state after the rescan = %+v, want %+v", got, want)
 	}
 }
 
@@ -344,40 +380,182 @@ func truncate(s string) string {
 	return s[:2000] + "… (truncated)"
 }
 
-// TestCrash_ScanKilledMidWayLeavesARecoverableDatabase kills a scan of 20,000
-// files with SIGKILL and checks what the next process finds.
-func TestCrash_ScanKilledMidWayLeavesARecoverableDatabase(t *testing.T) {
-	requireBinary(t)
-	dataDir, total := crashEnv(t)
+// The phases of a scan a kill can land in. They are read from the debug log
+// the child writes: the scanner logs "scan writing" when the walk is over and
+// the whole result is about to be written in one transaction, and "scan
+// completed" once it has been.
+const (
+	phaseWalk      = "walk"
+	phaseWrite     = "write"
+	phaseCompleted = "completed"
+)
 
-	killedMidScan := 0
-	for _, delay := range crashKillDelays {
-		delay *= timeoutScale
-		c := startChild(t, dataDir, "scan", "docs", "--json",
-			"--log-level", "debug", "--log-format", "json")
-		killed := c.killAfter(t, delay)
-		if !killed {
-			t.Logf("kill after %s: the scan had already finished", delay)
-			assertRecovers(t, dataDir, total)
+// phaseOf reports which phase the child was in when it stopped.
+func phaseOf(log string) string {
+	switch {
+	case strings.Contains(log, "scan completed"):
+		return phaseCompleted
+	case strings.Contains(log, "scan writing"):
+		return phaseWrite
+	default:
+		return phaseWalk
+	}
+}
+
+// scanTiming is how long a scan of the fixture spends reading the tree and how
+// long it spends writing what it found, on the machine running the test.
+type scanTiming struct {
+	walk  time.Duration
+	write time.Duration
+}
+
+// logTime returns the time of the first debug line with the given message.
+func logTime(t *testing.T, log, message string) time.Time {
+	t.Helper()
+	for _, line := range strings.Split(log, "\n") {
+		var record struct {
+			Time time.Time `json:"time"`
+			Msg  string    `json:"msg"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			continue
 		}
-
-		// The scanner logs "scan completed" once it has written its
-		// result, so a process killed before that line was in the
-		// middle of the walk or of the write.
-		midScan := !strings.Contains(c.errorOutput(), "scan completed")
-		t.Logf("kill after %s: SIGKILL landed on a running scan, mid-scan = %t", delay, midScan)
-		if midScan {
-			killedMidScan++
+		if record.Msg == message {
+			return record.Time
 		}
-		assertRecovers(t, dataDir, total)
+	}
+	t.Fatalf("the child never logged %q:\n%s", message, truncate(log))
+	return time.Time{}
+}
+
+// crashRun is one data directory, the tree it scans and what a complete scan
+// of that tree must record.
+type crashRun struct {
+	dataDir string
+	root    string
+	total   int64
+}
+
+// newCrashRun prepares the data directory, the folder and a first complete
+// scan, so what follows is measured and killed under the conditions of an
+// attempt: a store that already holds the tree and a scan that has 2,000
+// changed files to write.
+func newCrashRun(t *testing.T) *crashRun {
+	t.Helper()
+	dataDir, _ := crashEnv(t)
+	root, total := mutateFixture(t)
+	if code, out := runBinary(t, dataDir, "scan", "docs", "--json"); code != 0 {
+		t.Fatalf("the first scan exit = %d, want 0 (%s)", code, truncate(out))
+	}
+	return &crashRun{dataDir: dataDir, root: root, total: total}
+}
+
+// measure rewrites part of the tree and scans it to completion, and returns how
+// long each phase of that scan took. The kill delays are derived from this
+// rather than guessed, so they land where they are meant to on a fast machine
+// and on a slow one.
+func (r *crashRun) measure(t *testing.T) scanTiming {
+	t.Helper()
+	root, total := mutateFixture(t)
+	r.root, r.total = root, total
+	started := time.Now()
+	c := startChild(t, r.dataDir, "scan", "docs", "--json",
+		"--log-level", "debug", "--log-format", "json")
+	if err := c.wait(t, 5*time.Minute*timeoutScale); err != nil {
+		t.Fatalf("the measuring scan failed: %v (stderr: %s)", err, c.errorOutput())
+	}
+	log := c.stderr.String()
+	writing := logTime(t, log, "scan writing")
+	completed := logTime(t, log, "scan completed")
+	if got, want := stateOf(t, r.dataDir), (folderState{Files: crashFiles, Bytes: total}); got != want {
+		t.Fatalf("state after the measuring scan = %+v, want %+v", got, want)
+	}
+	return scanTiming{walk: writing.Sub(started), write: completed.Sub(writing)}
+}
+
+// attempt rewrites part of the tree, scans it, kills the scan after delay and
+// checks what the store holds afterwards: either exactly what it held before
+// the attempt or exactly what the completed scan would have recorded, never
+// anything in between. It returns the phase the kill landed in.
+func (r *crashRun) attempt(t *testing.T, delay time.Duration) string {
+	t.Helper()
+	root, total := mutateFixture(t)
+	r.root, r.total = root, total
+	before := stateOf(t, r.dataDir)
+	after := folderState{Files: crashFiles, Bytes: total}
+
+	c := startChild(t, r.dataDir, "scan", "docs", "--json",
+		"--log-level", "debug", "--log-format", "json")
+	killed := c.killAfter(t, delay)
+	phase := phaseOf(c.errorOutput())
+	t.Logf("kill after %s: killed = %t, phase = %s", delay, killed, phase)
+
+	got := stateOf(t, r.dataDir)
+	switch phase {
+	case phaseCompleted:
+		if got != after {
+			t.Fatalf("state = %+v after a scan that finished, want %+v", got, after)
+		}
+	case phaseWalk:
+		// Nothing is written until the whole folder has been read, so
+		// a kill during the walk must leave the store as it was.
+		if got != before {
+			t.Fatalf("state = %+v after a kill during the walk, want the untouched %+v",
+				got, before)
+		}
+	default:
+		if got != before && got != after {
+			t.Fatalf("state = %+v after a kill during the write, want %+v or %+v: "+
+				"the scan write is not atomic", got, before, after)
+		}
+	}
+	assertRecovers(t, r.dataDir, total)
+	return phase
+}
+
+// TestCrash_ScanKilledMidWayLeavesARecoverableDatabase kills a scan of 20,000
+// files with SIGKILL and checks that the write it interrupted was all or
+// nothing.
+func TestCrash_ScanKilledMidWayLeavesARecoverableDatabase(t *testing.T) {
+	requireBinary(t)
+	run := newCrashRun(t)
+
+	timing := run.measure(t)
+	t.Logf("a scan of this fixture walks for %s and writes for %s", timing.walk, timing.write)
+
+	// Three of the delays aim inside the write window, which is the short
+	// phase and the one the claim is about; the others check the phases
+	// around it.
+	delays := []time.Duration{
+		timing.walk / 2,
+		timing.walk + timing.write/5,
+		timing.walk + timing.write/2,
+		timing.walk + (4*timing.write)/5,
+		timing.walk + timing.write + timing.write/2,
 	}
 
-	if killedMidScan == 0 {
-		t.Fatalf("no attempt killed the process while it was scanning %d files; "+
-			"lower the delays in crashKillDelays", crashFiles)
+	attempts, inWrite := 0, 0
+	for _, delay := range delays {
+		attempts++
+		if run.attempt(t, delay) == phaseWrite {
+			inWrite++
+		}
 	}
-	t.Logf("%d of %d attempts killed the process mid-scan", killedMidScan, len(crashKillDelays))
+	// The write window is tens of milliseconds wide, so a loaded machine
+	// can miss it. Aiming at its middle again costs one scan each time and
+	// keeps the claim from depending on how busy the machine was.
+	for retry := 0; inWrite == 0 && retry < 4; retry++ {
+		timing = run.measure(t)
+		attempts++
+		if run.attempt(t, timing.walk+timing.write/2) == phaseWrite {
+			inWrite++
+		}
+	}
+	if inWrite == 0 {
+		t.Fatalf("no attempt of %d landed in the write phase; the atomicity claim was not exercised",
+			attempts)
+	}
+	t.Logf("%d of %d attempts were killed during the write phase", inWrite, attempts)
 }
 
 // TestCrash_DaemonKilledDuringStartupScan kills a daemon while it scans at

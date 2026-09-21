@@ -97,6 +97,10 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 	result.Duration = now.Sub(started)
 
 	if !o.DryRun {
+		// The walk is over and the whole result is about to be written
+		// in one transaction. The line marks the boundary: everything
+		// logged before it read the tree, everything after it wrote.
+		s.log.Debug("scan writing", "folder", f.ID, "changes", len(result.Changes))
 		if err := s.persist(ctx, f, w.cur, old.Sequence, &result, now); err != nil {
 			return Result{}, err
 		}
