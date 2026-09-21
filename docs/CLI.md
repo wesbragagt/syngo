@@ -247,6 +247,111 @@ $ syncthis config set --download-limit 0 --json | jq .download_limit
 0
 ```
 
+### `syncthis config export [--output FILE]`
+
+Writes the configuration of this device as one JSON document: the settings, the
+folders with their ignore patterns and sync windows, and the known peers.
+Without `--output`, or with `--output -`, it goes to stdout; the document is
+JSON already, so `--json` changes nothing about it. `--output FILE` writes the
+file with mode 0600 and prints a summary instead.
+
+The identity is never part of a bundle: not the key pair, not the certificate,
+not the device ID, and not the device name, which is baked into the
+certificate. Neither are the database contents or the times a folder was
+created, last scanned, added or last seen. A bundle describes a configuration,
+not a device.
+
+```console
+$ syncthis config export --output /tmp/a.json
+exported 1 folder and 1 peer to /tmp/a.json
+$ syncthis config export --output /tmp/a.json --json
+{"written": "/tmp/a.json", "folders": 1, "peers": 1}
+```
+
+The document:
+
+```json
+{
+  "schema_version": 1,
+  "exported_at": "2026-09-21T08:32:15Z",
+  "settings": {
+    "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 262144,
+    "max_file_size": 1099511627776, "rescan_interval": "10m0s",
+    "sync_interval": "30s", "log_level": "info",
+    "upload_limit": 0, "download_limit": 1048576
+  },
+  "folders": [
+    {"id": "docs", "path": "/home/u/docs", "label": "", "mode": "sendreceive",
+     "delete_policy": "propagate", "symlinks": "skip", "include_hidden": false,
+     "keep_empty_dirs": true, "ignore_patterns": ["*.tmp"],
+     "sync_windows": ["22:00-06:00"], "paused": false}
+  ],
+  "peers": [
+    {"id": "ETI3RRZ…", "name": "nas", "address": "10.0.0.2:22000", "verified": true}
+  ]
+}
+```
+
+`exported_at` is informational and ignored on import.
+
+### `syncthis config import FILE [--replace] [--dry-run] [--yes]`
+
+Applies a bundle to this device. `FILE` may be `-` to read the document from
+stdin; `--replace` then needs `--yes`, because stdin is already taken by the
+document.
+
+The whole document is validated before anything is written: it must decode
+with no unknown field, carry `schema_version` 1, and every folder must pass the
+same checks `folder add` makes, including that its path is an existing
+directory on *this* machine. A document that fails any of these exits 2 and
+writes nothing.
+
+Conflicts are reported all at once, one line each on stderr, and nothing is
+written: exit 5.
+
+| Conflict | With `--replace` |
+|---|---|
+| a folder id is already configured | overwritten |
+| a peer id is already known | overwritten |
+| a folder path is already synchronized under another id | still a conflict |
+
+Two ids cannot synchronize the same directory, which is why the last one stands
+whatever the flags say. `--replace` is destructive, so it asks first and needs
+`--yes` when there is no terminal. What it overwrites is the configuration
+only: when the folder was created, when it was last scanned, the rows of its
+files, and when a peer was added and last seen are kept. A folder or a peer the
+bundle repeats exactly as this device already has it is left alone and is not
+reported.
+
+`--dry-run` validates, reports what would change and writes nothing, exiting 10
+when something would change and 0 otherwise.
+
+A successful import asks a running daemon to reload, so the folders, the peers
+and the limits take effect at once; see [Lifecycle](#lifecycle).
+
+```console
+$ syncthis config import /tmp/a.json
+folder docs: added
+peer ETI3RRZ…: added
+settings: changed
+$ syncthis config import /tmp/a.json
+folder "docs": id already configured
+peer ETI3RRZ…: already configured
+syncthis: folder "docs": id already configured; peer ETI3RRZ…: already configured
+$ echo $?
+5
+```
+
+The three stores are written one after another, folders first, then peers, then
+the settings; it is not one transaction. Validation and conflict detection both
+run before the first write, so the only partial outcome is a store that fails
+midway, and that reports what was written before it stopped, with exit 1.
+
+**Exit codes.** 2 for an unreadable file, a document that does not decode, an
+unknown field, another schema version or a configuration this device cannot
+use; 5 for conflicts; 9 for `--replace` without a confirmation; 10 for a
+`--dry-run` that would change something; 1 for a write that failed midway.
+
 ### `syncthis scan ID [--dry-run]`
 
 Walks the folder, hashes what changed and records it. `--dry-run` classifies

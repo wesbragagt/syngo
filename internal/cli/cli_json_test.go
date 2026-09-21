@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,6 +93,29 @@ func jsonCases() []jsonCase {
 		}},
 		{"config set without a flag", cli.ExitUsage, func(t *testing.T) (env, []string) {
 			return initialized(t), []string{"config", "set"}
+		}},
+		{"config export", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withDocs(t), []string{"config", "export"}
+		}},
+		{"config export to a file", cli.ExitOK, func(t *testing.T) (env, []string) {
+			e := withDocs(t)
+			return e, []string{"config", "export", "--output", filepath.Join(t.TempDir(), "bundle.json")}
+		}},
+		{"config import", cli.ExitOK, func(t *testing.T) (env, []string) {
+			e := withDocs(t)
+			return initialized(t), []string{"config", "import", bundleOf(t, e)}
+		}},
+		{"config import with a conflict", cli.ExitAlreadyExists, func(t *testing.T) (env, []string) {
+			e := withDocs(t)
+			return e, []string{"config", "import", bundleOf(t, e)}
+		}},
+		{"config import --replace without a confirmation", cli.ExitConfirmationRequired,
+			func(t *testing.T) (env, []string) {
+				e := withDocs(t)
+				return e, []string{"config", "import", bundleOf(t, e), "--replace"}
+			}},
+		{"config import of a missing file", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"config", "import", filepath.Join(t.TempDir(), "nope.json")}
 		}},
 		{"config without a subcommand", cli.ExitUsage, func(t *testing.T) (env, []string) {
 			return initialized(t), []string{"config"}
@@ -207,6 +231,17 @@ func jsonCases() []jsonCase {
 			return initialized(t), []string{"status", "extra"}
 		}},
 	}
+}
+
+// bundleOf exports the configuration of an environment to a file and returns
+// its path, for the import cases above.
+func bundleOf(t *testing.T, e env) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bundle.json")
+	if code, _, stderr := e.run("", "config", "export", "--output", path); code != cli.ExitOK {
+		t.Fatalf("config export exit = %d (stderr: %s)", code, stderr)
+	}
+	return path
 }
 
 func TestJSON_EveryCommandPrintsOneDocumentAndNothingElse(t *testing.T) {

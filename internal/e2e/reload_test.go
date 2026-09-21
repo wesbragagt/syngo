@@ -1,11 +1,15 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syncthis/internal/app/configbundle"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -117,5 +121,58 @@ func TestReload_PeerRemovedWhileTheDaemonsRunIsDisconnected(t *testing.T) {
 	})
 	if exists(t, a, "after.txt") {
 		t.Fatal("a pulled a file from the peer that removed it")
+	}
+}
+
+// TestConfigImport_ReloadsRunningDaemon proves that a configuration bundle
+// applied to a running daemon takes effect at once: b starts with nothing
+// configured and is given a's folder and a's peer row through `config import`.
+func TestConfigImport_ReloadsRunningDaemon(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendReceive)
+	b := startNodeWith(t, "b", nodeConfig{NoFolder: true, RescanInterval: time.Hour})
+
+	bundle := configbundle.Bundle{
+		SchemaVersion: configbundle.SchemaVersion,
+		Settings:      bundleSettings(),
+		Folders: []configbundle.Folder{{
+			ID: string(folderID), Path: b.Root, Mode: string(folder.ModeSendReceive),
+			DeletePolicy: string(folder.DeletePropagate), Symlinks: string(folder.SymlinkStore),
+			KeepEmptyDirs: true, IgnorePatterns: []string{}, SyncWindows: []string{},
+		}},
+		Peers: []configbundle.Peer{{
+			ID: string(a.ID), Name: "a", Address: a.Listen, Verified: true,
+		}},
+	}
+	file := filepath.Join(t.TempDir(), "bundle.json")
+	f, err := os.Create(file)
+	if err != nil {
+		t.Fatalf("create %s: %v", file, err)
+	}
+	if err := configbundle.Encode(f, bundle); err != nil {
+		t.Fatalf("encode bundle: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close %s: %v", file, err)
+	}
+
+	// a has to know b as well; only b's side is configured by the bundle.
+	saveDevice(t, a, b)
+	cliOK(t, b, "config", "import", file)
+
+	writeFile(t, a, "from-a.txt", payload(2500, 31))
+	waitTreeEqual(t, a, b)
+}
+
+// bundleSettings are the settings the imported bundle carries: the short
+// timings the tests run with, so the daemon that picks them up behaves like
+// the ones the harness starts.
+func bundleSettings() configbundle.Settings {
+	return configbundle.Settings{
+		Listen:         "127.0.0.1:0",
+		ChunkSize:      testChunkSize,
+		MaxFileSize:    jsonconfig.DefaultMaxFileSize,
+		RescanInterval: testRescanInterval.String(),
+		SyncInterval:   testSyncInterval.String(),
+		LogLevel:       "info",
 	}
 }

@@ -63,6 +63,8 @@ $ bin/syncthis --data-dir /tmp/b/data status
   see what diverged and decide what to keep.
 - Per-folder sync windows: `folder set docs --sync-window 22:00-06:00` pulls
   the folder at night only, while it keeps scanning and keeps serving.
+- `config export` and `config import` move a whole configuration, folders,
+  peers and settings, to another machine; identity keys are never part of it.
 - `sync-plan` prints what a sync would do without doing it.
 - Every command speaks `--json`, and every failure has its own exit code.
 

@@ -50,7 +50,8 @@ func newConfigCmd(deps *Deps) *cobra.Command {
 			return deps.help(cmd)
 		},
 	}
-	cmd.AddCommand(newConfigShowCmd(deps), newConfigSetCmd(deps))
+	cmd.AddCommand(newConfigShowCmd(deps), newConfigSetCmd(deps),
+		newConfigExportCmd(deps), newConfigImportCmd(deps))
 	return cmd
 }
 

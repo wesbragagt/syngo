@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wesbragagt/syncthis/internal/app/configbundle"
 	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/peers"
@@ -97,6 +98,11 @@ func codeOf(err error) int {
 		// Both are mistakes in what the user typed.
 		return ExitUsage
 	case errors.Is(err, compose.ErrListenAddress):
+		return ExitUsage
+	case errors.Is(err, configbundle.ErrInvalidBundle):
+		// A bundle that cannot be read, or that describes a
+		// configuration this device could not run, is a mistake in the
+		// document the command was given.
 		return ExitUsage
 	case errors.Is(err, bandwidth.ErrInvalidRate):
 		// A rate that cannot be read is a mistake in what the user

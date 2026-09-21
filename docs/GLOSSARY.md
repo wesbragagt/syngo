@@ -200,6 +200,12 @@ pair and certificate, `state.db`, and, while a daemon runs, `control.sock` and
 partial files of its transfers. It is never scanned and never synchronized. See
 [STATE.md](STATE.md#folder-state-directory).
 
+**Configuration bundle.** The JSON document `config export` writes and
+`config import` reads: the device settings, the folders with their ignore
+patterns and sync windows, and the known peers. It carries no identity
+material, so it describes a configuration, not a device. See
+[CLI.md](CLI.md#syncthis-config-export---output-file).
+
 **Control socket.** `<data-dir>/control.sock`, mode 0600, the unix socket a
 running daemon answers commands on. It is also the lock on the data directory:
 a daemon that answers there owns it. See [CLI.md](CLI.md#lifecycle).

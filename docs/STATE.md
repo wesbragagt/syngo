@@ -34,6 +34,16 @@ A negative value is refused when the file is read. `config set` writes them and
 a running daemon picks them up at once; see
 [CLI.md](CLI.md#bandwidth-limits).
 
+`config export` covers what a second machine needs to synchronize the same
+folders: the settings of `config.json`, the folder rows with their ignore
+patterns and sync windows, and the device rows of the known peers. It never
+covers `identity.key`, `identity.crt`, the device ID, the device name, or
+anything in `state.db` beyond the folder and device configuration. A bundle is
+therefore not a backup of a device: restoring one into a fresh data directory
+gives a device with its own identity and an empty database, which then
+synchronizes the folders from its peers. See
+[CLI.md](CLI.md#syncthis-config-export---output-file).
+
 ## Folder state directory
 
 ```
