@@ -324,7 +324,9 @@ func (s *Service) Export(ctx context.Context, id, dir string) (Export, error) {
 	}
 	view = s.described(view)
 	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
-		return Export{}, exportError(dir, fmt.Errorf("create %s: %w", dir, err))
+		// The hint names the directory dir goes in: that is the one
+		// whose permissions stood in the way.
+		return Export{}, exportError(path.Dir(dir), fmt.Errorf("create the export directory: %w", err))
 	}
 
 	out := Export{View: view, Dir: dir, Sidecar: view.ID + ".json"}
