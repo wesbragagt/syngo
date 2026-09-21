@@ -164,15 +164,15 @@ Goal: ship a reliable multi-device Tailscale-first system.
 - [ ] Recover automatically after a Tailscale restart.
 - [ ] Recover after network changes.
 - [ ] Add direct versus DERP diagnostics.
-- [ ] Add database migration handling.
-- [ ] Run a security review of the protocol and path handling.
+- [x] Add database migration handling.
+- [x] Run a security review of the protocol and path handling.
 - [ ] Add fuzz tests for the protocol and filesystem logic.
 - [ ] Run a 30-day soak test.
 - [ ] Run 10,000 forced network interruptions.
 - [ ] Add packaging for Linux, macOS, Windows, NAS, container, and headless service.
 - [ ] Document install, configure, and run instructions for each platform.
 - [ ] Verify three-device non-conflicting convergence reaches 99.99%.
-- [ ] Verify upgrades across two schema versions preserve sync state.
+- [x] Verify upgrades across two schema versions preserve sync state.
 
 ## Ongoing work
 

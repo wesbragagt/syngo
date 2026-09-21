@@ -460,14 +460,3 @@ func (d *Daemon) loop(id folder.ID) (*folderLoop, bool) {
 	loop, ok := d.loops[id]
 	return loop, ok
 }
-
-// loopsSnapshot returns every running folder loop.
-func (d *Daemon) loopsSnapshot() []*folderLoop {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	out := make([]*folderLoop, 0, len(d.loops))
-	for _, loop := range d.loops {
-		out = append(out, loop)
-	}
-	return out
-}
