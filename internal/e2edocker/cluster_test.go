@@ -585,15 +585,16 @@ func (d *Device) Logs() string {
 	return string(raw)
 }
 
-// slogLine is one JSON log line of the daemon. Changes is the attribute of a
-// finished scan; it is the only attribute a test waits on, so it is decoded
-// here rather than through a map of everything.
+// slogLine is one JSON log line of the daemon. Changes and ChunksDone are the
+// two attributes tests wait on, so they are decoded here rather than through a
+// map of everything the daemon logs.
 type slogLine struct {
-	Time    string `json:"time"`
-	Level   string `json:"level"`
-	Msg     string `json:"msg"`
-	Changes int    `json:"changes"`
-	Raw     string `json:"-"`
+	Time       string `json:"time"`
+	Level      string `json:"level"`
+	Msg        string `json:"msg"`
+	Changes    int    `json:"changes"`
+	ChunksDone int    `json:"chunks_done"`
+	Raw        string `json:"-"`
 }
 
 // LogLines returns the log lines at one level, or every parsable line when
