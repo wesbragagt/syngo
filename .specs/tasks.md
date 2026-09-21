@@ -24,14 +24,14 @@ Track every actionable piece of work for the Syncthis build. Mark a task complet
 
 These tasks must land before most application work. They are not a phase on their own. They protect every later phase.
 
-- [ ] Choose module layout for ports and adapters.
-- [ ] Define domain entities: device, folder, file version, manifest, chunk, operation, journal, conflict, session, policy.
-- [ ] Define application use cases: pair, scan, compare, plan, transfer, apply, resolve, repair.
-- [ ] Define ports: filesystem, metadata store, content store, clock, peer discovery, transport, device identity, configuration, events, logging, UI.
-- [ ] Define a composition root that wires adapters.
-- [ ] Add interface tests in the domain package using fake adapters.
+- [x] Choose module layout for ports and adapters.
+- [x] Define domain entities: device, folder, file version, manifest, chunk, operation, journal, conflict, session, policy.
+- [x] Define application use cases: pair, scan, compare, plan, transfer, apply, resolve, repair.
+- [x] Define ports: filesystem, metadata store, content store, clock, peer discovery, transport, device identity, configuration, events, logging, UI.
+- [x] Define a composition root that wires adapters.
+- [x] Add interface tests in the domain package using fake adapters.
 - [ ] Document the domain language in a glossary.
-- [ ] Decide the public protocol format and schema versioning rules.
+- [x] Decide the public protocol format and schema versioning rules.
 
 ## Phase 0: Baseline
 
@@ -51,16 +51,16 @@ Goal: measure Syncthing and Obsidian Sync before building anything new.
 
 Goal: prove safe filesystem tracking without networking.
 
-- [ ] Add a folder and persist it in the metadata store.
-- [ ] Scan a folder and classify operations: create, modify, delete, rename.
-- [ ] Detect hidden files, Unicode names, empty directories, and symlinks by policy.
-- [ ] Store metadata and BLAKE3 hashes in the embedded database.
-- [ ] Use filesystem events for fast change detection.
-- [ ] Run periodic reconciliation to catch missed events.
-- [ ] Support include and exclude rules.
-- [ ] Add ignore file support.
-- [ ] Implement dry-run, status, rescan, and repair commands.
-- [ ] Add tests for rename, delete, atomic-save, and symlink behavior.
+- [x] Add a folder and persist it in the metadata store.
+- [x] Scan a folder and classify operations: create, modify, delete, rename.
+- [x] Detect hidden files, Unicode names, empty directories, and symlinks by policy.
+- [x] Store metadata and BLAKE3 hashes in the embedded database.
+- [x] Use filesystem events for fast change detection.
+- [x] Run periodic reconciliation to catch missed events.
+- [x] Support include and exclude rules.
+- [x] Add ignore file support.
+- [x] Implement dry-run, status, rescan, and repair commands.
+- [x] Add tests for rename, delete, atomic-save, and symlink behavior.
 - [ ] Add a crash test that kills the process mid-scan.
 - [ ] Verify a 100,000-file folder reconciles safely.
 - [ ] Verify idle memory under 100 MB on the reference device.
@@ -69,35 +69,35 @@ Goal: prove safe filesystem tracking without networking.
 
 Goal: transfer arbitrary files between two Tailscale devices.
 
-- [ ] Define device identity and a pairing protocol.
-- [ ] Add a `peer add` CLI command.
+- [x] Define device identity and a pairing protocol.
+- [x] Add a `peer add` CLI command.
 - [ ] Implement Tailscale peer detection through MagicDNS and Tailscale IPs.
-- [ ] Bind the sync listener to the Tailscale interface only.
-- [ ] Verify the expected Tailscale node identity before accepting a device.
-- [ ] Implement an authenticated transport session.
-- [ ] Exchange manifests and compare files by content hash.
-- [ ] Implement fixed-size chunk transfer with BLAKE3 verification.
-- [ ] Implement resumable transfers with a persisted journal.
-- [ ] Install files atomically into place after verification.
-- [ ] Add a `status --json` command.
-- [ ] Add a `peer test` command that reports latency, route, and failures.
+- [x] Bind the sync listener to the Tailscale interface only.
+- [x] Verify the expected Tailscale node identity before accepting a device.
+- [x] Implement an authenticated transport session.
+- [x] Exchange manifests and compare files by content hash.
+- [x] Implement fixed-size chunk transfer with BLAKE3 verification.
+- [x] Implement resumable transfers with a persisted journal.
+- [x] Install files atomically into place after verification.
+- [x] Add a `status --json` command.
+- [x] Add a `peer test` command that reports latency, route, and failures.
 - [ ] Run a 10 GB transfer test with bounded memory.
-- [ ] Run an interrupted transfer test and verify resume.
-- [ ] Verify the listener never binds to a public interface.
+- [x] Run an interrupted transfer test and verify resume.
+- [x] Verify the listener never binds to a public interface.
 
 ## Phase 3: One-way and receive-only replication
 
 Goal: dependable backup and mirror workflows.
 
-- [ ] Add send-only and receive-only folder modes.
-- [ ] Add read-only replicas.
-- [ ] Add configurable delete propagation policies.
+- [x] Add send-only and receive-only folder modes.
+- [x] Add read-only replicas.
+- [x] Add configurable delete propagation policies.
 - [ ] Implement pause, resume, scheduled sync, and bandwidth limits.
-- [ ] Add dry-run for destructive operations.
-- [ ] Implement crash-safe transfer journals.
-- [ ] Add atomic destination writes.
+- [x] Add dry-run for destructive operations.
+- [x] Implement crash-safe transfer journals.
+- [x] Add atomic destination writes.
 - [ ] Support configuration import and export.
-- [ ] Add a CLI command to inspect transfer state.
+- [x] Add a CLI command to inspect transfer state.
 - [ ] Run 1,000 interruption and restart cycles without corruption.
 - [ ] Run a 1 TB mirror test and verify no full retransfer after restart.
 - [ ] Verify bandwidth stays within 5% of configured limits.
@@ -107,17 +107,17 @@ Goal: dependable backup and mirror workflows.
 Goal: handle offline edits without silent data loss.
 
 - [ ] Implement causal state with version vectors.
-- [ ] Detect concurrent edits.
-- [ ] Implement keep-both as the default conflict policy.
-- [ ] Handle rename versus delete cases.
-- [ ] Handle case-only renames.
-- [ ] Handle permission-only and symlink-target changes.
-- [ ] Add `conflict list`, `conflict show`, and `conflict resolve` commands.
-- [ ] Add conflict export for manual review.
+- [x] Detect concurrent edits.
+- [x] Implement keep-both as the default conflict policy.
+- [x] Handle rename versus delete cases.
+- [x] Handle case-only renames.
+- [x] Handle permission-only and symlink-target changes.
+- [x] Add `conflict list`, `conflict show`, and `conflict resolve` commands.
+- [x] Add conflict export for manual review.
 - [ ] Implement optional three-way merge for text files.
-- [ ] Block automatic binary merging at the application layer.
-- [ ] Verify zero silent overwrites in the conflict suite.
-- [ ] Verify every divergent edit produces an explainable result.
+- [x] Block automatic binary merging at the application layer.
+- [x] Verify zero silent overwrites in the conflict suite.
+- [x] Verify every divergent edit produces an explainable result.
 - [ ] Verify 99.99% automatic convergence for non-conflicting changes.
 
 ## Phase 5: Performance and scale
@@ -141,7 +141,7 @@ Goal: beat the baseline on the target workload.
 
 Goal: a usable terminal interface without a GUI.
 
-- [ ] Define the local daemon API used by both the CLI and TUI.
+- [x] Define the local daemon API used by both the CLI and TUI.
 - [ ] Build the interactive TUI with Bubble Tea.
 - [ ] Add guided initialization and pairing.
 - [ ] Show live device, folder, queue, path, and error views.
@@ -149,9 +149,9 @@ Goal: a usable terminal interface without a GUI.
 - [ ] Add searchable event logs.
 - [ ] Support reattach after SSH or terminal disconnect.
 - [ ] Document a CLI equivalent for every TUI action.
-- [ ] Add `--json`, `--no-input`, and `--yes` flags.
-- [ ] Add shell completion.
-- [ ] Document exit codes.
+- [x] Add `--json`, `--no-input`, and `--yes` flags.
+- [x] Add shell completion.
+- [x] Document exit codes.
 - [ ] Add a usability test: pair and sync a folder in under five minutes with no docs.
 - [ ] Add a reconnect test that drops the TUI without losing daemon state.
 
