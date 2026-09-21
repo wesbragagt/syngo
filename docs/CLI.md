@@ -290,9 +290,14 @@ least `time`, `level` and `msg`, plus the fields the event carries (`folder`,
 4. On SIGINT or SIGTERM it stops the loops, closes the control socket and the
    listener, and removes the pid file and the socket before it returns.
 
-The peer table is read when the daemon starts and again at every rescan
-interval. A peer added while the daemon runs is therefore dialled at the next
-reload; restart the daemon to connect right away.
+The folder and device tables are read when the daemon starts and again at every
+rescan interval. `folder add`, `folder set`, `folder remove`, `peer add` and
+`peer remove` do not wait for that tick: each asks the running daemon to reload
+over the control socket, which starts and stops folder loops, dials peers that
+were added, drops peers that were removed, and announces the new folder list to
+the peers that are already connected. Without a daemon the commands say nothing
+and only write the database. The daemon never has to be restarted for a
+configuration change.
 
 ### `syncthis peer add HOST[:PORT]`
 
@@ -366,7 +371,10 @@ $ syncthis pause docs --json
 ```
 
 A paused transfer stays in the journal in state `paused` and is picked up again
-by the first sync cycle after `resume`.
+by the first sync cycle after `resume`. `paused` means the folder is paused and
+nothing else: on `resume` the transfer becomes `pending`, and a folder that
+never pulls, because it is send-only, leaves it `pending` with `folder is
+send-only` as its error.
 
 ### `syncthis transfer list [--state S]`
 
@@ -505,8 +513,7 @@ $ syncthis --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
 $ syncthis --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
 ```
 
-Both daemons read the peer table again at the next rescan interval, so restart
-them to connect right away. Then:
+`peer add` tells each running daemon to reload, so both connect at once. Then:
 
 ```console
 $ echo "hello from A" > /tmp/a/docs/greeting.txt
@@ -547,7 +554,7 @@ Both devices are on the same tailnet and have a `100.64.0.0/10` address.
    Without `--device-id` the command shows the identity the peer presents and
    asks whether to trust it, which is the same decision made by eye.
 
-5. Restart both daemons so they dial each other at once, then check:
+5. Each `peer add` tells the local daemon to dial the new peer at once. Check:
 
    ```console
    $ syncthis peer test <id of the other device>

@@ -45,6 +45,7 @@ header is longer than its body is refused the same way.
 | 0x10 | ManifestRequest | client → server | `{"folder_id":"…"}` |
 | 0x11 | ManifestResponse | server → client | `{"folder_id":"…","sequence":N,"entries":[…]}` |
 | 0x12 | ManifestChanged | server → client, unsolicited | `{"folder_id":"…","sequence":N}` |
+| 0x13 | FoldersChanged | either, unsolicited | `{"folders":[{"id":"…","mode":"…"}]}` |
 | 0x20 | ChunkRequest | client → server | `{"folder_id","path","hash","index","chunk_size"}` |
 | 0x21 | ChunkData | server → client | `{"folder_id","path","index","offset","length","chunk_hash"}` + payload |
 | 0x22 | ChunkError | server → client | `{"folder_id","path","index","reason":…}` |
@@ -73,9 +74,24 @@ has.
 The synced hash and the synced mode are local bookkeeping, described in
 [STATE.md](STATE.md#files), and are never sent.
 
-`ManifestChanged` is the only unsolicited frame. It says a folder moved on; the
-receiver answers it by requesting the manifest again, so a missed notification
-costs nothing but time.
+`ManifestChanged` says a folder moved on; the receiver answers it by requesting
+the manifest again, so a missed notification costs nothing but time.
+
+### Folder announcements
+
+`Hello` carries the folder list, but folders are added, removed and given
+another mode while daemons run. `FoldersChanged` carries the list again, at any
+time: it replaces what the `Hello` announced, and the receiving client runs a
+sync cycle over every folder both sides now share. A daemon sends it to the
+peers connected to it whenever it reloads its configuration, which is what the
+CLI asks for after `folder add`, `folder set` and `folder remove`. Neither side
+has to reconnect for a new folder or a new mode to take effect.
+
+The frame may travel in either direction. The serving side keeps no view of the
+peer's folders, since the peer drives its own pulls, so it accepts the frame and
+answers nothing.
+
+`ManifestChanged` and `FoldersChanged` are the only unsolicited frames.
 
 ### Chunk exchange
 
@@ -109,8 +125,8 @@ the connection stays up. An Error frame that answers nothing, or one with code
    unpaired device learns the server's identity and name that way, which is how
    pairing starts. Each side runs `peer add` against the other.
 4. The client then drives the connection: one request in flight at a time. The
-   client read loop routes `ManifestChanged` frames to a notification channel
-   and every other frame to the pending request.
+   client read loop routes `ManifestChanged` and `FoldersChanged` frames to a
+   notification channel and every other frame to the pending request.
 5. The client pings after 30 seconds of silence; both sides give up on a
    connection that says nothing for 90 seconds.
 6. Each daemon dials every known peer and pulls from it, so a pair of devices
@@ -127,3 +143,6 @@ syncthis --data-dir B peer add <host-of-A>:22000 --verify   # B trusts A
 when the peer has not added us yet (`Rejected{unknown_device}`). `peer test`
 reports the same handshake as `tls_ok`, `authenticated`, a reject reason and
 the Ping round trip, and exits 7 when the peer cannot be reached or refuses.
+
+`peer add` also tells a running daemon to reload, so the new peer is dialled at
+once. Neither daemon has to be restarted, before or after pairing.

@@ -38,9 +38,9 @@ $ bin/syncthis --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
 $ bin/syncthis --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
 ```
 
-Both daemons re-read the peer table at the next rescan interval, so restart
-them after pairing to connect immediately. Then write a file on one side and
-watch it appear on the other:
+`peer add` tells the running daemon to reload, so both sides connect at once;
+the same happens after `folder add`, `folder set` and `folder remove`. Nothing
+has to be restarted. Write a file on one side and watch it appear on the other:
 
 ```console
 $ echo "hello from A" > /tmp/a/docs/greeting.txt
