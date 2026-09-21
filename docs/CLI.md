@@ -254,7 +254,8 @@ Writes the configuration of this device as one JSON document: the settings, the
 folders with their ignore patterns and sync windows, and the known peers.
 Without `--output`, or with `--output -`, it goes to stdout; the document is
 JSON already, so `--json` changes nothing about it. `--output FILE` writes the
-file with mode 0600 and prints a summary instead.
+file with mode 0600, also when the file was already there with a looser mode,
+and prints a summary instead.
 
 The identity is never part of a bundle: not the key pair, not the certificate,
 not the device ID, and not the device name, which is baked into the
@@ -324,8 +325,15 @@ files, and when a peer was added and last seen are kept. A folder or a peer the
 bundle repeats exactly as this device already has it is left alone and is not
 reported.
 
-`--dry-run` validates, reports what would change and writes nothing, exiting 10
-when something would change and 0 otherwise.
+`--dry-run` validates, reports what would change and writes nothing. It exits
+10 when something would change, 5 when the bundle conflicts with what is
+configured and `--replace` was not given, because conflicts are found before
+the plan, and 0 when there is nothing left to do. It never asks to confirm
+`--replace`, having nothing to overwrite.
+
+Imports of one data directory run one at a time: the second one waits on
+`import.lock` in the data directory and then sees what the first one wrote, so
+only one of them reports a folder or a peer as added.
 
 A successful import asks a running daemon to reload, so the folders, the peers
 and the limits take effect at once; see [Lifecycle](#lifecycle).
@@ -350,8 +358,10 @@ midway, and that reports what was written before it stopped, with exit 1.
 
 **Exit codes.** 2 for an unreadable file, a document that does not decode, an
 unknown field, another schema version or a configuration this device cannot
-use; 5 for conflicts; 9 for `--replace` without a confirmation; 10 for a
-`--dry-run` that would change something; 1 for a write that failed midway.
+use, which includes a listen address or a log level `config set` would refuse
+and a path two folders of the bundle share; 5 for conflicts; 9 for `--replace`
+without a confirmation; 10 for a `--dry-run` that would change something; 1 for
+a write that failed midway.
 
 ### `syncthis scan ID [--dry-run]`
 
