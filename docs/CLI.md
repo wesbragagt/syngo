@@ -34,11 +34,11 @@ show the shape of each document; the commands print them indented.
 | 1 | error | an unexpected failure |
 | 2 | usage | bad flags or arguments |
 | 3 | not initialized | the data directory has no identity; run `syncthis init` |
-| 4 | not found | the folder, peer, transfer or conflict does not exist |
+| 4 | not found | the folder, peer, transfer or conflict does not exist, or the conflict was already resolved |
 | 5 | already exists | the folder id, folder path or peer is already configured |
 | 6 | daemon unavailable | the command needs the daemon and none is running, or one already owns the data directory |
 | 7 | peer unreachable | the peer could not be dialled, refused the handshake or presented another identity |
-| 8 | integrity | content did not hash to what was expected, repair found something it cannot fix, or a conflict version asked for is no longer on disk |
+| 8 | integrity | content did not hash to what was expected, repair found something it cannot fix, a conflict version asked for is no longer on disk, or a resolution would have deleted a file that changed since the conflict was recorded |
 | 9 | confirmation required | a question had to be asked and could not be |
 | 10 | dry run | a dry run finished and something would have changed; 0 when nothing would |
 
@@ -487,7 +487,7 @@ Lists the paths both sides changed. Unresolved ones only, unless `--all` adds
 the ones already dealt with. Without FOLDER it lists every folder.
 
 Columns: `ID`, `FOLDER`, `PATH`, `REASON`, `COPY`, `PEER`, `DETECTED`,
-`RESOLVED`.
+`RESOLVED`, `STALE`.
 
 ```console
 $ syncthis conflict list --json
@@ -502,7 +502,8 @@ $ syncthis conflict list --json
     "remote_hash": "9b12…",
     "peer_id": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA",
     "detected_at": "2026-09-21T15:30:00Z",
-    "resolved": false
+    "resolved": false,
+    "stale": false
   }
 ]
 ```
@@ -518,6 +519,14 @@ $ syncthis conflict list --json
 `local_hash` is the version this device had, `remote_hash` the one the peer
 had; `remote_hash` is empty when the peer deleted the path. `conflict_path` is
 empty when nothing had to be moved aside.
+
+`stale` is `true` when neither version can be kept any more, because what is on
+disk moved on: a later round of edits changed the path, or the copy was merged
+by hand. Both files are hashed to answer it, so a listing says it without being
+asked to describe them. A stale conflict is closed with `--keep both`, after
+looking at the files; `--keep local` and `--keep remote` refuse it with exit 8.
+Nothing resolves it by itself, because a file holding content nobody decided
+about is not something a sync tool may throw away.
 
 #### Conflict copies
 
@@ -555,6 +564,7 @@ reason:   both-modified
 peer:     ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA
 detected: 2026-09-21T15:30:00Z
 resolved: no
+stale:    no
 
 local version: 3f0a…
   file:  notes/report.sync-conflict-20260921-153000-ETI3RRZ.md
@@ -569,6 +579,9 @@ remote version: 9b12…
 
 Which file holds which version is answered by hashing them, not by their
 names, so a version is found wherever it sits.
+
+`stale: yes` says that neither version is on disk in a state that could be
+kept, which is what `--keep both` is for.
 
 With `--json` the same object as `conflict list` carries a `file` object for
 what is at `path` and a `copy` object for what is at `conflict_path`, each with
@@ -586,9 +599,29 @@ deletion, so the local file goes.
 
 The version that wins is put in place with a rename, so the path never holds
 half a file. A version that is no longer on disk, because something edited both
-files since, exits 8 and changes nothing. Removing a file is confirmed like
-every other destructive command, so `--yes`, `--no-input` and `--json` apply;
-`--keep both` deletes nothing and asks nothing. A resolution that changed the
+files since, exits 8 and changes nothing.
+
+A resolution only ever deletes or overwrites a file that still holds one of the
+two versions the conflict recorded. A file holding anything else was never
+decided about, so the resolution exits 8, names that file and changes nothing:
+
+```console
+$ syncthis conflict resolve 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a --keep local --yes
+syncthis: notes/report.md has changed since the conflict was recorded: keep both versions with --keep both, or resolve again after looking at the file
+$ echo $?
+8
+```
+
+That is what a conflict `conflict list` marks `stale` looks like from the
+resolve side. `--keep both` closes it without touching a file.
+
+A conflict that was already resolved is not resolved again: it exits 4 with
+`conflict "<id>" is already resolved`, because the files it names may belong to
+a later conflict by now.
+
+Removing a file is confirmed like every other destructive command, so `--yes`,
+`--no-input` and `--json` apply; `--keep both` deletes nothing and asks
+nothing. A resolution that changed the
 folder rescans it, through the daemon when one is running.
 
 ```console
@@ -618,7 +651,12 @@ conflict, for a comparison or a merge by hand. The folder is not touched and
 the conflict stays open. The copies are named `path-<file>` and
 `conflict-<file>`; the description is `<id>.json` and names, for each copy, the
 path it came from, its hash, its size and whether it is the `local` or the
-`remote` version.
+`remote` version. Each copy keeps the permission bits of the file it came from,
+so an exported script stays runnable and a private file stays private; the
+description is written `0644`.
+
+A directory that cannot be created or written into exits 1 with a message
+naming it, for example when DIR is under a directory the user may not write to.
 
 ```console
 $ syncthis conflict export 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a /tmp/review
