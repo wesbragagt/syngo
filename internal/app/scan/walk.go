@@ -18,9 +18,9 @@ import (
 const (
 	// ReservedDir is the per-folder state directory. It is never part of a
 	// manifest, whatever the ignore rules say.
-	ReservedDir = ".syncthis"
+	ReservedDir = manifest.ReservedDir
 	// IgnoreFile is the per-folder ignore file, read from the folder root.
-	IgnoreFile = ".syncthisignore"
+	IgnoreFile = manifest.IgnoreFile
 	// ignoreFileMax bounds how much of the ignore file is read.
 	ignoreFileMax = 1 << 20
 	// cancelCheckEvery is how many visited entries pass between two context

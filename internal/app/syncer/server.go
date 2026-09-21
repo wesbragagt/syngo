@@ -95,6 +95,11 @@ func (s *Server) Chunk(ctx context.Context, peer device.ID, req ports.ChunkReque
 		}
 	}
 
+	if err := manifest.ValidRelPath(req.Path); err != nil {
+		// A peer asking for a path outside the folder is answered like
+		// one asking for a file that is not there.
+		return refuse(ports.ChunkNotFound)
+	}
 	if req.ChunkSize < transfer.MinChunkSize || req.Index < 0 {
 		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: invalid request (chunk size %d)",
 			req.Index, req.Path, req.ChunkSize)

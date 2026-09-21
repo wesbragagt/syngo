@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -43,6 +44,10 @@ var (
 	// that still holds entries the peer does not know about. It is kept, and
 	// only that one path is skipped.
 	ErrDirNotEmpty = errors.New("directory is not empty")
+	// ErrUnsafePath reports a path that would be written outside the folder
+	// root: one a peer may not name at all, or one whose parent is a
+	// symbolic link, which the operating system would follow.
+	ErrUnsafePath = errors.New("path is not inside the folder")
 )
 
 // Installer applies finished downloads and plan decisions to the filesystem.
@@ -54,6 +59,52 @@ type Installer struct {
 // NewInstaller returns an installer writing through fsys.
 func NewInstaller(fsys ports.FileSystem, hasher ports.Hasher) *Installer {
 	return &Installer{fs: fsys, hasher: hasher}
+}
+
+// safeJoin validates a folder-relative path and returns where it lands inside
+// root. It is the last of the three guards against a peer-supplied path: the
+// wire layer rejects such a manifest and the plan skips the entry, and this
+// one holds whatever called the installer.
+//
+// Besides the pure check, it refuses a path whose parents are not plain
+// directories: MkdirAll, Rename and Remove follow a symbolic link, so a peer
+// that got a link installed could otherwise write through it.
+func (i *Installer) safeJoin(root, rel string) (string, error) {
+	if err := manifest.ValidRelPath(rel); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrUnsafePath, err)
+	}
+	full := path.Join(root, rel)
+	if !strings.HasPrefix(full, path.Clean(root)+"/") {
+		return "", fmt.Errorf("%s is outside %s: %w", full, root, ErrUnsafePath)
+	}
+	if err := i.checkParents(root, rel); err != nil {
+		return "", err
+	}
+	return full, nil
+}
+
+// checkParents reports a parent directory of rel, inside root, that is a
+// symbolic link. A parent that does not exist yet ends the walk: nothing
+// beneath it exists either.
+func (i *Installer) checkParents(root, rel string) error {
+	dir := path.Clean(root)
+	for _, segment := range strings.Split(path.Dir(rel), "/") {
+		if segment == "." {
+			break
+		}
+		dir = path.Join(dir, segment)
+		info, err := i.fs.Lstat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", dir, err)
+		}
+		if info.IsSymlink() {
+			return fmt.Errorf("%s is a symbolic link: %w", dir, ErrUnsafePath)
+		}
+	}
+	return nil
 }
 
 // TempDir returns the directory holding the partial downloads of a folder.
@@ -75,7 +126,10 @@ func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 // It returns the entry describing the copy, whose Path is the name it got.
 func (i *Installer) KeepLocalAs(_ context.Context, root, rel, conflictRel string,
 	local *manifest.Entry) (manifest.Entry, error) {
-	full := path.Join(root, rel)
+	full, err := i.safeJoin(root, rel)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
 	info, err := i.fs.Lstat(full)
 	if err != nil {
 		return manifest.Entry{}, fmt.Errorf("stat %s: %w", full, err)
@@ -89,7 +143,10 @@ func (i *Installer) KeepLocalAs(_ context.Context, root, rel, conflictRel string
 	if err != nil {
 		return manifest.Entry{}, err
 	}
-	kept := path.Join(root, free)
+	kept, err := i.safeJoin(root, free)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
 	if err := i.fs.MkdirAll(path.Dir(kept), defaultDirMode); err != nil {
 		return manifest.Entry{}, fmt.Errorf("create parent of %s: %w", kept, err)
 	}
@@ -137,7 +194,10 @@ func (i *Installer) installAt(root, rel string, t transfer.Transfer,
 			t.Path, hash, t.Hash, ErrIntegrity)
 	}
 
-	final := path.Join(root, rel)
+	final, err := i.safeJoin(root, rel)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
 	if err := i.checkTarget(final, expectLocal); err != nil {
 		return manifest.Entry{}, err
 	}
@@ -191,7 +251,10 @@ func (i *Installer) sync(temp string) error {
 
 // MkDir creates a directory described by a peer's entry.
 func (i *Installer) MkDir(_ context.Context, root string, e manifest.Entry) (manifest.Entry, error) {
-	full := path.Join(root, e.Path)
+	full, err := i.safeJoin(root, e.Path)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
 	mode := fs.FileMode(e.Mode).Perm()
 	if mode == 0 {
 		mode = defaultDirMode
@@ -222,7 +285,10 @@ func (i *Installer) RemoveReplaced(ctx context.Context, root, rel string, local 
 	if err := i.CheckReplaceable(ctx, root, rel, local); err != nil {
 		return err
 	}
-	full := path.Join(root, rel)
+	full, err := i.safeJoin(root, rel)
+	if err != nil {
+		return err
+	}
 	if err := i.fs.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("replace %s: %w", full, err)
 	}
@@ -233,7 +299,10 @@ func (i *Installer) RemoveReplaced(ctx context.Context, root, rel string, local 
 // the local entry may give way, without touching anything. A file that must be
 // downloaded first asks before the download rather than after it.
 func (i *Installer) CheckReplaceable(ctx context.Context, root, rel string, local *manifest.Entry) error {
-	full := path.Join(root, rel)
+	full, err := i.safeJoin(root, rel)
+	if err != nil {
+		return err
+	}
 	info, err := i.fs.Lstat(full)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -263,7 +332,10 @@ func (i *Installer) CheckReplaceable(ctx context.Context, root, rel string, loca
 // Chmod sets the permission bits a peer announced on a local file whose
 // content already matches. It returns the entry that now describes the file.
 func (i *Installer) Chmod(_ context.Context, root string, e manifest.Entry) (manifest.Entry, error) {
-	full := path.Join(root, e.Path)
+	full, err := i.safeJoin(root, e.Path)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
 	info, err := i.fs.Lstat(full)
 	if err != nil {
 		return manifest.Entry{}, fmt.Errorf("stat %s: %w", full, err)
@@ -306,7 +378,15 @@ var errStopWalk = errors.New("stop walk")
 // Symlink creates a symbolic link described by a peer's entry, replacing a
 // link that points somewhere else.
 func (i *Installer) Symlink(_ context.Context, root string, e manifest.Entry) (manifest.Entry, error) {
-	full := path.Join(root, e.Path)
+	full, err := i.safeJoin(root, e.Path)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
+	// A target that is absolute, or that climbs out of the folder, would
+	// turn a later write through the link into a write outside the root.
+	if err := manifest.ValidLinkTarget(e.Path, e.LinkTarget); err != nil {
+		return manifest.Entry{}, fmt.Errorf("%w: %w", ErrUnsafePath, err)
+	}
 	if info, err := i.fs.Lstat(full); err == nil {
 		if !info.IsSymlink() {
 			return manifest.Entry{}, fmt.Errorf("%s is not a symlink: %w", full, ErrChangedUnderneath)
@@ -333,8 +413,11 @@ func (i *Installer) Symlink(_ context.Context, root string, e manifest.Entry) (m
 // error, and a directory that still holds files is left in place: its contents
 // are deleted first, and the next cycle removes the directory.
 func (i *Installer) Delete(_ context.Context, root, rel string) error {
-	full := path.Join(root, rel)
-	err := i.fs.Remove(full)
+	full, err := i.safeJoin(root, rel)
+	if err != nil {
+		return err
+	}
+	err = i.fs.Remove(full)
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}

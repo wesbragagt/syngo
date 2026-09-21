@@ -87,3 +87,72 @@ func TestFoldersChanged_HeaderRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestFromWireManifest_RejectsAHostileManifest proves the wire layer refuses a
+// peer that names paths outside the folder. The whole manifest goes, not the
+// single entry: a peer that sends one is not one to take anything from.
+func TestFromWireManifest_RejectsAHostileManifest(t *testing.T) {
+	hostile := []string{
+		"..", "../escape.txt", "../../escape.txt", "a/../../escape.txt",
+		"/etc/passwd", "", ".", "./a", "a//b", ".syncthis/tmp/x",
+		".syncthisignore", "a\x00b",
+	}
+	for _, p := range hostile {
+		t.Run(p, func(t *testing.T) {
+			header := manifestReplyHeader{
+				FolderID: "docs",
+				Entries: []manifestEntry{
+					{Path: "fine.txt", Kind: 1},
+					{Path: p, Kind: 1, Size: 10},
+				},
+			}
+			if _, err := fromWireManifest(header); err == nil {
+				t.Fatalf("fromWireManifest accepted the path %q", p)
+			}
+		})
+	}
+}
+
+// TestFromWireManifest_RejectsATombstoneOutsideTheFolder covers the delete
+// half: a peer must not be able to have a file removed beside the folder.
+func TestFromWireManifest_RejectsATombstoneOutsideTheFolder(t *testing.T) {
+	header := manifestReplyHeader{
+		FolderID: "docs",
+		Entries:  []manifestEntry{{Path: "../x", Kind: 1, Deleted: true}},
+	}
+	if _, err := fromWireManifest(header); err == nil {
+		t.Fatal("fromWireManifest accepted a tombstone for a path outside the folder")
+	}
+}
+
+func TestFromWireManifest_RejectsASymlinkLeavingTheFolder(t *testing.T) {
+	for _, target := range []string{"/etc", "../outside", "/tmp/outside", ".syncthis"} {
+		t.Run(target, func(t *testing.T) {
+			header := manifestReplyHeader{
+				FolderID: "docs",
+				Entries:  []manifestEntry{{Path: "a", Kind: 3, LinkTarget: target}},
+			}
+			if _, err := fromWireManifest(header); err == nil {
+				t.Fatalf("fromWireManifest accepted the link target %q", target)
+			}
+		})
+	}
+}
+
+func TestFromWireManifest_KeepsValidEntries(t *testing.T) {
+	header := manifestReplyHeader{
+		FolderID: "docs",
+		Entries: []manifestEntry{
+			{Path: "a/b.txt", Kind: 1, Size: 3},
+			{Path: "café/résumé.txt", Kind: 1, Size: 4},
+			{Path: "a/link", Kind: 3, LinkTarget: "b.txt"},
+		},
+	}
+	m, err := fromWireManifest(header)
+	if err != nil {
+		t.Fatalf("fromWireManifest error: %v", err)
+	}
+	if len(m.Entries) != 3 {
+		t.Fatalf("entries = %d, want 3", len(m.Entries))
+	}
+}

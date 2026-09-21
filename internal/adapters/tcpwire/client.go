@@ -246,6 +246,10 @@ func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Mani
 	}
 	m, err := fromWireManifest(header)
 	if err != nil {
+		// A manifest naming paths outside the folder is hostile, not
+		// merely wrong: the connection goes rather than the next
+		// request being answered by the same peer.
+		c.fail(err)
 		return manifest.Manifest{}, err
 	}
 	if m.FolderID != id {

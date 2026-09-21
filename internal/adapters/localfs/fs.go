@@ -1,5 +1,17 @@
 // Package localfs provides a ports.FileSystem backed by the local operating
-// system, never following symbolic links.
+// system.
+//
+// Which calls follow a symbolic link is what the operating system does, not
+// something this package changes:
+//
+//   - Lstat, ReadLink, Walk, Remove and Rename look at the last path component
+//     itself, so a link is reported or moved rather than followed;
+//   - Open, ReadAt, MkdirAll, CreateTemp, OpenTemp, SyncDir, Chmod and Chtimes
+//     follow a link in the last component;
+//   - every call follows a link in a parent component, whichever it is.
+//
+// A caller that accepts paths from a peer must therefore check the parents
+// itself; syncer.Installer does.
 package localfs
 
 import (

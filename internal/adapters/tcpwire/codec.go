@@ -241,6 +241,17 @@ func fromWireManifest(h manifestReplyHeader) (manifest.Manifest, error) {
 	m := manifest.New(folder.ID(h.FolderID))
 	m.Sequence = h.Sequence
 	for _, e := range h.Entries {
+		// A peer may only name paths inside the folder. One that does
+		// otherwise is not a peer to take anything from, so the whole
+		// manifest is refused rather than the single entry dropped.
+		if err := manifest.ValidRelPath(e.Path); err != nil {
+			return manifest.Manifest{}, err
+		}
+		if manifest.Kind(e.Kind) == manifest.KindSymlink && !e.Deleted {
+			if err := manifest.ValidLinkTarget(e.Path, e.LinkTarget); err != nil {
+				return manifest.Manifest{}, err
+			}
+		}
 		hash, err := manifest.ParseHash(e.Hash)
 		if err != nil {
 			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)

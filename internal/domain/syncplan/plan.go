@@ -78,6 +78,7 @@ const (
 	ReasonReplaceVsModify   = "replace-vs-modify"
 	ReasonModeChanged       = "mode-changed"
 	ReasonModeUnknown       = "mode-baseline-unknown"
+	ReasonInvalidPath       = "invalid-path"
 )
 
 // Item is one decision in a plan, describing what to do with Path.
@@ -144,6 +145,18 @@ func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
 // an empty reason means "nothing to record at all".
 func decide(local, remote *manifest.Entry, f folder.Folder) Item {
 	item := Item{Path: remote.Path, Local: local, Remote: remote}
+
+	// A path the peer may not name is skipped rather than acted on. The
+	// wire layer already refuses such a manifest; this is the second of
+	// the three places that check, so a plan is safe whatever built it.
+	if err := manifest.ValidRelPath(remote.Path); err != nil {
+		return with(item, ActionNone, ReasonInvalidPath)
+	}
+	if remote.Kind == manifest.KindSymlink && !remote.Deleted {
+		if err := manifest.ValidLinkTarget(remote.Path, remote.LinkTarget); err != nil {
+			return with(item, ActionNone, ReasonInvalidPath)
+		}
+	}
 
 	if remote.Deleted {
 		return remoteDeleted(item, local, f)
