@@ -124,6 +124,7 @@ func NewPeerConn(id device.ID, name string, handler ports.PeerHandler, latency t
 		Handler: handler,
 		Latency: latency,
 		changes: make(chan folder.ID, 16),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -141,7 +142,9 @@ type PeerConn struct {
 	manifests []folder.ID
 	chunks    []ports.ChunkRequest
 
-	changes chan folder.ID
+	changes   chan folder.ID
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // RemoteID returns the peer's device ID.
@@ -231,10 +234,14 @@ func (c *PeerConn) Notify(id folder.ID) {
 // Notifications reports folders the peer says have changed.
 func (c *PeerConn) Notifications() <-chan folder.ID { return c.changes }
 
-// Close marks the connection closed.
+// Done is closed once the connection has ended.
+func (c *PeerConn) Done() <-chan struct{} { return c.done }
+
+// Close marks the connection closed. It is safe to call more than once.
 func (c *PeerConn) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.closed = true
+	c.mu.Unlock()
+	c.closeOnce.Do(func() { close(c.done) })
 	return nil
 }

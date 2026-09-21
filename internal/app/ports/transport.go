@@ -131,6 +131,10 @@ type PeerConn interface {
 	RequestChunk(ctx context.Context, req ChunkRequest) (ChunkData, error)
 	// Notifications reports folders the peer says have changed.
 	Notifications() <-chan folder.ID
+	// Done is closed once the connection has ended, whether it failed or
+	// was closed here. A caller watching it notices a peer that went away
+	// without waiting for its next request to time out.
+	Done() <-chan struct{}
 	Close() error
 }
 

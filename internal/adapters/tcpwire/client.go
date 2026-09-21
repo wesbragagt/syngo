@@ -194,6 +194,9 @@ func (c *conn) RemoteHello() ports.HelloInfo {
 // never closed; it simply stops delivering once the connection ends.
 func (c *conn) Notifications() <-chan folder.ID { return c.notifications }
 
+// Done is closed once the connection has ended.
+func (c *conn) Done() <-chan struct{} { return c.done }
+
 // Ping measures the round trip to the peer.
 func (c *conn) Ping(ctx context.Context) (time.Duration, error) {
 	nonce := c.nonce.Add(1)

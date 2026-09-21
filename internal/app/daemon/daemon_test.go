@@ -872,3 +872,46 @@ func TestClient_ReloadWithoutADaemon(t *testing.T) {
 		t.Fatalf("reload without a daemon = %v, want ErrDaemonUnavailable", err)
 	}
 }
+
+func TestPeerLoop_ClosedConnectionIsReportedWithoutWaitingForATick(t *testing.T) {
+	const peerID = device.ID("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+	// Both the ping and the sync tick are an hour away, so only the read
+	// loop ending can tell the daemon that the peer is gone.
+	h := startDaemonWithPeers(t, daemon.Config{
+		RescanInterval: time.Hour, SyncInterval: time.Hour, PeerPingInterval: time.Hour,
+	}, []device.Device{testPeer(peerID, "nas:22000")}, testFolder("docs", false))
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe: ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+	})
+
+	var conn *fakes.PeerConn
+	waitFor(t, "the peer connection", func() bool {
+		conns := h.dialer.Conns()
+		if len(conns) == 0 {
+			return false
+		}
+		conn = conns[0]
+		return peerConnected(t, h)
+	})
+
+	// The peer goes away: its connection ends without anything being asked
+	// of it, and it is not there to be dialled again.
+	h.dialer.Set("nas:22000", fakes.PeerScript{Err: &ports.ConnectError{
+		Stage: ports.StageDial, Err: errors.New("connection refused"),
+	}})
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close the peer connection: %v", err)
+	}
+
+	waitFor(t, "the peer to be reported as disconnected", func() bool { return !peerConnected(t, h) })
+}
+
+// peerConnected reports whether status says the only peer is connected.
+func peerConnected(t *testing.T, h *harness) bool {
+	t.Helper()
+	report, err := h.daemon.Status(h.ctx)
+	if err != nil || len(report.Peers) != 1 {
+		return false
+	}
+	return report.Peers[0].Connected
+}

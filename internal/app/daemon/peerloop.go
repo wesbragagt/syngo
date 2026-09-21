@@ -105,6 +105,11 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-conn.Done():
+			// The read loop ended, so the peer is gone now rather
+			// than at the next ping or sync tick.
+			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{Error: "connection closed"})
+			return
 		case id := <-conn.Notifications():
 			if !l.syncCheck(ctx, conn, id, log) {
 				return
