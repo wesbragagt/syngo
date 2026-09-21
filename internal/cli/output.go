@@ -43,10 +43,10 @@ func (p Printer) Table(headers []string, rows [][]string) error {
 
 	tw := tabwriter.NewWriter(p.W, 0, 0, 2, ' ', 0)
 	if len(headers) > 0 {
-		fmt.Fprintln(tw, strings.Join(headers, "\t"))
+		_, _ = fmt.Fprintln(tw, strings.Join(headers, "\t"))
 	}
 	for _, row := range rows {
-		fmt.Fprintln(tw, strings.Join(row, "\t"))
+		_, _ = fmt.Fprintln(tw, strings.Join(row, "\t"))
 	}
 	return tw.Flush()
 }
@@ -63,5 +63,5 @@ func printError(w io.Writer, asJSON bool, code int, err error) {
 		_ = enc.Encode(payload)
 		return
 	}
-	fmt.Fprintln(w, "syncthis:", err.Error())
+	_, _ = fmt.Fprintln(w, "syncthis:", err.Error())
 }

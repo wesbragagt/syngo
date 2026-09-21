@@ -131,7 +131,7 @@ func TestFileSystem_OpenReturnsWholeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// SkipDir, returned by a WalkFunc, tells Walk not to descend into a directory.
+// SkipDir is returned by a WalkFunc to tell Walk not to descend into a directory.
 var SkipDir = fs.SkipDir
 
 // FileInfo describes one filesystem object, without following symlinks.
