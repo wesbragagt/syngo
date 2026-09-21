@@ -299,3 +299,18 @@ func parseChangeType(s string) manifest.ChangeType {
 		return 0
 	}
 }
+
+// SyncFolderSequence raises the folder sequence counter above every sequence
+// already assigned to a file of that folder, repairing a counter that fell
+// behind after an interrupted write.
+func (s *Store) SyncFolderSequence(ctx context.Context, id folder.ID) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO folder_sequence (folder_id, next)
+		VALUES (?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM files WHERE folder_id = ?))
+		ON CONFLICT(folder_id) DO UPDATE SET next = MAX(next, excluded.next)`,
+		string(id), string(id))
+	if err != nil {
+		return fmt.Errorf("sync sequence of folder %q: %w", id, err)
+	}
+	return nil
+}

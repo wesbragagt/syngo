@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -97,6 +98,9 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 		newInitCmd(deps),
 		newFolderCmd(deps),
 		newStatusCmd(deps),
+		newScanCmd(deps),
+		newRescanCmd(deps),
+		newRepairCmd(deps),
 	)
 	return root
 }
@@ -114,6 +118,12 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	code := codeOf(err)
+	// A bare exit code carries no message: the command printed its own
+	// output already, as dry runs do.
+	var bare *ExitCodeError
+	if errors.As(err, &bare) && bare.Err == nil {
+		return code
+	}
 	// The --json flag may not have been parsed yet when the failure is a
 	// usage error, so fall back to scanning the raw arguments.
 	if deps.Global.JSON || hasJSONFlag(args) {

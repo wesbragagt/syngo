@@ -78,6 +78,10 @@ type FileStore interface {
 	SetSyncedHash(ctx context.Context, id folder.ID, path string, h manifest.Hash) error
 	FolderStats(ctx context.Context, id folder.ID) (FolderStats, error)
 	AppendChanges(ctx context.Context, id folder.ID, changes []manifest.Change, now time.Time) error
+	// SyncFolderSequence raises the folder sequence counter above every
+	// sequence already assigned to a file of that folder. It is a no-op when
+	// the counter is already ahead.
+	SyncFolderSequence(ctx context.Context, id folder.ID) error
 	RecentChanges(ctx context.Context, id folder.ID, limit int) ([]ChangeRecord, error)
 }
 

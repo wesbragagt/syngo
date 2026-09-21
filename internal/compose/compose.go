@@ -18,6 +18,8 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/app/repair"
+	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 )
 
@@ -55,6 +57,10 @@ type App struct {
 
 	Folders *folders.Service
 	Status  *status.Service
+	// Scan and Repair need a device identity to stamp the rows they write,
+	// so they are nil until the data directory has been initialized.
+	Scan   *scan.Scanner
+	Repair *repair.Service
 }
 
 // Build opens the data directory and wires the application. It does not create
@@ -163,6 +169,8 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 	}
 	if identity != nil {
 		app.Status = status.New(store, identity, clock, dir)
+		app.Scan = scan.New(fs, app.Hasher, store, clock, identity, events, logger)
+		app.Repair = repair.New(fs, app.Hasher, store, clock, identity)
 	}
 	return app, nil
 }

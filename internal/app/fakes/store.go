@@ -247,6 +247,31 @@ func (s *Store) AppendChanges(_ context.Context, id folder.ID, changes []manifes
 	return nil
 }
 
+// SyncFolderSequence raises the folder sequence counter above every sequence
+// already assigned to a file of that folder.
+func (s *Store) SyncFolderSequence(_ context.Context, id folder.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var maxSeq uint64
+	for _, e := range s.files[id] {
+		if e.Sequence > maxSeq {
+			maxSeq = e.Sequence
+		}
+	}
+	if maxSeq > s.sequences[id] {
+		s.sequences[id] = maxSeq
+	}
+	return nil
+}
+
+// SetSequence forces the folder sequence counter, so tests can simulate a
+// counter that fell behind the rows it should be ahead of.
+func (s *Store) SetSequence(id folder.ID, seq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sequences[id] = seq
+}
+
 // RecentChanges returns the most recent change records, newest first.
 func (s *Store) RecentChanges(_ context.Context, id folder.ID, limit int) ([]ports.ChangeRecord, error) {
 	s.mu.Lock()

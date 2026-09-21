@@ -43,6 +43,11 @@ func (e *ExitCodeError) Error() string {
 // Unwrap returns the underlying error.
 func (e *ExitCodeError) Unwrap() error { return e.Err }
 
+// ErrDryRunChanges reports that a dry run finished and would have changed
+// something. It carries no message: the command has already printed its
+// report, so Execute only turns it into the exit code.
+var ErrDryRunChanges = &ExitCodeError{Code: ExitDryRun}
+
 // Errorf returns an ExitError with the given code and a formatted message.
 func Errorf(code int, format string, a ...any) error {
 	return &ExitCodeError{Code: code, Err: fmt.Errorf(format, a...)}
