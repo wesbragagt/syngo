@@ -91,6 +91,13 @@ Starts synchronizing a directory.
 | `--no-empty-dirs` | off | do not keep directories that hold nothing |
 | `--ignore PATTERN` | none | gitignore-style pattern; repeatable |
 
+The ignore rules are the patterns given here plus the lines of
+`<PATH>/.syncthisignore`, and they decide both what is scanned and what is
+installed: a path this device ignores is not pulled from a peer either, so an
+ignored file cannot arrive, be recorded, and be read as deleted by the next
+scan. `.syncthis` and `.syncthisignore` are always ignored and are never
+accepted from a peer.
+
 ```console
 $ syncthis folder add ~/docs --id docs --json
 {
@@ -188,6 +195,10 @@ database knows and the disk does not become tombstones, files whose size or
 modification time moved are rehashed, transfers whose partial file is gone are
 reset, partial files no transfer claims are deleted, and the folder sequence is
 corrected. It runs inside the daemon when one is running.
+
+A folder whose root does not exist, or is no longer a directory, stops the
+command instead: every entry would look missing and the folder would be marked
+deleted for its peers. Mount the directory again, or remove the folder.
 
 ```console
 $ syncthis repair docs --json
@@ -479,7 +490,12 @@ reached. `action` is one of
 `reason` is one of `in-sync`, `missing-locally`, `remote-newer`, `local-newer`,
 `both-modified`, `delete-vs-modify`, `delete-policy-never`,
 `symlink-policy-skip`, `remote-deleted`, `kind-changed`, `replace-vs-modify`,
-`mode-changed` or `mode-baseline-unknown`.
+`mode-changed`, `mode-baseline-unknown` or `invalid-path`.
+
+`invalid-path` is a path a peer may not name at all, such as one that climbs
+out of the folder or names the state directory, or a symbolic link whose target
+leaves the folder. Such an entry is skipped rather than acted on. A path the
+folder's ignore rules cover does not appear in the plan at all.
 
 ### `syncthis conflict list [FOLDER] [--all]`
 

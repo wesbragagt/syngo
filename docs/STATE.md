@@ -10,13 +10,21 @@ Resolved from `--data-dir`, else `$SYNCTHIS_DATA_DIR`, else
 `$XDG_DATA_HOME/syncthis`, else `~/.local/share/syncthis`.
 
 ```
-config.json      device name, listen address, chunk size and intervals
+config.json      device name, listen address, chunk size, size cap and intervals
 identity.key     ed25519 private key, PKCS#8 PEM, mode 0600
 identity.crt     self-signed certificate; its public key is the device ID
 state.db         SQLite database, WAL mode
-control.sock     unix socket, only while the daemon runs
+control.sock     unix socket, mode 0600, only while the daemon runs
 daemon.pid       pid of the running daemon
 ```
+
+The control socket is chmodded to 0600 as soon as it is bound: every command
+the daemon answers is one its owner could run themselves, so no other user of
+the machine may speak to it.
+
+`max_file_size` in `config.json` is the largest file this device accepts from a
+peer, one tebibyte unless it says otherwise. A manifest announcing a bigger one
+is refused whole.
 
 ## Folder state directory
 
@@ -30,6 +38,10 @@ install atomic. The scanner always ignores `.syncthis`, whatever the ignore
 rules say. `syncthis repair` removes partial files no unfinished transfer
 claims.
 
+`<folder>/.syncthisignore` is read from the folder root and belongs to this
+device alone. It is never scanned, never sent to a peer, and never accepted
+from one: a peer that names it in its manifest has its manifest refused.
+
 ## Database
 
 `sqlitestore.Open` sets `journal_mode=WAL`, `synchronous=NORMAL`,
@@ -37,7 +49,14 @@ claims.
 pragmas hold whichever pooled connection a statement runs on, and transactions
 take the write lock up front. The daemon opens the database with one
 connection, so writes serialize in Go rather than in SQLite. Every multi-row
-write is a transaction of at most 500 rows.
+write is a transaction of at most 500 rows, the chunk rows of a new transfer
+included. A save interrupted between two batches is not a loss: the chunk list
+is rebuilt from the chunk count the `transfers` row holds, and a row that was
+never written is simply an unverified chunk.
+
+The database path is percent-encoded into the connection string, so a data
+directory whose name holds a `?` or a `#` still gets its own database with the
+pragmas applied.
 
 Because the database is in WAL mode with a five second busy timeout, a command
 such as `syncthis sync-plan` or `syncthis status` reads it while the daemon

@@ -34,6 +34,13 @@ A frame longer than 64 MiB is refused without reading its body and the
 connection is closed: the reader cannot find the next boundary. A frame whose
 header is longer than its body is refused the same way.
 
+Until the Hello exchange has finished the limit is 64 KiB, not 64 MiB. Anyone
+who can complete a TLS handshake can send a frame, so what a peer may make this
+device allocate before it has said who it is stays small; a Hello is a few
+hundred bytes. At most 32 connections run their TLS handshake and Hello
+exchange at the same time, and one that cannot get a slot within the handshake
+timeout is dropped.
+
 ## Message types
 
 | Type | Name | Direction | Header |
@@ -61,6 +68,30 @@ the receiver can tell "never had it" from "deleted". One entry is
  "mode":420,"hash":"<64 hex>","link_target":"","deleted":false,
  "modified_by":"<device id>","sequence":7,"synced_hash":"<64 hex>"}
 ```
+
+Every entry is validated before anything is built from it, and one bad entry
+refuses the whole manifest and closes the connection: a peer that sends one is
+not a peer to take anything from.
+
+`path` is folder-relative and slash-separated. It must be non-empty, must not
+start with a `/`, must contain no `.` or `..` or empty segment and no NUL byte,
+and must name neither `.syncthis` nor `.syncthisignore` nor anything beneath
+them. `.syncthis` is this device's own state directory; `.syncthisignore` is
+the local user's statement about what this device wants, so a peer may not
+write it. The rules are `manifest.ValidRelPath`, and the plan and the installer
+apply them again on their own.
+
+`link_target` is interpreted relative to the directory holding the link and
+must stay inside the folder: an absolute target, or one that climbs out with
+`..`, or one that reaches the state directory, refuses the manifest
+(`manifest.ValidLinkTarget`). The receiver also refuses to write through a
+parent that is a symbolic link, whatever the manifest said.
+
+`size` must be between zero and the receiver's `max_file_size`, which defaults
+to one tebibyte. The size decides how many chunks a transfer is split into and
+how many journal rows it takes, so it is not a number a peer may choose freely.
+A single file that would need more than 4 Mi chunks is refused on its own,
+leaving the rest of the cycle to run.
 
 `kind` is 1 for a file, 2 for a directory, 3 for a symlink. `hash` is the
 BLAKE3-256 of the contents, empty for directories, symlinks and tombstones.
@@ -106,6 +137,9 @@ with `ChunkError{hash_changed}` once the file has moved on, so two halves of
 two versions can never end up in one file. `chunk_hash` is the BLAKE3-256 of
 the payload; the receiver verifies it before the bytes reach the disk.
 
+A `path` that breaks the rules above is answered with `ChunkError{not_found}`,
+like a request for a file the sender does not have.
+
 `reason` is one of `not_found`, `hash_changed`, `folder_unknown`,
 `folder_receive_only` or `paused`.
 
@@ -137,7 +171,10 @@ a peer removed while it is connected stops being served at once.
    pairing starts. Each side runs `peer add` against the other.
 4. The client then drives the connection: one request in flight at a time. The
    client read loop routes `ManifestChanged` and `FoldersChanged` frames to a
-   notification channel and every other frame to the pending request.
+   notification channel and every other frame to the pending request. Frames
+   carry no request id, so a reply has nowhere to go once its caller has given
+   up: a request that times out ends the connection rather than leaving a late
+   reply to answer the next question. The peer loop dials again.
 5. The client pings after 30 seconds of silence; both sides give up on a
    connection that says nothing for 90 seconds.
 6. Each daemon dials every known peer and pulls from it, so a pair of devices

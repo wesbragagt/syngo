@@ -35,7 +35,7 @@ build when a rule is broken.
 |---|---|---|
 | `Clock` | `sysclock` | the wall clock |
 | `Hasher` | `blake3hash` | BLAKE3-256 over a reader or a byte slice |
-| `FileSystem` | `localfs` | reading, walking, writing and flushing files without following symlinks |
+| `FileSystem` | `localfs` | reading, walking, writing and flushing files; which calls follow a symbolic link is the operating system's answer, listed in the package doc |
 | `MetadataStore` | `sqlitestore` | the database, as folders, files, devices, transfers and conflicts |
 | `Watcher` | `fsnotifywatch` | filesystem change notifications |
 | `Dialer`, `Listener`, `PeerConn` | `tcpwire` | the peer protocol |
@@ -58,6 +58,16 @@ a mode, a delete policy and its ignore patterns.
 tombstones included, each with a content hash and a per-folder sequence number.
 
 **Entry kind.** File, directory or symbolic link.
+
+**Valid path.** `manifest.ValidRelPath` is the one statement of which paths a
+manifest may name: relative, slash-separated, no `.` or `..` or empty segment,
+no NUL byte, and not the reserved `.syncthis` or `.syncthisignore`. It is pure
+domain code because three layers apply it to the same peer input: the wire
+refuses such a manifest, `syncplan.Plan` skips the entry with reason
+`invalid-path`, and `syncer.Installer` refuses the call. `ValidLinkTarget` does
+the same for where a stored symbolic link may point. The installer adds what
+only a filesystem can answer: it refuses to write through a parent that is a
+symbolic link.
 
 **Tombstone.** An entry marked deleted. It stays in the manifest so a peer can
 tell "deleted" from "never had it".
