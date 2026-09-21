@@ -1,10 +1,15 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
 
-// Log levels and formats accepted by the global flags.
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+)
+
+// Log levels and formats accepted by the global flags. The levels are the ones
+// an imported bundle is checked against too.
 var (
-	logLevels  = []string{"debug", "info", "warn", "error"}
+	logLevels  = ports.LogLevels
 	logFormats = []string{"text", "json"}
 )
 

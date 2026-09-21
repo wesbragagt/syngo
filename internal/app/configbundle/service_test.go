@@ -48,8 +48,18 @@ func newNode(t *testing.T, settings ports.Settings) *node {
 	n := &node{store: fakes.NewStore(), settings: fakes.NewSettings(settings), fs: fakes.NewFileSystem()}
 	n.fs.AddDir("/home/u/docs", 0o755)
 	n.fs.AddDir("/home/u/notes", 0o755)
-	n.svc = configbundle.New(n.store, n.store, n.settings, n.fs, fakes.NewClock(at))
+	n.svc = configbundle.New(n.store, n.store, n.settings, n.fs, fakes.NewClock(at), validateListen)
 	return n
+}
+
+// validateListen stands in for the check the network adapter makes, which the
+// app may not import: an address is host:port.
+func validateListen(addr string) error {
+	host, port, ok := strings.Cut(addr, ":")
+	if !ok || port == "" || strings.Contains(host, " ") {
+		return errors.New("must be host:port")
+	}
+	return nil
 }
 
 // docsFolder returns a configured folder with everything a bundle carries.
@@ -399,5 +409,73 @@ func TestImport_ReplaceOfAnIdenticalConfigurationIsNotReported(t *testing.T) {
 	}
 	if result.Changed() {
 		t.Fatalf("result = %+v, want nothing reported for an unchanged configuration", result)
+	}
+}
+
+func TestImport_TwoFoldersWithTheSamePathAreInvalidAndWriteNothing(t *testing.T) {
+	ctx := context.Background()
+	bundle, err := configured(t).svc.Export(ctx)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	// A second folder of the same bundle claims the path of the first.
+	bundle.Folders = append(bundle.Folders, configbundle.Folder{
+		ID: "notes", Path: bundle.Folders[0].Path, Mode: string(folder.ModeSendReceive),
+		DeletePolicy: string(folder.DeletePropagate), Symlinks: string(folder.SymlinkSkip),
+		IgnorePatterns: []string{}, SyncWindows: []string{},
+	})
+
+	b := newNode(t, deviceSettings())
+	_, err = b.svc.Import(ctx, bundle, configbundle.ImportOptions{})
+	if !errors.Is(err, configbundle.ErrInvalidBundle) {
+		t.Fatalf("import error = %v, want ErrInvalidBundle", err)
+	}
+	for _, want := range []string{"/home/u/docs", `"docs"`, `"notes"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to name %s", err, want)
+		}
+	}
+	folders, err := b.store.ListFolders(ctx)
+	if err != nil {
+		t.Fatalf("list folders: %v", err)
+	}
+	if len(folders) != 0 {
+		t.Fatalf("%d folders written by a refused import, want none", len(folders))
+	}
+}
+
+func TestImport_SettingsTheCommandWouldRefuseAreInvalid(t *testing.T) {
+	ctx := context.Background()
+	source := configured(t)
+	b := newNode(t, deviceSettings())
+
+	cases := []struct {
+		name  string
+		apply func(*configbundle.Bundle)
+	}{
+		{"log level", func(bundle *configbundle.Bundle) { bundle.Settings.LogLevel = "loud" }},
+		{"listen", func(bundle *configbundle.Bundle) { bundle.Settings.Listen = "not an address" }},
+		{"empty listen", func(bundle *configbundle.Bundle) { bundle.Settings.Listen = "" }},
+	}
+	for _, c := range cases {
+		bad, err := source.svc.Export(ctx)
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		c.apply(&bad)
+		_, err = b.svc.Import(ctx, bad, configbundle.ImportOptions{})
+		if !errors.Is(err, configbundle.ErrInvalidBundle) {
+			t.Fatalf("import with a bad %s = %v, want ErrInvalidBundle", c.name, err)
+		}
+		field := "listen"
+		if c.name == "log level" {
+			field = "log_level"
+		}
+		if !strings.Contains(err.Error(), field) {
+			t.Fatalf("error = %q, want it to name %s", err, field)
+		}
+		if len(b.settings.Saved()) != 0 {
+			t.Fatalf("a refused import wrote the settings")
+		}
 	}
 }

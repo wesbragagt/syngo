@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -257,4 +258,156 @@ func mustMarshal(t *testing.T, v any) string {
 		t.Fatalf("marshal: %v", err)
 	}
 	return string(raw)
+}
+
+// writeBundle re-encodes a bundle into a new file and returns its path.
+func writeBundle(t *testing.T, b configbundle.Bundle) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "rewritten.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	if err := configbundle.Encode(f, b); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return path
+}
+
+func TestConfigImport_TwoFoldersSharingAPathExit2BeforeAnyWrite(t *testing.T) {
+	a := sourceEnv(t)
+	bundle := decodeBundleFile(t, exportBundle(t, a))
+	bundle.Folders = append(bundle.Folders, configbundle.Folder{
+		ID: "notes", Path: bundle.Folders[0].Path, Mode: "sendreceive",
+		DeletePolicy: "propagate", Symlinks: "skip",
+		IgnorePatterns: []string{}, SyncWindows: []string{},
+	})
+	file := writeBundle(t, bundle)
+
+	c := newEnv(t)
+	c.init(t)
+	code, _, stderr := c.run("", "config", "import", file)
+	if code != cli.ExitUsage {
+		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitUsage, stderr)
+	}
+	for _, want := range []string{bundle.Folders[0].Path, `"docs"`, `"notes"`} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr = %q, want it to name %s", stderr, want)
+		}
+	}
+	if _, stdout, _ := c.run("", "folder", "list", "--json"); !strings.Contains(stdout, "[]") {
+		t.Fatalf("folder list = %q, want no folder written", stdout)
+	}
+}
+
+func TestConfigImport_SettingsTheCommandWouldRefuseExit2(t *testing.T) {
+	a := sourceEnv(t)
+	source := decodeBundleFile(t, exportBundle(t, a))
+
+	cases := []struct {
+		name  string
+		apply func(*configbundle.Bundle)
+		field string
+	}{
+		{"log level", func(b *configbundle.Bundle) { b.Settings.LogLevel = "loud" }, "log_level"},
+		{"listen", func(b *configbundle.Bundle) { b.Settings.Listen = "not an address" }, "listen"},
+		{"empty listen", func(b *configbundle.Bundle) { b.Settings.Listen = "" }, "listen"},
+	}
+	for _, tc := range cases {
+		bundle := source
+		tc.apply(&bundle)
+		file := writeBundle(t, bundle)
+
+		c := newEnv(t)
+		c.init(t)
+		code, _, stderr := c.run("", "config", "import", file)
+		if code != cli.ExitUsage {
+			t.Fatalf("%s: exit = %d, want %d (stderr: %s)", tc.name, code, cli.ExitUsage, stderr)
+		}
+		if !strings.Contains(stderr, tc.field) {
+			t.Fatalf("%s: stderr = %q, want it to name %s", tc.name, stderr, tc.field)
+		}
+	}
+}
+
+func TestConfigExport_OutputOverALooserFileIs0600(t *testing.T) {
+	a := sourceEnv(t)
+	file := filepath.Join(t.TempDir(), "existing.json")
+	if err := os.WriteFile(file, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", file, err)
+	}
+	if code, _, stderr := a.run("", "config", "export", "--output", file); code != cli.ExitOK {
+		t.Fatalf("export exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatalf("stat %s: %v", file, err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestConfigImport_DryRunReplaceDoesNotAskToConfirm(t *testing.T) {
+	a := sourceEnv(t)
+	file := exportBundle(t, a)
+
+	c := newEnv(t)
+	c.init(t)
+	// --no-input would fail any confirmation, and a dry run writes
+	// nothing, so there is nothing to confirm.
+	code, stdout, stderr := c.run("", "--no-input", "config", "import", file, "--dry-run", "--replace")
+	if code != cli.ExitDryRun {
+		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitDryRun, stderr)
+	}
+	if !strings.Contains(stdout, "folder docs: added") {
+		t.Fatalf("output = %q, want the plan", stdout)
+	}
+	if strings.Contains(stdout, "[y/N]") {
+		t.Fatalf("output = %q, want no prompt", stdout)
+	}
+}
+
+func TestConfigImport_ConcurrentImportsOnlyOneAdds(t *testing.T) {
+	a := sourceEnv(t)
+	file := exportBundle(t, a)
+
+	c := newEnv(t)
+	c.init(t)
+
+	type outcome struct {
+		code   int
+		stdout string
+		stderr string
+	}
+	results := make([]outcome, 2)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			code, stdout, stderr := c.run("", "config", "import", file)
+			results[i] = outcome{code, stdout, stderr}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	var added, conflicted int
+	for _, r := range results {
+		switch {
+		case r.code == cli.ExitOK && strings.Contains(r.stdout, "folder docs: added"):
+			added++
+		case r.code == cli.ExitAlreadyExists:
+			conflicted++
+		}
+	}
+	if added != 1 || conflicted != 1 {
+		t.Fatalf("outcomes = %+v, want one import that added and one that found conflicts", results)
+	}
 }

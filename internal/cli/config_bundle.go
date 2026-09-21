@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesbragagt/syncthis/internal/app/configbundle"
+	"github.com/wesbragagt/syncthis/internal/compose"
 )
 
 // bundleFileMode is what `config export --output` writes with. The document
@@ -56,6 +57,11 @@ func newConfigExportCmd(deps *Deps) *cobra.Command {
 			if err := os.WriteFile(output, []byte(buf.String()), bundleFileMode); err != nil {
 				return fmt.Errorf("write %s: %w", output, err)
 			}
+			// WriteFile only applies the mode to a file it creates,
+			// so an export over a looser file would keep that mode.
+			if err := os.Chmod(output, bundleFileMode); err != nil {
+				return fmt.Errorf("chmod %s: %w", output, err)
+			}
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(map[string]any{
 					"written": output, "folders": len(bundle.Folders), "peers": len(bundle.Peers),
@@ -89,7 +95,9 @@ func newConfigImportCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if replace {
+			// A dry run writes nothing, so --replace has nothing
+			// destructive to confirm.
+			if replace && !dryRun {
 				if err := deps.confirm(
 					"replace the folders and peers this bundle names"); err != nil {
 					return err
@@ -101,6 +109,15 @@ func newConfigImportCmd(deps *Deps) *cobra.Command {
 				return err
 			}
 			defer func() { _ = app.Close() }()
+
+			// Conflict detection and the writes have to be one
+			// import against one data directory, or two at once
+			// both report what only one of them wrote.
+			unlock, err := compose.LockImport(app.DataDir)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 
 			result, err := app.Bundle.Import(cmd.Context(), bundle,
 				configbundle.ImportOptions{Replace: replace, DryRun: dryRun})

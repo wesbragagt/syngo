@@ -20,17 +20,21 @@ import (
 // not transactional across the three stores: folders, peers and settings are
 // written one after another, and a failure midway reports what was written.
 type Service struct {
-	folders  ports.FolderStore
-	devices  ports.DeviceStore
-	settings ports.SettingsStore
-	fs       ports.FileSystem
-	clock    ports.Clock
+	folders        ports.FolderStore
+	devices        ports.DeviceStore
+	settings       ports.SettingsStore
+	fs             ports.FileSystem
+	clock          ports.Clock
+	validateListen ports.ValidateListen
 }
 
 // New returns a bundle service over the stores of one data directory.
+// validateListen is the same check `config set --listen` makes, so a bundle
+// cannot write an address the command would have refused.
 func New(folders ports.FolderStore, devices ports.DeviceStore, settings ports.SettingsStore,
-	fs ports.FileSystem, clock ports.Clock) *Service {
-	return &Service{folders: folders, devices: devices, settings: settings, fs: fs, clock: clock}
+	fs ports.FileSystem, clock ports.Clock, validateListen ports.ValidateListen) *Service {
+	return &Service{folders: folders, devices: devices, settings: settings, fs: fs, clock: clock,
+		validateListen: validateListen}
 }
 
 // Export reads the configuration as it is now.
@@ -271,13 +275,18 @@ func (r *Result) record(planned Result, id string, isFolder bool) {
 // program could not act on. It runs over the whole document, so a bundle is
 // never half applied because its last folder was wrong.
 func (s *Service) parse(_ context.Context, b Bundle) ([]folder.Folder, []device.Device, ports.Settings, error) {
-	settings, err := parseSettings(b.Settings)
+	settings, err := parseSettings(b.Settings, s.validateListen)
 	if err != nil {
 		return nil, nil, ports.Settings{}, err
 	}
 
 	folders := make([]folder.Folder, 0, len(b.Folders))
 	seenFolders := make(map[folder.ID]struct{}, len(b.Folders))
+	// Two ids cannot synchronize the same directory, and the path is only
+	// known to be clean once the folder validated, so the bundle is checked
+	// against itself here rather than left to the store, which would refuse
+	// the second folder after the first was written.
+	seenPaths := make(map[string]folder.ID, len(b.Folders))
 	for _, item := range b.Folders {
 		f, err := s.parseFolder(item)
 		if err != nil {
@@ -287,7 +296,13 @@ func (s *Service) parse(_ context.Context, b Bundle) ([]folder.Folder, []device.
 			return nil, nil, ports.Settings{},
 				fmt.Errorf("%w: folder %q is listed twice", ErrInvalidBundle, f.ID)
 		}
+		if first, ok := seenPaths[f.Path]; ok {
+			return nil, nil, ports.Settings{},
+				fmt.Errorf("%w: path %s is listed by folder %q and folder %q",
+					ErrInvalidBundle, f.Path, first, f.ID)
+		}
 		seenFolders[f.ID] = struct{}{}
+		seenPaths[f.Path] = f.ID
 		folders = append(folders, f)
 	}
 
@@ -409,7 +424,7 @@ func settingsOf(s ports.Settings) Settings {
 
 // parseSettings reads the settings of a bundle, refusing values the daemon
 // could not run with.
-func parseSettings(s Settings) (ports.Settings, error) {
+func parseSettings(s Settings, validateListen ports.ValidateListen) (ports.Settings, error) {
 	rescan, err := time.ParseDuration(s.RescanInterval)
 	if err != nil {
 		return ports.Settings{}, fmt.Errorf("%w: rescan_interval %q: %v", ErrInvalidBundle, s.RescanInterval, err)
@@ -431,6 +446,12 @@ func parseSettings(s Settings) (ports.Settings, error) {
 			ErrInvalidBundle, s.MaxFileSize)
 	case s.UploadLimit < 0 || s.DownloadLimit < 0:
 		return ports.Settings{}, fmt.Errorf("%w: a bandwidth limit is negative", ErrInvalidBundle)
+	case !ports.ValidLogLevel(s.LogLevel):
+		return ports.Settings{}, fmt.Errorf("%w: log_level %q is not one of %v",
+			ErrInvalidBundle, s.LogLevel, ports.LogLevels)
+	}
+	if err := validateListen(s.Listen); err != nil {
+		return ports.Settings{}, fmt.Errorf("%w: listen %q: %v", ErrInvalidBundle, s.Listen, err)
 	}
 	return ports.Settings{
 		Listen: s.Listen, Interface: s.Interface, ChunkSize: s.ChunkSize,
