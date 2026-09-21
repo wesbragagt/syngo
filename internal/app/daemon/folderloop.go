@@ -142,10 +142,9 @@ func (l *folderLoop) scan(ctx context.Context, paths []string) {
 	case ctx.Err() != nil:
 		return
 	case err != nil:
+		// The scanner records the failure on the folder itself, so the
+		// loop only reports it.
 		log.Error("scan folder", "error", err, "paths", paths)
-		if serr := l.daemon.deps.Store.SetFolderScan(ctx, current.ID, l.daemon.deps.Clock.Now(), err.Error()); serr != nil {
-			log.Error("record scan error", "error", serr)
-		}
 		return
 	}
 	log.Debug("scan finished", "changes", len(result.Changes), "paths", paths)

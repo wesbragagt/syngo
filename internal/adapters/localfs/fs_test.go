@@ -2,8 +2,10 @@ package localfs_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,3 +208,34 @@ func TestChtimesChmodReadLinkRemove(t *testing.T) {
 		t.Fatal("link still exists after Remove")
 	}
 }
+
+func TestErrors_NameTheOperationAndPathOnce(t *testing.T) {
+	fsys := localfs.New()
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	cases := map[string]error{
+		"lstat":    errorOf(func() error { _, err := fsys.Lstat(missing); return err }),
+		"open":     errorOf(func() error { _, err := fsys.Open(missing); return err }),
+		"readlink": errorOf(func() error { _, err := fsys.ReadLink(missing); return err }),
+		"remove":   fsys.Remove(missing),
+		"chmod":    fsys.Chmod(missing, 0o600),
+	}
+	for op, err := range cases {
+		if err == nil {
+			t.Fatalf("%s(%s) = nil, want an error", op, missing)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s error %v, want os.ErrNotExist", op, err)
+		}
+		if got := strings.Count(err.Error(), missing); got != 1 {
+			t.Fatalf("%s error %q names the path %d times, want once", op, err, got)
+		}
+		if got := strings.Count(err.Error(), op+" "); got != 1 {
+			t.Fatalf("%s error %q names the operation %d times, want once", op, err, got)
+		}
+	}
+}
+
+// errorOf runs fn and returns its error, so calls returning a value too can be
+// used in a table.
+func errorOf(fn func() error) error { return fn() }

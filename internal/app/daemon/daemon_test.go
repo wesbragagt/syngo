@@ -37,6 +37,7 @@ type recordingScanner struct {
 	calls   []scanCall
 	release chan struct{}
 	started chan struct{}
+	err     error
 }
 
 // newRecordingScanner returns a scanner that returns immediately.
@@ -49,6 +50,7 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 	s.mu.Lock()
 	s.calls = append(s.calls, scanCall{ID: f.ID, Paths: o.Paths})
 	release := s.release
+	scanErr := s.err
 	s.mu.Unlock()
 
 	select {
@@ -62,7 +64,17 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 			return scan.Result{}, ctx.Err()
 		}
 	}
+	if scanErr != nil {
+		return scan.Result{}, scanErr
+	}
 	return scan.Result{FolderID: f.ID}, nil
+}
+
+// failWith makes every scan fail with err.
+func (s *recordingScanner) failWith(err error) {
+	s.mu.Lock()
+	s.err = err
+	s.mu.Unlock()
 }
 
 // blockUntil makes every scan wait for the returned channel to be closed.
@@ -438,5 +450,34 @@ func TestDaemon_HandleStatusResultDecodes(t *testing.T) {
 	}
 	if report.Daemon.PID != 7 || len(report.Folders) != 1 {
 		t.Fatalf("report = %+v, want pid 7 and one folder", report)
+	}
+}
+
+func TestDaemon_ScanFailureLeavesFolderRecordToTheScanner(t *testing.T) {
+	h := startDaemon(t, daemon.Config{}, testFolder("docs", false))
+	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+
+	// The scanner is the only writer of the scan outcome, so whatever it
+	// recorded must survive a failing scan in the loop.
+	lastScan := time.Unix(1700000000, 0).UTC()
+	if err := h.store.SetFolderScan(h.ctx, "docs", lastScan, ""); err != nil {
+		t.Fatalf("SetFolderScan error: %v", err)
+	}
+
+	h.scanner.failWith(errors.New("boom"))
+	if err := h.daemon.Rescan(h.ctx, "docs"); err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+	waitFor(t, "failing rescan", func() bool { return len(h.scanner.snapshot()) > 1 })
+
+	f, err := h.store.GetFolder(h.ctx, "docs")
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+	if !f.LastScanAt.Equal(lastScan) {
+		t.Fatalf("LastScanAt = %v, want it untouched at %v", f.LastScanAt, lastScan)
+	}
+	if f.LastError != "" {
+		t.Fatalf("LastError = %q, want the loop to leave it to the scanner", f.LastError)
 	}
 }

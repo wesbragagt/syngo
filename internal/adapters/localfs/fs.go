@@ -23,11 +23,13 @@ type FS struct{}
 // New returns a local filesystem.
 func New() FS { return FS{} }
 
-// Lstat describes the object at path without following symlinks.
+// Lstat describes the object at path without following symlinks. Like every
+// method here, it returns the operating system error unchanged: an *os.PathError
+// already names the operation and the path.
 func (FS) Lstat(path string) (ports.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return ports.FileInfo{}, fmt.Errorf("lstat %s: %w", path, err)
+		return ports.FileInfo{}, err
 	}
 	return toFileInfo(info), nil
 }
@@ -62,9 +64,7 @@ func (FS) Walk(ctx context.Context, root string, fn ports.WalkFunc) error {
 	return nil
 }
 
-// Open opens a file for reading. The error of a failed open already names the
-// operation and the path, so it is returned as it is rather than wrapped in a
-// second "open <path>" prefix.
+// Open opens a file for reading.
 func (FS) Open(path string) (io.ReadCloser, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -78,14 +78,14 @@ func (FS) Open(path string) (io.ReadCloser, error) {
 func (FS) ReadAt(path string, off int64, n int) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 
 	buf := make([]byte, n)
 	read, err := f.ReadAt(buf, off)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("read %s at %d: %w", path, off, err)
+		return nil, fmt.Errorf("at offset %d: %w", off, err)
 	}
 	return buf[:read], nil
 }
@@ -94,7 +94,7 @@ func (FS) ReadAt(path string, off int64, n int) ([]byte, error) {
 func (FS) ReadLink(path string) (string, error) {
 	target, err := os.Readlink(path)
 	if err != nil {
-		return "", fmt.Errorf("readlink %s: %w", path, err)
+		return "", err
 	}
 	return target, nil
 }
@@ -102,7 +102,7 @@ func (FS) ReadLink(path string) (string, error) {
 // MkdirAll creates a directory and any missing parents.
 func (FS) MkdirAll(path string, perm fs.FileMode) error {
 	if err := os.MkdirAll(path, perm); err != nil {
-		return fmt.Errorf("mkdir %s: %w", path, err)
+		return err
 	}
 	return nil
 }
@@ -111,7 +111,7 @@ func (FS) MkdirAll(path string, perm fs.FileMode) error {
 func (FS) CreateTemp(dir, pattern string) (ports.TempFile, error) {
 	f, err := os.CreateTemp(dir, pattern)
 	if err != nil {
-		return nil, fmt.Errorf("create temp in %s: %w", dir, err)
+		return nil, err
 	}
 	return f, nil
 }
@@ -120,7 +120,7 @@ func (FS) CreateTemp(dir, pattern string) (ports.TempFile, error) {
 func (FS) OpenTemp(path string) (ports.TempFile, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("open temp %s: %w", path, err)
+		return nil, err
 	}
 	return f, nil
 }
@@ -128,7 +128,7 @@ func (FS) OpenTemp(path string) (ports.TempFile, error) {
 // Rename moves a file or directory.
 func (FS) Rename(oldPath, newPath string) error {
 	if err := os.Rename(oldPath, newPath); err != nil {
-		return fmt.Errorf("rename %s to %s: %w", oldPath, newPath, err)
+		return err
 	}
 	return nil
 }
@@ -136,7 +136,7 @@ func (FS) Rename(oldPath, newPath string) error {
 // Remove deletes a file or an empty directory.
 func (FS) Remove(path string) error {
 	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove %s: %w", path, err)
+		return err
 	}
 	return nil
 }
@@ -144,7 +144,7 @@ func (FS) Remove(path string) error {
 // Chtimes sets the modification time, leaving the access time as it is.
 func (FS) Chtimes(path string, mtime time.Time) error {
 	if err := os.Chtimes(path, time.Time{}, mtime); err != nil {
-		return fmt.Errorf("chtimes %s: %w", path, err)
+		return err
 	}
 	return nil
 }
@@ -152,7 +152,7 @@ func (FS) Chtimes(path string, mtime time.Time) error {
 // Chmod sets the permission bits of a file.
 func (FS) Chmod(path string, mode fs.FileMode) error {
 	if err := os.Chmod(path, mode); err != nil {
-		return fmt.Errorf("chmod %s: %w", path, err)
+		return err
 	}
 	return nil
 }
