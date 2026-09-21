@@ -178,4 +178,8 @@ type Listener interface {
 	// serves now, so a peer learns about a folder added, removed or given
 	// another mode while the connection is up, without reconnecting.
 	AnnounceFolders(folders []FolderAdvert)
+	// RetainDevices closes the connections of every peer that is not in
+	// the list, so a device removed from the table stops being served
+	// without waiting for it to hang up.
+	RetainDevices(ids []device.ID)
 }

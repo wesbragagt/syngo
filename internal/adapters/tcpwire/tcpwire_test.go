@@ -108,6 +108,14 @@ func (l *lookups) fn() ports.DeviceLookup {
 	}
 }
 
+// forget makes every later lookup report the device as unknown, the way
+// `peer remove` does while the connection is up.
+func (l *lookups) forget() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.allow = false
+}
+
 // ids returns the recorded lookups.
 func (l *lookups) ids() []device.ID {
 	l.mu.Lock()
@@ -168,8 +176,16 @@ func TestHandshake_KnownPeerAccepted(t *testing.T) {
 	if hello := conn.RemoteHello(); hello.Name != "server" || len(hello.Folders) != 1 {
 		t.Fatalf("RemoteHello = %+v, want the server's name and folders", hello)
 	}
-	if seen := known.ids(); len(seen) != 1 || seen[0] != client.id {
-		t.Fatalf("device lookups = %v, want [%s]", seen, client.id)
+	// The handshake looks the device up, and so does every request after
+	// it: a peer removed while it is connected must stop being served.
+	seen := known.ids()
+	if len(seen) == 0 {
+		t.Fatalf("device lookups = %v, want at least the handshake", seen)
+	}
+	for _, id := range seen {
+		if id != client.id {
+			t.Fatalf("device lookups = %v, want only %s", seen, client.id)
+		}
 	}
 }
 
@@ -194,6 +210,61 @@ func TestHandshake_UnknownPeerRejectedWithReason(t *testing.T) {
 	var rejected *ports.RejectedError
 	if !errors.As(err, &rejected) || rejected.Reason != tcpwire.ReasonUnknownDevice {
 		t.Fatalf("Dial error = %v, want a rejection", err)
+	}
+}
+
+func TestServe_DeviceRemovedWhileConnectedIsDisconnected(t *testing.T) {
+	server, client := newIdentity(t, "server"), newIdentity(t, "client")
+	known := &lookups{allow: true}
+	ln := startServer(t, server, server.hello(), known.fn(), 0)
+
+	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// The server forgets the device. The next request it makes is answered
+	// with an error and the connection ends, rather than being served
+	// until the peer hangs up by itself.
+	known.forget()
+	if _, err := conn.Ping(context.Background()); err == nil {
+		t.Fatal("the removed peer was still served")
+	} else if !strings.Contains(err.Error(), tcpwire.CodeUnknownDevice) &&
+		!strings.Contains(err.Error(), "no longer a known peer") {
+		t.Fatalf("Ping error = %v, want it to name the unknown device", err)
+	}
+	select {
+	case <-conn.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the connection stayed up after the device was removed")
+	}
+}
+
+func TestRetainDevices_ClosesTheConnectionOfARemovedPeer(t *testing.T) {
+	server, client := newIdentity(t, "server"), newIdentity(t, "client")
+	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+
+	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// The peer is kept while it is in the list, and dropped once it is not,
+	// without anything being asked of it in between.
+	ln.RetainDevices([]device.ID{client.id})
+	select {
+	case <-conn.Done():
+		t.Fatal("a peer that is still known was disconnected")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	ln.RetainDevices(nil)
+	select {
+	case <-conn.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the connection of the removed peer stayed up")
 	}
 }
 

@@ -264,16 +264,25 @@ func (d *Daemon) refresh(ctx context.Context) error {
 	return d.reloadPeers(ctx)
 }
 
-// reloadPeers starts a loop for every known peer that does not have one, and
-// stops the loops of peers that were removed. A peer whose address changed is
-// reconnected.
+// reloadPeers starts a loop for every known peer that does not have one, stops
+// the loops of peers that were removed and drops the connections those peers
+// opened towards us. A peer whose address changed is reconnected.
 func (d *Daemon) reloadPeers(ctx context.Context) error {
-	if d.deps.Dialer == nil {
-		return nil
-	}
 	known, err := d.deps.Store.ListDevices(ctx)
 	if err != nil {
 		return err
+	}
+	if d.deps.Listener != nil {
+		// A peer that was removed may still hold a connection it
+		// opened itself, which no outgoing loop owns.
+		ids := make([]device.ID, 0, len(known))
+		for _, peer := range known {
+			ids = append(ids, peer.ID)
+		}
+		d.deps.Listener.RetainDevices(ids)
+	}
+	if d.deps.Dialer == nil {
+		return nil
 	}
 
 	seen := make(map[device.ID]struct{}, len(known))

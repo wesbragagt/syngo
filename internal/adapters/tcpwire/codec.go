@@ -53,6 +53,7 @@ const (
 	CodeFolderUnknown     = "folder_unknown"
 	CodeFolderReceiveOnly = "folder_receive_only"
 	CodePaused            = "paused"
+	CodeUnknownDevice     = "unknown_device"
 	CodeInternal          = "internal"
 	CodeBadRequest        = "bad_request"
 )

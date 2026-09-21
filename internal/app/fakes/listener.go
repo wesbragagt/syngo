@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -22,6 +23,7 @@ type Listener struct {
 	mu        sync.Mutex
 	changes   []change
 	announced [][]ports.FolderAdvert
+	retained  [][]device.ID
 }
 
 // NewListener returns a listener that serves no connections.
@@ -48,6 +50,20 @@ func (l *Listener) AnnounceFolders(adverts []ports.FolderAdvert) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.announced = append(l.announced, append([]ports.FolderAdvert(nil), adverts...))
+}
+
+// RetainDevices records which peers would have been kept connected.
+func (l *Listener) RetainDevices(ids []device.ID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.retained = append(l.retained, append([]device.ID(nil), ids...))
+}
+
+// Retained returns the device lists RetainDevices was called with.
+func (l *Listener) Retained() [][]device.ID {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([][]device.ID(nil), l.retained...)
 }
 
 // Announcements returns the folder lists AnnounceFolders was called with.

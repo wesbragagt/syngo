@@ -110,6 +110,30 @@ func (l *Listener) AnnounceFolders(adverts []ports.FolderAdvert) {
 	l.send(frame)
 }
 
+// RetainDevices closes the connections of peers that are not in ids. It is
+// how a device removed from the table stops being served at once, rather than
+// until it hangs up by itself.
+func (l *Listener) RetainDevices(ids []device.ID) {
+	keep := make(map[device.ID]struct{}, len(ids))
+	for _, id := range ids {
+		keep[id] = struct{}{}
+	}
+
+	l.mu.Lock()
+	var gone []*serverConn
+	for c := range l.conns {
+		if _, ok := keep[c.remote]; !ok {
+			gone = append(gone, c)
+		}
+	}
+	l.mu.Unlock()
+
+	for _, c := range gone {
+		l.log.Info("dropping a peer that is no longer known", "peer", c.remote.Short())
+		_ = c.tls.Close()
+	}
+}
+
 // send writes one unsolicited frame to every connected peer.
 func (l *Listener) send(frame Frame) {
 	l.mu.Lock()
@@ -173,7 +197,7 @@ func (l *Listener) handle(ctx context.Context, raw net.Conn, h ports.PeerHandler
 		return
 	}
 
-	sc := &serverConn{tls: conn, remote: remote, log: l.log.With("peer", remote.Short()), handler: h}
+	sc := &serverConn{tls: conn, remote: remote, log: l.log.With("peer", remote.Short()), handler: h, known: known}
 	l.add(sc)
 	defer l.remove(sc)
 	l.log.Info("peer connected", "peer", remote.Short(), "remote", raw.RemoteAddr().String())
@@ -201,7 +225,10 @@ type serverConn struct {
 	remote  device.ID
 	log     *slog.Logger
 	handler ports.PeerHandler
-	writes  sync.Mutex
+	// known re-checks before every request that the peer is still a device
+	// this one synchronizes with.
+	known  ports.DeviceLookup
+	writes sync.Mutex
 }
 
 // write sends one frame, serialized against broadcasts.
@@ -224,6 +251,15 @@ func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
 				c.log.Debug("peer read failed", "error", err)
 			}
+			return
+		}
+
+		// The device table may have changed since the handshake: a
+		// peer removed while it was connected is told so and its
+		// connection ends here.
+		if c.known != nil && !c.known(ctx, c.remote) {
+			c.log.Info("peer is no longer a known device")
+			_ = writeError(c.tls, CodeUnknownDevice, "this device is no longer a known peer")
 			return
 		}
 

@@ -78,3 +78,32 @@ func TestReload_PeerAddedWhileTheDaemonsRunConnects(t *testing.T) {
 	waitConnected(t, b)
 	waitPresent(t, b, "from-a.txt")
 }
+
+func TestReload_PeerRemovedWhileTheDaemonsRunIsDisconnected(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendReceive)
+	b := startNode(t, "b", folder.ModeSendReceive)
+	pair(t, a, b)
+
+	writeFile(t, a, "from-a.txt", payload(2500, 5))
+	waitTreeEqual(t, a, b)
+	waitConnected(t, a)
+	waitConnected(t, b)
+
+	// b forgets a. The connection a opened towards b is b's to close: a
+	// keeps it otherwise, and goes on being served by a peer that no
+	// longer synchronizes with it.
+	cliOK(t, b, "peer", "remove", string(a.ID), "--yes")
+
+	waitFor(t, "a to see the connection go", convergeTimeout, func() bool {
+		report := a.Status()
+		return len(report.Peers) == 1 && !report.Peers[0].Connected
+	})
+
+	// Nothing written on b after the removal may reach a.
+	writeFile(t, b, "after.txt", payload(1500, 6))
+	waitScanned(t, b, folderID, 2)
+	time.Sleep(10 * testSyncInterval * timeoutScale)
+	if exists(t, a, "after.txt") {
+		t.Fatal("a pulled a file from the peer that removed it")
+	}
+}
