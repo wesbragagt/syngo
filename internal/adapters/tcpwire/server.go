@@ -109,10 +109,22 @@ func (l *Listener) Broadcast(id folder.ID, seq uint64) {
 	}
 }
 
-// handle runs the handshake and then serves one peer.
+// handle runs the handshake and then serves one peer. The connection is
+// closed as soon as the listener is asked to stop, so a peer that is quiet but
+// still connected does not hold the shutdown up until its read deadline.
 func (l *Listener) handle(ctx context.Context, raw net.Conn, h ports.PeerHandler, known ports.DeviceLookup) {
 	conn := tls.Server(raw, ServerTLS(l.cert))
 	defer func() { _ = conn.Close() }()
+
+	served, stopWatching := context.WithCancel(context.Background())
+	defer stopWatching()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-served.Done():
+		}
+	}()
 
 	hsCtx, cancel := context.WithTimeout(ctx, l.handshakeTimeout)
 	defer cancel()

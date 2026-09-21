@@ -278,12 +278,7 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 	}
 
 	if err := p.fetch(ctx, conn, &t); err != nil {
-		if ctx.Err() != nil {
-			// A cancelled transfer keeps its journal and its
-			// partial file; the next cycle continues it.
-			return 0, ctx.Err()
-		}
-		return 0, p.failed(ctx, t, err)
+		return 0, p.stopped(ctx, t, err)
 	}
 	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateVerifying, "", p.clock.Now()); err != nil {
 		return 0, err
@@ -291,7 +286,7 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 
 	entry, err := p.installer.Install(ctx, f.Path, t, item.Local)
 	if err != nil {
-		return 0, p.failed(ctx, t, err)
+		return 0, p.stopped(ctx, t, err)
 	}
 	if err := p.record(ctx, f.ID, entry, conn.RemoteID()); err != nil {
 		return 0, err
@@ -489,6 +484,25 @@ func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Tran
 	return nil, last
 }
 
+// stopped records how a transfer ended. Only a failure of the file itself
+// gives it up; a connection or a store that went away leaves it resumable, so
+// the next cycle continues where this one stopped.
+func (p *Puller) stopped(ctx context.Context, t transfer.Transfer, cause error) error {
+	if ctx.Err() != nil {
+		// A cancelled transfer keeps its journal and its partial file.
+		return ctx.Err()
+	}
+	if isPerFile(cause) {
+		return p.failed(ctx, t, cause)
+	}
+
+	p.forget(t.ID)
+	if err := p.store.SetTransferState(ctx, t.ID, transfer.StatePending, cause.Error(), p.clock.Now()); err != nil {
+		p.log.Warn("transfer state not recorded", "transfer", t.ID, "error", err)
+	}
+	return cause
+}
+
 // failed records why a transfer stopped. The partial file is kept so the
 // failure can be inspected, except when the peer's version changed, in which
 // case the bytes are worthless.
@@ -562,10 +576,14 @@ func (p *Puller) publish(kind string, fields map[string]any) {
 }
 
 // isPerFile reports whether a failure concerns only one file, leaving the rest
-// of the cycle worth running.
+// of the cycle worth running. A peer that refuses the whole folder, or a
+// connection that broke, is not one of those.
 func isPerFile(err error) bool {
 	var refused *ports.ChunkError
-	return errors.As(err, &refused) || errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath)
+	if errors.As(err, &refused) {
+		return refused.Reason == ports.ChunkHashChanged || refused.Reason == ports.ChunkNotFound
+	}
+	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath)
 }
 
 // newTransferID returns a random 32 character hexadecimal transfer id.

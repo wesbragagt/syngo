@@ -92,7 +92,9 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 	if !l.ping(ctx, conn, log) {
 		return
 	}
-	l.sync(ctx, conn, "")
+	if !l.syncCheck(ctx, conn, "", log) {
+		return
+	}
 
 	pings := time.NewTicker(l.daemon.cfg.peerPingInterval())
 	defer pings.Stop()
@@ -104,9 +106,13 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 		case <-ctx.Done():
 			return
 		case id := <-conn.Notifications():
-			l.sync(ctx, conn, id)
+			if !l.syncCheck(ctx, conn, id, log) {
+				return
+			}
 		case <-syncs.C:
-			l.sync(ctx, conn, "")
+			if !l.syncCheck(ctx, conn, "", log) {
+				return
+			}
 		case <-pings.C:
 			if !l.ping(ctx, conn, log) {
 				return
@@ -115,19 +121,32 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 	}
 }
 
-// sync pulls one folder, or every folder both sides share when id is empty.
-func (l *peerLoop) sync(ctx context.Context, conn ports.PeerConn, id folder.ID) {
-	if l.daemon.deps.Syncer == nil {
-		return
+// syncCheck runs a sync cycle and reports whether the connection is still
+// usable afterwards. A cycle that failed is followed by a ping, so a peer that
+// went away is noticed now instead of at the next keepalive.
+func (l *peerLoop) syncCheck(ctx context.Context, conn ports.PeerConn, id folder.ID, log *slog.Logger) bool {
+	if l.sync(ctx, conn, id) {
+		return true
 	}
+	return ctx.Err() == nil && l.ping(ctx, conn, log)
+}
+
+// sync pulls one folder, or every folder both sides share when id is empty. It
+// reports whether every folder synced without an error.
+func (l *peerLoop) sync(ctx context.Context, conn ports.PeerConn, id folder.ID) bool {
+	if l.daemon.deps.Syncer == nil {
+		return true
+	}
+	ok := true
 	for _, f := range l.syncable(ctx, conn, id) {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		l.daemon.setState(f.ID, status.StateSyncing)
 		summary, err := l.daemon.deps.Syncer.SyncFolder(ctx, conn, f)
 		l.daemon.setState(f.ID, "")
 		if err != nil {
+			ok = false
 			if ctx.Err() == nil {
 				l.daemon.deps.Log.Warn("folder sync failed",
 					"folder", f.ID, "peer", l.peer.ID.Short(), "error", err)
@@ -139,6 +158,7 @@ func (l *peerLoop) sync(ctx context.Context, conn ports.PeerConn, id folder.ID) 
 				"pulled", summary.Pulled, "deleted", summary.Deleted, "bytes", summary.Bytes)
 		}
 	}
+	return ok
 }
 
 // syncable returns the folders this device may pull from the peer: those both
