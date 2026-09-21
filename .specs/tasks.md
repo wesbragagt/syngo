@@ -92,11 +92,11 @@ Goal: dependable backup and mirror workflows.
 - [x] Add send-only and receive-only folder modes.
 - [x] Add read-only replicas.
 - [x] Add configurable delete propagation policies.
-- [ ] Implement pause, resume, scheduled sync, and bandwidth limits.
+- [x] Implement pause, resume, scheduled sync, and bandwidth limits.
 - [x] Add dry-run for destructive operations.
 - [x] Implement crash-safe transfer journals.
 - [x] Add atomic destination writes.
-- [ ] Support configuration import and export.
+- [x] Support configuration import and export.
 - [x] Add a CLI command to inspect transfer state.
 - [ ] Run 1,000 interruption and restart cycles without corruption.
 - [ ] Run a 1 TB mirror test and verify no full retransfer after restart.
