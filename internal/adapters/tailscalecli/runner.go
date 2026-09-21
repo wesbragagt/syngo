@@ -10,7 +10,15 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
+
+// waitDelay bounds how long Run waits for the output pipes after the command
+// was cancelled. A process that forks a child which inherits the pipe keeps it
+// open after the parent is killed, and without this Wait would block for as
+// long as that grandchild lives, whatever the context said.
+const waitDelay = time.Second
 
 // Runner looks commands up and runs them. It exists so the adapter can be
 // tested without a Tailscale installation.
@@ -33,12 +41,23 @@ func (ExecRunner) LookPath(file string) (string, error) { return exec.LookPath(f
 // Run executes the command and returns its standard output. The standard
 // error is folded into the error, trimmed to one line, because that is what a
 // user needs to see when Tailscale refuses.
+//
+// The command runs in a process group of its own so that cancelling it kills
+// whatever it forked as well: the deadline the caller set is a promise about
+// when Run returns, and a wrapper script that leaves a child behind must not
+// be able to break it.
 func (ExecRunner) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = waitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("%s did not answer: %w", path, ctxErr)
+		}
 		if message := firstLine(stderr.String()); message != "" {
 			return nil, fmt.Errorf("%v: %s", err, message)
 		}

@@ -11,7 +11,9 @@ import (
 
 // Detection is the answer to "is Tailscale usable on this device". A device
 // without Tailscale is described by Present being false, not by an error:
-// detection asked a question and "no" is an answer.
+// detection asked a question and "no" is an answer. A client that is installed
+// but cannot answer is Present with Err set, because "it is there and broken"
+// is a different answer from "it is not there".
 type Detection struct {
 	// Present reports that a Tailscale client answered.
 	Present bool
@@ -27,6 +29,11 @@ type Detection struct {
 	DNSName        string
 	// IPs are this device's tailnet addresses, IPv4 first. Never nil.
 	IPs []string
+	// Err says why a client that is installed could not answer: it exited
+	// with a failure, printed something that cannot be read, or did not
+	// answer in time. It is empty when the client answered, and when there
+	// is no client at all.
+	Err string
 }
 
 // Service reports on the tailnet this device is part of.
@@ -47,8 +54,14 @@ func (s *Service) Detect(ctx context.Context) (Detection, error) {
 	}
 	status, err := s.tailnet.Status(ctx)
 	if err != nil {
-		if errors.Is(err, ports.ErrTailnetUnavailable) {
+		if errors.Is(err, ports.ErrTailnetNotInstalled) {
 			return absent, nil
+		}
+		if errors.Is(err, ports.ErrTailnetUnavailable) {
+			broken := absent
+			broken.Present = true
+			broken.Err = err.Error()
+			return broken, nil
 		}
 		return Detection{}, err
 	}

@@ -3,12 +3,19 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // ErrTailnetUnavailable reports that the local Tailscale client could not be
 // asked: the binary is missing, the command failed, or the backend is not
 // running. It is not a failure of the thing that was asked about.
 var ErrTailnetUnavailable = errors.New("tailscale is not available")
+
+// ErrTailnetNotInstalled reports the one case of ErrTailnetUnavailable that
+// says nothing is wrong: there is no Tailscale binary on this device. Every
+// other unavailability means a client that is there and cannot answer, which
+// callers report differently.
+var ErrTailnetNotInstalled = fmt.Errorf("%w: not installed", ErrTailnetUnavailable)
 
 // TailnetNode is one device the local Tailscale client knows about.
 type TailnetNode struct {

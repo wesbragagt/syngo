@@ -115,7 +115,7 @@ func (d *Discovery) Resolve(ctx context.Context, name string) ([]string, error) 
 func (d *Discovery) fetch(ctx context.Context) (ports.TailnetStatus, []ports.TailnetNode, error) {
 	path, err := d.runner.LookPath(d.binary)
 	if err != nil {
-		return ports.TailnetStatus{}, nil, fmt.Errorf("%w: not installed", ports.ErrTailnetUnavailable)
+		return ports.TailnetStatus{}, nil, ports.ErrTailnetNotInstalled
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)

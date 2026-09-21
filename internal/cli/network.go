@@ -21,6 +21,9 @@ type detectView struct {
 	DNSName        string   `json:"dns_name"`
 	IPs            []string `json:"ips"`
 	MagicDNSSuffix string   `json:"magic_dns_suffix"`
+	// Error says why an installed client could not answer. It is null when
+	// it answered, and when there is no client to ask.
+	Error *string `json:"error"`
 }
 
 // detectViewOf converts a detection into its JSON shape.
@@ -33,6 +36,7 @@ func detectViewOf(d network.Detection) detectView {
 		Present: d.Present, Running: d.Running, BackendState: d.BackendState,
 		Version: d.Version, Interface: d.Interface, HostName: d.HostName,
 		DNSName: d.DNSName, IPs: ips, MagicDNSSuffix: d.MagicDNSSuffix,
+		Error: nonEmpty(d.Err),
 	}
 }
 
@@ -81,7 +85,9 @@ func newNetworkTailscaleDetectCmd(deps *Deps) *cobra.Command {
 		Short: "Report whether Tailscale is installed and running here",
 		Long: "detect runs `tailscale status --json` and reports what it said. A device\n" +
 			"without Tailscale is not a failure: the command prints present: false and\n" +
-			"exits 0, because detection asked a question and \"no\" is an answer.",
+			"exits 0, because detection asked a question and \"no\" is an answer. A client\n" +
+			"that is installed and cannot answer prints present: true with the reason in\n" +
+			"error, and also exits 0.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := deps.app(cmd.Context(), false)
@@ -111,6 +117,12 @@ func printDetection(deps *Deps, d network.Detection) {
 		return
 	}
 	_, _ = fmt.Fprintf(out, "tailscale:        installed\n")
+	if d.Err != "" {
+		// The binary is there and could not answer, so nothing else is
+		// known and only the reason is worth printing.
+		_, _ = fmt.Fprintf(out, "error:            %s\n", d.Err)
+		return
+	}
 	_, _ = fmt.Fprintf(out, "version:          %s\n", d.Version)
 	_, _ = fmt.Fprintf(out, "backend state:    %s\n", d.BackendState)
 	_, _ = fmt.Fprintf(out, "running:          %t\n", d.Running)
@@ -119,6 +131,7 @@ func printDetection(deps *Deps, d network.Detection) {
 	_, _ = fmt.Fprintf(out, "dns name:         %s\n", d.DNSName)
 	_, _ = fmt.Fprintf(out, "ips:              %s\n", orNone(strings.Join(d.IPs, ", "), "none"))
 	_, _ = fmt.Fprintf(out, "magic dns suffix: %s\n", orNone(d.MagicDNSSuffix, "none"))
+	_, _ = fmt.Fprintf(out, "error:            none\n")
 }
 
 // orNone returns s, or the replacement when s is empty.

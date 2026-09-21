@@ -203,6 +203,12 @@ func (s *Service) Test(ctx context.Context, target string) (TestResult, error) {
 	}
 
 	result.TLSOK = true
+	// A device cannot test itself: what answered is this process, and
+	// reporting it as a peer that refuses us would name the wrong problem.
+	if s.identity != nil && probe.DeviceID == s.identity.DeviceID() {
+		return TestResult{}, fmt.Errorf("%w: %s answers as %s",
+			ErrSelf, result.Address, probe.DeviceID.Short())
+	}
 	if result.DeviceID != "" && probe.DeviceID != result.DeviceID {
 		result.Err = fmt.Sprintf("%s answers as %s, want %s", result.Address, probe.DeviceID, result.DeviceID)
 		result.Reason = "device_mismatch"
@@ -239,7 +245,7 @@ func (s *Service) resolve(ctx context.Context, addr string) (string, string) {
 		return addr, ""
 	}
 	host, port, ok := splitHostPort(addr)
-	if !ok || host == "" || isIPv4Literal(host) || isIPv6Literal(host) {
+	if !ok || host == "" || isIPv4Literal(host) || isIPv6Literal(host) || isLoopbackName(host) {
 		return addr, ""
 	}
 	ips, err := s.tailnet.Resolve(ctx, host)
@@ -247,6 +253,15 @@ func (s *Service) resolve(ctx context.Context, addr string) (string, string) {
 		return addr, ""
 	}
 	return joinHostPort(ips[0], port), host
+}
+
+// isLoopbackName reports whether host names this machine's loopback. Such a
+// name is reserved for the local host, so it is never looked up in the tailnet
+// however a node there chose to name itself: a peer called "localhost" must
+// not be able to take an address that means "here" away from the resolver.
+func isLoopbackName(host string) bool {
+	lower := strings.ToLower(strings.TrimSuffix(host, "."))
+	return lower == "localhost" || strings.HasSuffix(lower, ".localhost")
 }
 
 // splitHostPort splits an address this service has already completed, so it is

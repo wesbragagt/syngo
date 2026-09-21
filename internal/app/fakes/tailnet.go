@@ -44,7 +44,7 @@ func NewTailnet(peers ...ports.TailnetNode) *Tailnet {
 // NewTailnetUnavailable returns a tailnet that behaves as a device without
 // Tailscale installed.
 func NewTailnetUnavailable() *Tailnet {
-	return &Tailnet{err: fmt.Errorf("%w: not installed", ports.ErrTailnetUnavailable)}
+	return &Tailnet{err: ports.ErrTailnetNotInstalled}
 }
 
 // TailnetNode is a convenience for building a node with one IPv4 address.

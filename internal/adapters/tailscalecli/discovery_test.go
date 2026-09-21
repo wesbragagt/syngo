@@ -67,11 +67,32 @@ func TestStatus_BinaryMissingIsUnavailable(t *testing.T) {
 	d := discovery(&fakeRunner{missing: true})
 
 	_, err := d.Status(context.Background())
+	if !errors.Is(err, ports.ErrTailnetNotInstalled) {
+		t.Fatalf("error = %v, want ErrTailnetNotInstalled", err)
+	}
 	if !errors.Is(err, ports.ErrTailnetUnavailable) {
-		t.Fatalf("error = %v, want ErrTailnetUnavailable", err)
+		t.Fatalf("error = %v, want a missing binary to be unavailable too", err)
 	}
 	if got := err.Error(); got != "tailscale is not available: not installed" {
 		t.Fatalf("error = %q, want it to say the binary is missing", got)
+	}
+}
+
+func TestStatus_AFailingBinaryIsUnavailableButInstalled(t *testing.T) {
+	// The difference matters to `network tailscale detect`, which reports
+	// a client that is there and broken differently from one that is not
+	// there at all.
+	for _, runner := range []Runner{
+		&fakeRunner{err: errors.New("exit status 1")},
+		&fakeRunner{out: []byte("this is not json")},
+	} {
+		_, err := discovery(runner).Status(context.Background())
+		if !errors.Is(err, ports.ErrTailnetUnavailable) {
+			t.Fatalf("error = %v, want ErrTailnetUnavailable", err)
+		}
+		if errors.Is(err, ports.ErrTailnetNotInstalled) {
+			t.Fatalf("error = %v, want it not to claim the binary is missing", err)
+		}
 	}
 }
 

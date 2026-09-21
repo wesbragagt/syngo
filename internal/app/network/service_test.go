@@ -3,6 +3,8 @@ package network_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
@@ -78,5 +80,35 @@ func TestPeers_SortedByHostName(t *testing.T) {
 	}
 	if len(peers) != 2 || peers[0].HostName != "desk" || peers[1].HostName != "nas" {
 		t.Fatalf("peers = %+v, want them sorted by host name", peers)
+	}
+}
+
+func TestDetect_InstalledButUnusableIsPresentWithAReason(t *testing.T) {
+	tailnet := fakes.NewTailnet()
+	tailnet.SetError(fmt.Errorf("%w: tailscale status --json: exit status 1",
+		ports.ErrTailnetUnavailable))
+
+	got, err := network.New(tailnet).Detect(context.Background())
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if !got.Present {
+		t.Fatalf("detection = %+v, want the installed client reported as present", got)
+	}
+	if !strings.Contains(got.Err, "exit status 1") {
+		t.Fatalf("error = %q, want the reason the client could not answer", got.Err)
+	}
+	if got.Running || got.Version != "" || len(got.IPs) != 0 {
+		t.Fatalf("detection = %+v, want nothing but the reason known", got)
+	}
+}
+
+func TestDetect_NotInstalledCarriesNoReason(t *testing.T) {
+	got, err := network.New(fakes.NewTailnetUnavailable()).Detect(context.Background())
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if got.Present || got.Err != "" {
+		t.Fatalf("detection = %+v, want an absent client with no reason", got)
 	}
 }

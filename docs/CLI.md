@@ -575,7 +575,9 @@ up in the tailnet first, through the same `tailscale status --json` the
 tailnet addresses are stable and storing the name would make every later dial
 depend on the system resolver knowing MagicDNS. When Tailscale is missing, not
 running, or does not know the name, the host is kept as typed and resolved by
-system DNS at dial time.
+system DNS at dial time. `localhost` and any name ending in `.localhost` are
+never looked up in the tailnet: they mean this machine, and a tailnet node that
+calls itself `localhost` must not be able to take that name over.
 
 | Flag | Meaning |
 |---|---|
@@ -621,6 +623,11 @@ resolved through the tailnet exactly as in `peer add`, and the result carries
 `resolved_from`; a device ID names a peer whose address was already resolved
 when it was added, so nothing is looked up.
 
+An address that answers with this device's own identity is refused with exit 2,
+as `peer add` refuses it: a device cannot test itself, and reporting the answer
+as a peer that will not accept us would name the wrong problem. Testing this
+device's own host name is therefore exit 2, not exit 7.
+
 ```console
 $ syncthis peer test 100.64.0.2:22000 --json
 {
@@ -647,6 +654,12 @@ said. A device without Tailscale is not a failure: the command prints
 answer. The binary is looked up on each call, so installing Tailscale later
 needs no restart, and a device without it never shells out.
 
+A client that is installed and cannot answer is a third answer, not the absent
+one: the command prints `present: true` with the reason in `error` and exits 0
+as well. That covers a binary that exits with a failure, one that prints
+something this program cannot read, and one that does not answer within the
+five second command timeout, including when it leaves a child process behind.
+
 ```console
 $ syncthis network tailscale detect --json
 {
@@ -658,7 +671,8 @@ $ syncthis network tailscale detect --json
   "hostname": "laptop",
   "dns_name": "laptop.tail1234.ts.net",
   "ips": ["100.64.0.2", "fd7a:115c:a1e0::2"],
-  "magic_dns_suffix": "tail1234.ts.net"
+  "magic_dns_suffix": "tail1234.ts.net",
+  "error": null
 }
 ```
 
@@ -669,7 +683,20 @@ $ syncthis network tailscale detect --json
 {
   "present": false, "running": false, "backend_state": "", "version": "",
   "interface": "", "hostname": "", "dns_name": "", "ips": [],
-  "magic_dns_suffix": ""
+  "magic_dns_suffix": "", "error": null
+}
+```
+
+With Tailscale installed and unable to answer, `present` is true, `error` says
+why, and nothing else is known:
+
+```console
+$ syncthis network tailscale detect --json
+{
+  "present": true, "running": false, "backend_state": "", "version": "",
+  "interface": "", "hostname": "", "dns_name": "", "ips": [],
+  "magic_dns_suffix": "",
+  "error": "tailscale is not available: tailscale status --json: exit status 1: failed to connect to local tailscaled"
 }
 ```
 
@@ -691,12 +718,26 @@ hostname:         laptop
 dns name:         laptop.tail1234.ts.net
 ips:              100.64.0.2, fd7a:115c:a1e0::2
 magic dns suffix: tail1234.ts.net
+error:            none
+```
+
+A client that is there and cannot answer prints the reason instead of the
+fields it does not know, and `not installed` stays a single line:
+
+```console
+$ syncthis network tailscale detect
+tailscale:        installed
+error:            tailscale is not available: tailscale status --json: exit status 1
+
+$ syncthis network tailscale detect
+tailscale: not installed
 ```
 
 ### `syncthis network peers`
 
-Lists the other devices of the tailnet, sorted by host name. These are tailnet
-peers, not syncthis peers: pair one with `peer add`. Unlike `detect` the
+Lists the other devices of the tailnet, sorted by host name in byte order, so
+uppercase names come before lowercase ones and the order does not depend on the
+locale. These are tailnet peers, not syncthis peers: pair one with `peer add`. Unlike `detect` the
 command exits 11 when there is no Tailscale client to ask, or when its backend
 is not running, because the listing that was asked for cannot exist.
 

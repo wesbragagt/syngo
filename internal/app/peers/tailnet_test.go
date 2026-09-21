@@ -2,6 +2,7 @@ package peers_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
@@ -155,5 +156,55 @@ func TestTest_KnownDeviceIDIsNotResolved(t *testing.T) {
 	}
 	if got := tailnet.Resolves(); got != 0 {
 		t.Fatalf("resolve calls = %d, want none for a known device id", got)
+	}
+}
+
+func TestAdd_LocalhostIsNeverResolvedThroughTheTailnet(t *testing.T) {
+	// A tailnet node may call itself "localhost". That name means this
+	// machine, and a peer must not be able to take it over.
+	tailnet := fakes.NewTailnet(fakes.TailnetNode("localhost", "100.64.0.3"))
+	f := tailnetFixture(t, tailnet, "localhost:22000")
+
+	result, err := f.service.Add(context.Background(), peers.AddOptions{Address: "localhost", Confirm: accept})
+	if err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if result.Device.Address != "localhost:22000" || result.ResolvedFrom != "" {
+		t.Fatalf("result = %+v, want the loopback name left as typed", result)
+	}
+	if got := tailnet.Resolves(); got != 0 {
+		t.Fatalf("resolve calls = %d, want none for a loopback name", got)
+	}
+}
+
+func TestTest_LoopbackNamesAreNeverResolvedThroughTheTailnet(t *testing.T) {
+	for _, host := range []string{"localhost", "LocalHost", "db.localhost"} {
+		tailnet := fakes.NewTailnet(fakes.TailnetNode(host, "100.64.0.3"))
+		f := tailnetFixture(t, tailnet, host+":22000")
+
+		result, err := f.service.Test(context.Background(), host)
+		if err != nil {
+			t.Fatalf("Test(%q) error: %v", host, err)
+		}
+		if result.Address != host+":22000" || result.ResolvedFrom != "" {
+			t.Fatalf("Test(%q) = %+v, want the loopback name left as typed", host, result)
+		}
+		if got := tailnet.Resolves(); got != 0 {
+			t.Fatalf("Test(%q) made %d resolve calls, want none", host, got)
+		}
+	}
+}
+
+func TestTest_RefusesThisDeviceItself(t *testing.T) {
+	// The tailnet knows this device's own host name, so the probe reaches
+	// the process that asked.
+	tailnet := fakes.NewTailnet(fakes.TailnetNode("self", "100.64.0.2"))
+	f := tailnetFixture(t, tailnet, "100.64.0.2:22000")
+	f.dialer.Set("100.64.0.2:22000", fakes.PeerScript{
+		Probe: ports.ProbeResult{DeviceID: selfID, Name: "self", Accepted: true},
+	})
+
+	if _, err := f.service.Test(context.Background(), "self"); !errors.Is(err, peers.ErrSelf) {
+		t.Fatalf("Test error = %v, want ErrSelf", err)
 	}
 }
