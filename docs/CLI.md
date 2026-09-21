@@ -34,11 +34,11 @@ show the shape of each document; the commands print them indented.
 | 1 | error | an unexpected failure |
 | 2 | usage | bad flags or arguments |
 | 3 | not initialized | the data directory has no identity; run `syncthis init` |
-| 4 | not found | the folder, peer or transfer does not exist |
+| 4 | not found | the folder, peer, transfer or conflict does not exist |
 | 5 | already exists | the folder id, folder path or peer is already configured |
 | 6 | daemon unavailable | the command needs the daemon and none is running, or one already owns the data directory |
 | 7 | peer unreachable | the peer could not be dialled, refused the handshake or presented another identity |
-| 8 | integrity | content did not hash to what was expected, or repair found something it cannot fix |
+| 8 | integrity | content did not hash to what was expected, repair found something it cannot fix, or a conflict version asked for is no longer on disk |
 | 9 | confirmation required | a question had to be asked and could not be |
 | 10 | dry run | a dry run finished and something would have changed; 0 when nothing would |
 
@@ -237,7 +237,9 @@ from the database and `daemon.running` is `false`.
 }
 ```
 
-`folders[].state` is `idle`, `scanning`, `syncing`, `paused` or `error`. Times
+`conflicts.unresolved` counts the paths both sides changed that nobody has
+decided about yet; `conflict list` shows them. `folders[].state` is `idle`,
+`scanning`, `syncing`, `paused` or `error`. Times
 are RFC3339 in UTC, or `null`. `transfers.items` holds the same objects as
 `transfer list`. Fields are added over time but never renamed or removed, and
 `schema_version` says which shape this is.
@@ -476,6 +478,150 @@ reached. `action` is one of
 `both-modified`, `delete-vs-modify`, `delete-policy-never`,
 `symlink-policy-skip`, `remote-deleted`, `kind-changed`, `replace-vs-modify`,
 `mode-changed` or `mode-baseline-unknown`.
+
+### `syncthis conflict list [FOLDER] [--all]`
+
+Lists the paths both sides changed. Unresolved ones only, unless `--all` adds
+the ones already dealt with. Without FOLDER it lists every folder.
+
+Columns: `ID`, `FOLDER`, `PATH`, `REASON`, `COPY`, `PEER`, `DETECTED`,
+`RESOLVED`.
+
+```console
+$ syncthis conflict list --json
+[
+  {
+    "id": "6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a",
+    "folder_id": "docs",
+    "path": "notes/report.md",
+    "conflict_path": "notes/report.sync-conflict-20260921-153000-ETI3RRZ.md",
+    "reason": "both-modified",
+    "local_hash": "3f0a…",
+    "remote_hash": "9b12…",
+    "peer_id": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA",
+    "detected_at": "2026-09-21T15:30:00Z",
+    "resolved": false
+  }
+]
+```
+
+`reason` is why the two versions could not be reconciled:
+
+| Reason | Means |
+|---|---|
+| `both-modified` | both sides changed the file; both versions are on disk |
+| `delete-vs-modify` | the peer deleted a file this device changed; the file is kept |
+| `replace-vs-modify` | the peer turned a file this device changed into a directory or a symlink |
+
+`local_hash` is the version this device had, `remote_hash` the one the peer
+had; `remote_hash` is empty when the peer deleted the path. `conflict_path` is
+empty when nothing had to be moved aside.
+
+#### Conflict copies
+
+When both sides change a file, nothing is overwritten: one version stays at the
+path and the other is written beside it as
+
+```
+<stem>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<peer short id><ext>
+```
+
+for example `report.sync-conflict-20260921-153000-ETI3RRZ.md`. The time is UTC,
+the peer short id is the first seven characters of the device id the conflict
+was detected with, and the extension is kept so the copy opens in the same
+application. A name that is already taken gets a counter before the extension
+(`…-ETI3RRZ-1.md`).
+
+Which version keeps the path is decided by the content, not by a clock: the
+greater content hash wins. Both devices reach that answer from the same two
+hashes, so only the side whose version loses writes a copy, and that copy then
+syncs like any other file. Both devices end up with the same two files.
+
+### `syncthis conflict show ID`
+
+Prints the conflict and both versions as they are on disk now: the path each
+one holds, its size, its modification time and its content hash. Exits 4 when
+no conflict has that id.
+
+```console
+$ syncthis conflict show 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a
+id:       6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a
+folder:   docs (/home/u/docs)
+path:     notes/report.md
+copy:     notes/report.sync-conflict-20260921-153000-ETI3RRZ.md
+reason:   both-modified
+peer:     ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA
+detected: 2026-09-21T15:30:00Z
+resolved: no
+
+local version: 3f0a…
+  path:  notes/report.sync-conflict-20260921-153000-ETI3RRZ.md
+  size:  1841 bytes
+  mtime: 2026-09-21T15:29:41Z
+  holds: 3f0a…
+
+remote version: 9b12…
+  path:  notes/report.md
+  size:  1902 bytes
+  mtime: 2026-09-21T15:29:58Z
+  holds: 9b12…
+```
+
+With `--json` the same object as `conflict list` carries a `local` and a
+`conflict` object describing the file at `path` and the file at
+`conflict_path`, each with `path`, `size`, `mtime` and `hash`. Either is
+absent when there is no file there any more.
+
+### `syncthis conflict resolve ID --keep local|remote|both`
+
+Says which version wins. `local` keeps the version this device had, `remote`
+the version the peer had, whichever of the two files holds it now; the other
+file is removed. `both` changes nothing on disk and only closes the conflict.
+Keeping the peer's version of a `delete-vs-modify` conflict means following the
+deletion, so the local file goes.
+
+The version that wins is put in place with a rename, so the path never holds
+half a file. A version that is no longer on disk, because something edited both
+files since, exits 8 and changes nothing. Removing a file is confirmed like
+every other destructive command, so `--yes`, `--no-input` and `--json` apply;
+`--keep both` deletes nothing and asks nothing. A resolution that changed the
+folder rescans it, through the daemon when one is running.
+
+```console
+$ syncthis conflict resolve 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a --keep remote --yes
+notes/report.md: remote version kept
+notes/report.sync-conflict-20260921-153000-ETI3RRZ.md: removed
+```
+
+```json
+{
+  "id": "6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a",
+  "folder_id": "docs",
+  "path": "notes/report.md",
+  "kept": "remote",
+  "kept_path": "notes/report.md",
+  "removed_path": "notes/report.sync-conflict-20260921-153000-ETI3RRZ.md",
+  "resolved": true
+}
+```
+
+`moved_from` is added when the winning version had to be renamed onto the path.
+
+### `syncthis conflict export ID DIR`
+
+Copies both versions into DIR, together with a JSON file describing the
+conflict, for a comparison or a merge by hand. The folder is not touched and
+the conflict stays open. The copies are named `path-<file>` and
+`conflict-<file>`; the description is `<id>.json` and names, for each copy, the
+path it came from, its hash, its size and whether it is the `local` or the
+`remote` version.
+
+```console
+$ syncthis conflict export 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a /tmp/review
+/tmp/review/path-report.md
+/tmp/review/conflict-report.sync-conflict-20260921-153000-ETI3RRZ.md
+/tmp/review/6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a.json
+```
 
 ### `syncthis completion bash|zsh|fish|powershell`
 

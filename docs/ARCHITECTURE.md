@@ -64,14 +64,23 @@ tell "deleted" from "never had it".
 
 **Synced hash.** The content hash two devices last agreed on for a path. A file
 whose hash still equals it has not been touched locally since the last sync;
-one whose hash moved away from it is a local change. **Synced mode** is the
-same idea for the permission bits.
+one whose hash moved away from it is a local change. It travels with the
+manifest, so a peer can tell a version written on top of its own from one that
+diverged from it. **Synced mode** is the same idea for the permission bits, and
+stays local.
 
 **Sequence.** A per-folder counter raised on every write, which is how a peer
 decides whether it has already seen a version.
 
 **Plan.** What `syncplan.Plan` returns for a folder: one action per path the
 peer has. The actions are listed in [CLI.md](CLI.md#syncthis-sync-plan-folder---peer-id).
+
+**Conflict.** A path two devices changed independently. Neither version is
+overwritten: the greater content hash keeps the path, the other version is
+written beside it as a **conflict copy** named
+`<stem>.sync-conflict-<date>-<time>-<peer short id><ext>`, and the copy syncs
+like any other file, so both devices end up with both versions. `conflict
+resolve` is what closes one.
 
 **Transfer.** One inbound file download, with a journal row per chunk. The
 sender keeps no state.

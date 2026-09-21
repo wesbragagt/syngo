@@ -54,17 +54,18 @@ holds it open.
 | `changes` | the scan classification log behind "recent changes" |
 | `devices` | known peers and when they were last seen |
 | `transfers`, `transfer_chunks` | the journal of inbound downloads |
-| `conflicts` | detected divergences (milestone 9) |
+| `conflicts` | detected divergences, one row per path both sides changed |
 
 ### Migrations
 
-The schema is at version 2. `Open` reads `schema_version`, applies every
+The schema is at version 3. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
 |---|---|---|
 | 1 | `001_init.sql` | every table, including ones later milestones fill |
 | 2 | `002_synced_mode.sql` | `files.synced_mode` |
+| 3 | `003_conflict_reason.sql` | `conflicts.reason` |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,
@@ -94,6 +95,39 @@ which case neither side changes anything until the two modes match once.
 peer's id there, together with the size, modification time and inode the file
 has after the install, so the next local scan sees an unchanged file and does
 not send it back.
+
+Unlike `synced_mode`, `synced_hash` is also sent to peers, as the `synced_hash`
+field of a manifest entry: it is what lets the other side tell a version made
+on top of its own from one that diverged from it. See
+[PROTOCOL.md](PROTOCOL.md).
+
+### conflicts
+
+A row is one path two devices changed independently, written by the puller and
+read by `syncthis conflict list`. `rel_path` is the path, `conflict_path` the
+copy holding the other version, empty when there is none. `local_hash` and
+`remote_hash` say which content each side had, and matching them against what
+is on disk is how `conflict resolve` finds the version the user asked to keep,
+whichever of the two files holds it. `remote_hash` is empty when the peer
+deleted the path. `reason` is the sync plan reason: `both-modified`,
+`delete-vs-modify` or `replace-vs-modify`.
+
+The id is derived from what diverged, the folder, the path, the two hashes and
+the peer, not from when it was noticed, so a divergence the sync plan reports
+once per cycle updates one row instead of adding one every time. `resolved` is
+set by `conflict resolve` and is the only field that changes afterwards.
+
+A conflict copy is a file of the folder like any other: it is recorded in
+`files` with its own hash as `synced_hash`, so the scan that follows sees
+nothing new and the peer picks the copy up as an ordinary file. Its name is
+
+```
+<stem>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<peer short id><ext>
+```
+
+in UTC, with a counter before the extension when that name is taken. Which of
+the two versions keeps the path is decided by the content: the greater hash
+wins, so both devices reach the same answer and only one of them writes a copy.
 
 ### transfers and transfer_chunks
 

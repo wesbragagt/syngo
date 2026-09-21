@@ -56,7 +56,11 @@ $ bin/syncthis --data-dir /tmp/b/data status
 - Gitignore-style ignore patterns, hidden files off by default, symbolic links
   off by default.
 - Comparison by content hash, never by timestamp. A change made on both sides
-  is reported as a conflict rather than overwritten.
+  is never overwritten: one version keeps the path, the other is written beside
+  it as `report.sync-conflict-20260921-153000-ETI3RRZ.md`, and both devices end
+  up with both files.
+- `conflict list`, `show`, `resolve --keep local|remote|both` and `export` to
+  see what diverged and decide what to keep.
 - `sync-plan` prints what a sync would do without doing it.
 - Every command speaks `--json`, and every failure has its own exit code.
 
