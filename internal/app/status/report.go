@@ -1,7 +1,11 @@
 // Package status assembles the report behind the status command.
 package status
 
-import "time"
+import (
+	"time"
+
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+)
 
 // SchemaVersion is the version of the status JSON document. Fields may be
 // added, never renamed.
@@ -34,12 +38,15 @@ type Device struct {
 	DataDir string `json:"data_dir"`
 }
 
-// Daemon describes the running daemon, if any.
+// Daemon describes the running daemon, if any. The limits are bytes per
+// second, 0 for unlimited or for no daemon.
 type Daemon struct {
-	Running   bool    `json:"running"`
-	PID       int     `json:"pid"`
-	Listen    string  `json:"listen"`
-	StartedAt *string `json:"started_at"`
+	Running       bool    `json:"running"`
+	PID           int     `json:"pid"`
+	Listen        string  `json:"listen"`
+	StartedAt     *string `json:"started_at"`
+	UploadLimit   int64   `json:"upload_limit"`
+	DownloadLimit int64   `json:"download_limit"`
 }
 
 // Folder is the per-folder section of the report.
@@ -114,11 +121,13 @@ type PeerLive struct {
 // LiveInfo is the state only a running daemon can report. It is nil when the
 // command runs without a daemon.
 type LiveInfo struct {
-	PID          int
-	Listen       string
-	StartedAt    time.Time
-	Peers        map[string]PeerLive
-	FolderStates map[string]string
+	PID           int
+	Listen        string
+	StartedAt     time.Time
+	Peers         map[string]PeerLive
+	FolderStates  map[string]string
+	UploadLimit   bandwidth.Rate
+	DownloadLimit bandwidth.Rate
 }
 
 // rfc3339 formats a time as an RFC3339 UTC string, or nil if it is zero.

@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -119,7 +120,13 @@ type Deps struct {
 	// Syncer pulls folder contents from connected peers. A nil syncer
 	// leaves the daemon watching folders without synchronizing them.
 	Syncer Syncer
-	Log    *slog.Logger
+	// Settings is where the runtime settings are re-read from on start and
+	// on reload. A nil store leaves the limits as they were wired.
+	Settings ports.SettingsStore
+	// Upload and Download pace what this device serves and asks for. A nil
+	// limiter means that direction is unlimited.
+	Upload, Download ports.Limiter
+	Log              *slog.Logger
 }
 
 // Daemon owns one folder loop per configured folder and the control server.
@@ -194,6 +201,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	if err := d.refresh(ctx); err != nil {
 		d.deps.Log.Error("load folders", "error", err)
+	}
+	if err := d.applySettings(ctx); err != nil {
+		d.deps.Log.Error("load settings", "error", err)
 	}
 	d.readyOnce.Do(func() { close(d.ready) })
 	d.deps.Log.Info("daemon started", "folders", d.loopCount(), "rescan_interval", d.cfg.rescanInterval())
@@ -433,13 +443,42 @@ func (d *Daemon) live() *status.LiveInfo {
 	for id, state := range d.peerStates {
 		peers[string(id)] = state
 	}
-	return &status.LiveInfo{
+	info := &status.LiveInfo{
 		PID:          d.cfg.PID,
 		Listen:       d.cfg.Listen,
 		StartedAt:    d.startedAt,
 		Peers:        peers,
 		FolderStates: states,
 	}
+	if d.deps.Upload != nil {
+		info.UploadLimit = d.deps.Upload.Rate()
+	}
+	if d.deps.Download != nil {
+		info.DownloadLimit = d.deps.Download.Rate()
+	}
+	return info
+}
+
+// applySettings re-reads the runtime settings and hands the limits to the
+// limiters, so a rate written while the daemon runs takes effect without
+// reconnecting anything.
+func (d *Daemon) applySettings(ctx context.Context) error {
+	if d.deps.Settings == nil {
+		return nil
+	}
+	settings, err := d.deps.Settings.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	if d.deps.Upload != nil {
+		d.deps.Upload.SetRate(settings.UploadLimit)
+	}
+	if d.deps.Download != nil {
+		d.deps.Download.SetRate(settings.DownloadLimit)
+	}
+	d.deps.Log.Info("bandwidth limits applied",
+		"upload", settings.UploadLimit.String(), "download", settings.DownloadLimit.String())
+	return nil
 }
 
 // peersSnapshot returns every running peer loop.

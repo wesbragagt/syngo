@@ -15,6 +15,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/app/syncer"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
@@ -221,6 +222,14 @@ func startDaemonWithPeers(t *testing.T, cfg daemon.Config, peers []device.Device
 func startDaemonWatching(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
 	peers []device.Device, folders ...folder.Folder) *harness {
 	t.Helper()
+	return startDaemonTweaked(t, cfg, watcher, nil, peers, folders...)
+}
+
+// startDaemonTweaked wires a daemon whose dependencies a test may add to, for
+// the ports the other tests leave unwired.
+func startDaemonTweaked(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
+	tweak func(*daemon.Deps), peers []device.Device, folders ...folder.Folder) *harness {
+	t.Helper()
 
 	store := fakes.NewStore()
 	for _, f := range folders {
@@ -250,7 +259,7 @@ func startDaemonWatching(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
 	if cfg.Debounce == 0 {
 		cfg.Debounce = 10 * time.Millisecond
 	}
-	d := daemon.New(cfg, daemon.Deps{
+	deps := daemon.Deps{
 		Store:    store,
 		Clock:    clock,
 		Watcher:  watcher,
@@ -261,7 +270,11 @@ func startDaemonWatching(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
 		Listener: listener,
 		Peers:    folderAnnouncer{store: store},
 		Syncer:   pulls,
-	})
+	}
+	if tweak != nil {
+		tweak(&deps)
+	}
+	d := daemon.New(cfg, deps)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &harness{daemon: d, store: store, watcher: fakeWatcher, scanner: scanner, dialer: dialer,
@@ -1038,5 +1051,69 @@ func TestReload_PeerAddressChangeKeepsTheNewConnection(t *testing.T) {
 			t.Fatalf("peer = %+v, want it reported as connected at its new address", report.Peers)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// limited wires a daemon with a settings store and a limiter per direction,
+// and returns all three.
+func limited(t *testing.T, settings *fakes.Settings) (*harness, *fakes.Limiter, *fakes.Limiter) {
+	t.Helper()
+	up, down := fakes.NewLimiter(), fakes.NewLimiter()
+	h := startDaemonTweaked(t, daemon.Config{}, nil, func(d *daemon.Deps) {
+		d.Settings = settings
+		d.Upload = up
+		d.Download = down
+	}, nil, folder.Folder{ID: "docs", Path: folderRoot, Mode: folder.ModeSendReceive})
+	return h, up, down
+}
+
+func TestRun_AppliesBandwidthLimitsFromSettings(t *testing.T) {
+	settings := fakes.NewSettings(ports.Settings{UploadLimit: 4 << 20, DownloadLimit: 1 << 20})
+	_, up, down := limited(t, settings)
+
+	if got := up.Rate(); got != bandwidth.Rate(4<<20) {
+		t.Fatalf("upload rate = %v, want 4 MiB/s", got)
+	}
+	if got := down.Rate(); got != bandwidth.Rate(1<<20) {
+		t.Fatalf("download rate = %v, want 1 MiB/s", got)
+	}
+}
+
+// TestReload_AppliesChangedBandwidthLimits is what `config set` relies on: the
+// rate written to the settings store reaches the running limiters without any
+// connection being dropped.
+func TestReload_AppliesChangedBandwidthLimits(t *testing.T) {
+	settings := fakes.NewSettings(ports.Settings{UploadLimit: 4 << 20, DownloadLimit: 4 << 20})
+	h, up, down := limited(t, settings)
+
+	settings.Queue(ports.Settings{UploadLimit: 1 << 20, DownloadLimit: bandwidth.Unlimited})
+	if err := h.daemon.Reload(context.Background()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	if got := up.Rate(); got != bandwidth.Rate(1<<20) {
+		t.Fatalf("upload rate = %v, want 1 MiB/s after the reload", got)
+	}
+	if got := down.Rate(); !got.Unlimited() {
+		t.Fatalf("download rate = %v, want unlimited after the reload", got)
+	}
+	if rates := up.Rates(); len(rates) != 2 {
+		t.Fatalf("upload SetRate calls = %v, want one on start and one on reload", rates)
+	}
+}
+
+func TestStatus_ReportsLimits(t *testing.T) {
+	settings := fakes.NewSettings(ports.Settings{UploadLimit: 2 << 20, DownloadLimit: 0})
+	h, _, _ := limited(t, settings)
+
+	report, err := h.daemon.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if report.Daemon.UploadLimit != 2<<20 {
+		t.Fatalf("daemon.upload_limit = %d, want 2097152", report.Daemon.UploadLimit)
+	}
+	if report.Daemon.DownloadLimit != 0 {
+		t.Fatalf("daemon.download_limit = %d, want 0 for unlimited", report.Daemon.DownloadLimit)
 	}
 }

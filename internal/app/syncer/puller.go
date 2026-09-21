@@ -58,7 +58,10 @@ type Puller struct {
 	installer *Installer
 	chunkSize int
 	workers   int
-	log       *slog.Logger
+	// download paces what this device asks peers for. A nil limiter means
+	// unlimited.
+	download ports.Limiter
+	log      *slog.Logger
 
 	// resumed remembers the transfers whose partial file this process has
 	// already re-verified, so the check happens once per transfer and not
@@ -84,6 +87,9 @@ type PullStore interface {
 type PullerConfig struct {
 	ChunkSize   int
 	Concurrency int
+	// Download paces the chunks this device asks for, across every folder
+	// and every peer. A nil limiter means unlimited.
+	Download ports.Limiter
 }
 
 // NewPuller returns a puller writing through fsys.
@@ -101,7 +107,7 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 	return &Puller{
 		store: store, fs: fsys, hasher: hasher, clock: clock, events: events,
 		installer: NewInstaller(fsys, hasher),
-		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, log: log,
+		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, download: cfg.Download, log: log,
 		resumed: make(map[transfer.ID]bool),
 		gates:   make(map[folder.ID]chan struct{}),
 	}
@@ -640,6 +646,14 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 			return fmt.Errorf("folder %q: %w", t.FolderID, ports.ErrPaused)
 		}
 		chunk := t.Chunks[idx]
+		// The budget is taken before the request, not after the reply:
+		// a peer that is never asked sends nothing, so nothing has to
+		// be buffered here while the limit is waited out.
+		if p.download != nil {
+			if err := p.download.Wait(ctx, chunk.Length); err != nil {
+				return err
+			}
+		}
 		data, err := p.chunk(ctx, conn, *t, chunk)
 		if err != nil {
 			return err

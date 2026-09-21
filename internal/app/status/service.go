@@ -104,10 +104,12 @@ func daemonSection(live *LiveInfo) Daemon {
 		return Daemon{}
 	}
 	return Daemon{
-		Running:   true,
-		PID:       live.PID,
-		Listen:    live.Listen,
-		StartedAt: rfc3339(live.StartedAt),
+		Running:       true,
+		PID:           live.PID,
+		Listen:        live.Listen,
+		StartedAt:     rfc3339(live.StartedAt),
+		UploadLimit:   int64(live.UploadLimit),
+		DownloadLimit: int64(live.DownloadLimit),
 	}
 }
 

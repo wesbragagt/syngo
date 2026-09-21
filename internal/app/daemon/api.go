@@ -40,7 +40,7 @@ type API interface {
 	// Rescan queues a full scan; it does not wait for the scan to finish.
 	Rescan(ctx context.Context, id folder.ID) error
 	Repair(ctx context.Context, id folder.ID, dryRun bool) (repair.Report, error)
-	// Reload re-reads the folder and device tables.
+	// Reload re-reads the settings and the folder and device tables.
 	Reload(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 }
@@ -142,14 +142,18 @@ func (d *Daemon) Repair(ctx context.Context, id folder.ID, dryRun bool) (repair.
 	return d.deps.Repair.Run(ctx, id, dryRun)
 }
 
-// Reload re-reads the folder and device tables: it starts and stops folder
-// loops, dials peers that were added, drops peers that were removed, and tells
-// the peers that are connected which folders this device serves now. It ends
+// Reload re-reads the runtime settings and the folder and device tables: it
+// applies the bandwidth limits, starts and stops folder loops, dials peers
+// that were added, drops peers that were removed, and tells the peers that are
+// connected which folders this device serves now. It ends
 // with a sync cycle against every connected peer, so a folder that was just
 // given another mode is acted on now rather than at the next sync tick. It is
 // what the CLI calls after it has changed one of those tables, so a running
 // daemon does not have to wait for its next rescan tick.
 func (d *Daemon) Reload(ctx context.Context) error {
+	if err := d.applySettings(ctx); err != nil {
+		return err
+	}
 	if err := d.refresh(ctx); err != nil {
 		return err
 	}

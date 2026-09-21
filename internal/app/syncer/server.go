@@ -35,7 +35,11 @@ type Server struct {
 	fs       ports.FileSystem
 	hasher   ports.Hasher
 	identity ports.Identity
-	log      *slog.Logger
+	// upload paces the bytes this device serves. A nil limiter means
+	// unlimited. It is installed by the composition root before the server
+	// answers anything.
+	upload ports.Limiter
+	log    *slog.Logger
 }
 
 // New returns a server serving the folders in store.
@@ -45,6 +49,12 @@ func New(store Store, fsys ports.FileSystem, hasher ports.Hasher, identity ports
 	}
 	return &Server{store: store, fs: fsys, hasher: hasher, identity: identity, log: log}
 }
+
+// SetUploadLimiter installs the limiter that paces served chunks. A nil
+// limiter means unlimited. It must be called before the server starts
+// answering peers; the rate itself may change at any time, through the
+// limiter.
+func (s *Server) SetUploadLimiter(l ports.Limiter) { s.upload = l }
 
 // Hello is what this device announces to a connecting peer. Paused folders are
 // left out: the peer cannot get anything from them.
@@ -160,6 +170,14 @@ func (s *Server) Chunk(ctx context.Context, peer device.ID, req ports.ChunkReque
 	}
 	if int64(len(data)) != length {
 		return refuse(ports.ChunkHashChanged)
+	}
+	// The bytes are paced after they are read and before they are handed
+	// back, so a peer held at the limit occupies its own connection
+	// goroutine and nothing else.
+	if s.upload != nil {
+		if err := s.upload.Wait(ctx, len(data)); err != nil {
+			return ports.ChunkData{}, err
+		}
 	}
 	return ports.ChunkData{
 		Index:     req.Index,
