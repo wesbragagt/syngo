@@ -399,6 +399,36 @@ func TestPause_WithoutDaemonWritesTheDatabase(t *testing.T) {
 	}
 }
 
+func TestPause_WithoutAFolderAppliesToAll(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+	second := filepath.Join(filepath.Dir(e.folderPath), "photos")
+	if err := os.MkdirAll(second, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", second, err)
+	}
+	if code, _, stderr := e.run("", "folder", "add", second, "--id", "photos"); code != cli.ExitOK {
+		t.Fatalf("folder add exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	if code, stdout, stderr := e.run("", "pause"); code != cli.ExitOK {
+		t.Fatalf("pause exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
+	}
+	for _, f := range status(t, e).Folders {
+		if !f.Paused || f.State != "paused" {
+			t.Fatalf("folder %s = %+v, want it paused", f.ID, f)
+		}
+	}
+
+	if code, _, stderr := e.run("", "resume"); code != cli.ExitOK {
+		t.Fatalf("resume exit = %d (stderr %q)", code, stderr)
+	}
+	for _, f := range status(t, e).Folders {
+		if f.Paused {
+			t.Fatalf("folder %s is still paused", f.ID)
+		}
+	}
+}
+
 func TestPause_UnknownFolderIsNotFound(t *testing.T) {
 	e := newEnv(t)
 	setupFolder(t, e)

@@ -71,6 +71,40 @@ func (s *Service) Get(ctx context.Context, id folder.ID) (folder.Folder, error) 
 	return s.store.GetFolder(ctx, id)
 }
 
+// Changes are the folder settings `folder set` may change. A nil field is
+// left as it is.
+type Changes struct {
+	Mode         *folder.Mode
+	DeletePolicy *folder.DeletePolicy
+}
+
+// Empty reports whether the change set would alter nothing.
+func (c Changes) Empty() bool { return c.Mode == nil && c.DeletePolicy == nil }
+
+// Update applies c to a configured folder and stores the result. The new
+// configuration is validated before it is written, so an invalid mode or
+// delete policy leaves the folder untouched. It returns ErrNotFound when no
+// folder has that id.
+func (s *Service) Update(ctx context.Context, id folder.ID, c Changes) (folder.Folder, error) {
+	f, err := s.store.GetFolder(ctx, id)
+	if err != nil {
+		return folder.Folder{}, err
+	}
+	if c.Mode != nil {
+		f.Mode = *c.Mode
+	}
+	if c.DeletePolicy != nil {
+		f.DeletePolicy = *c.DeletePolicy
+	}
+	if err := f.Validate(); err != nil {
+		return folder.Folder{}, err
+	}
+	if err := s.store.SaveFolder(ctx, f); err != nil {
+		return folder.Folder{}, err
+	}
+	return f, nil
+}
+
 // Remove deletes a folder from the configuration. The files on disk are left
 // alone.
 func (s *Service) Remove(ctx context.Context, id folder.ID) error {

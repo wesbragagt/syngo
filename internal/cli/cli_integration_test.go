@@ -244,6 +244,7 @@ func TestFolderAdd_MissingDirAndBadFlags(t *testing.T) {
 		{"no id", []string{"folder", "add", e.folderPath}, cli.ExitUsage},
 		{"bad id", []string{"folder", "add", e.folderPath, "--id", "Docs"}, cli.ExitUsage},
 		{"bad mode", []string{"folder", "add", e.folderPath, "--id", "docs", "--mode", "sideways"}, cli.ExitUsage},
+		{"bad delete policy", []string{"folder", "add", e.folderPath, "--id", "docs", "--delete-policy", "sometimes"}, cli.ExitUsage},
 		{"missing dir", []string{"folder", "add", filepath.Join(e.folderPath, "nope"), "--id", "docs"}, cli.ExitUsage},
 		{"not a directory", []string{"folder", "add", filepath.Join(e.folderPath, "file.txt"), "--id", "docs"}, cli.ExitUsage},
 		{"empty ignore", []string{"folder", "add", e.folderPath, "--id", "docs", "--ignore", ""}, cli.ExitUsage},
@@ -319,5 +320,76 @@ func TestCommandsBeforeInitExit3(t *testing.T) {
 				t.Fatalf("stderr = %q, want a hint that the data dir is not initialized", stderr)
 			}
 		})
+	}
+}
+
+func TestFolderSet_ChangesModeAndDeletePolicy(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+
+	code, stdout, stderr := e.run("", "folder", "set", "docs", "--mode", "receiveonly", "--delete-policy", "never")
+	if code != cli.ExitOK {
+		t.Fatalf("folder set exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "receiveonly") || !strings.Contains(stdout, "never") {
+		t.Fatalf("folder set output = %q", stdout)
+	}
+
+	code, stdout, _ = e.run("", "folder", "list", "--json")
+	if code != cli.ExitOK {
+		t.Fatalf("folder list exit = %d, want 0", code)
+	}
+	var list []struct {
+		ID           string `json:"id"`
+		Mode         string `json:"mode"`
+		DeletePolicy string `json:"delete_policy"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil {
+		t.Fatalf("folder list is not json: %v\n%s", err, stdout)
+	}
+	if len(list) != 1 || list[0].Mode != "receiveonly" || list[0].DeletePolicy != "never" {
+		t.Fatalf("folder list = %+v, want the new mode and policy", list)
+	}
+
+	// One flag at a time leaves the other setting alone.
+	if code, _, stderr := e.run("", "folder", "set", "docs", "--mode", "sendonly"); code != cli.ExitOK {
+		t.Fatalf("folder set --mode exit = %d (stderr: %s)", code, stderr)
+	}
+	_, stdout, _ = e.run("", "folder", "list")
+	if !strings.Contains(stdout, "sendonly") || !strings.Contains(stdout, "never") {
+		t.Fatalf("folder list output = %q, want sendonly and never", stdout)
+	}
+	if !strings.Contains(stdout, "DELETE POLICY") {
+		t.Fatalf("folder list output = %q, want a delete policy column", stdout)
+	}
+}
+
+func TestFolderSet_BadArguments(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"no flags", []string{"folder", "set", "docs"}, cli.ExitUsage},
+		{"bad mode", []string{"folder", "set", "docs", "--mode", "sideways"}, cli.ExitUsage},
+		{"bad delete policy", []string{"folder", "set", "docs", "--delete-policy", "sometimes"}, cli.ExitUsage},
+		{"no folder", []string{"folder", "set", "--mode", "sendonly"}, cli.ExitUsage},
+		{"unknown folder", []string{"folder", "set", "nope", "--mode", "sendonly"}, cli.ExitNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if code, _, _ := e.run("", tt.args...); code != tt.want {
+				t.Fatalf("exit = %d, want %d", code, tt.want)
+			}
+		})
+	}
+
+	// A rejected change leaves the folder as it was.
+	_, stdout, _ := e.run("", "folder", "list")
+	if !strings.Contains(stdout, "sendreceive") || !strings.Contains(stdout, "propagate") {
+		t.Fatalf("folder list output = %q, want the original settings", stdout)
 	}
 }

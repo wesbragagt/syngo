@@ -68,10 +68,7 @@ func seedTransfer(t *testing.T, e env, id transfer.ID, path string, state transf
 func withFolder(t *testing.T) env {
 	t.Helper()
 	e := newEnv(t)
-	e.init(t)
-	if code, _, stderr := e.run("", "folder", "add", e.folderPath, "--id", "docs"); code != cli.ExitOK {
-		t.Fatalf("folder add exit = %d, want 0 (stderr: %s)", code, stderr)
-	}
+	setupFolder(t, e)
 	return e
 }
 

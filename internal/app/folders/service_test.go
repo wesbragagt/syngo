@@ -160,3 +160,60 @@ func TestListAndSetPaused(t *testing.T) {
 		t.Fatalf("SetPaused on unknown folder = %v, want ErrNotFound", err)
 	}
 }
+
+func TestUpdate_ChangesOnlyWhatIsGiven(t *testing.T) {
+	svc, store, _ := newService(t)
+	added, err := svc.Add(context.Background(), docsFolder("docs", "/docs"))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	mode := folder.ModeReceiveOnly
+	updated, err := svc.Update(context.Background(), added.ID, folders.Changes{Mode: &mode})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Mode != folder.ModeReceiveOnly {
+		t.Fatalf("mode = %q, want receiveonly", updated.Mode)
+	}
+	if updated.DeletePolicy != added.DeletePolicy || updated.Path != added.Path {
+		t.Fatalf("update changed more than the mode: %+v", updated)
+	}
+
+	stored, err := store.GetFolder(context.Background(), added.ID)
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+	if stored.Mode != folder.ModeReceiveOnly {
+		t.Fatalf("stored mode = %q, want receiveonly", stored.Mode)
+	}
+}
+
+func TestUpdate_RejectsAnInvalidPolicyAndKeepsTheFolder(t *testing.T) {
+	svc, store, _ := newService(t)
+	added, err := svc.Add(context.Background(), docsFolder("docs", "/docs"))
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	policy := folder.DeletePolicy("sometimes")
+	if _, err := svc.Update(context.Background(), added.ID, folders.Changes{DeletePolicy: &policy}); err == nil {
+		t.Fatal("update accepted an invalid delete policy")
+	}
+	stored, err := store.GetFolder(context.Background(), added.ID)
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+	if stored.DeletePolicy != added.DeletePolicy {
+		t.Fatalf("delete policy = %q, want the original %q", stored.DeletePolicy, added.DeletePolicy)
+	}
+}
+
+func TestUpdate_UnknownFolder(t *testing.T) {
+	svc, _, _ := newService(t)
+
+	mode := folder.ModeSendOnly
+	if _, err := svc.Update(context.Background(), "nope", folders.Changes{Mode: &mode}); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("update unknown = %v, want ErrNotFound", err)
+	}
+}

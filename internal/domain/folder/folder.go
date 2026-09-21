@@ -19,6 +19,17 @@ const (
 	ModeReceiveOnly Mode = "receiveonly"
 )
 
+// ParseMode validates s and returns it as a folder mode.
+func ParseMode(s string) (Mode, error) {
+	switch m := Mode(s); m {
+	case ModeSendReceive, ModeSendOnly, ModeReceiveOnly:
+		return m, nil
+	default:
+		return "", fmt.Errorf("invalid folder mode %q, want %s, %s or %s",
+			s, ModeSendReceive, ModeSendOnly, ModeReceiveOnly)
+	}
+}
+
 // DeletePolicy controls whether remote deletions are applied locally.
 type DeletePolicy string
 
@@ -27,6 +38,16 @@ const (
 	DeletePropagate DeletePolicy = "propagate"
 	DeleteNever     DeletePolicy = "never"
 )
+
+// ParseDeletePolicy validates s and returns it as a delete policy.
+func ParseDeletePolicy(s string) (DeletePolicy, error) {
+	switch p := DeletePolicy(s); p {
+	case DeletePropagate, DeleteNever:
+		return p, nil
+	default:
+		return "", fmt.Errorf("invalid delete policy %q, want %s or %s", s, DeletePropagate, DeleteNever)
+	}
+}
 
 // SymlinkPolicy controls how symlinks encountered during a scan are treated.
 type SymlinkPolicy string

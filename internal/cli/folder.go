@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wesbragagt/syncthis/internal/app/folders"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/ignore"
 )
@@ -51,7 +52,7 @@ func newFolderCmd(deps *Deps) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newFolderAddCmd(deps), newFolderListCmd(deps), newFolderRemoveCmd(deps))
+	cmd.AddCommand(newFolderAddCmd(deps), newFolderListCmd(deps), newFolderSetCmd(deps), newFolderRemoveCmd(deps))
 	return cmd
 }
 
@@ -86,6 +87,14 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 			if err := checkIgnorePatterns(opts.ignore); err != nil {
 				return Errorf(ExitUsage, "folder add: %v", err)
 			}
+			mode, err := folder.ParseMode(opts.mode)
+			if err != nil {
+				return Errorf(ExitUsage, "folder add: %v", err)
+			}
+			deletePolicy, err := folder.ParseDeletePolicy(opts.deletePolicy)
+			if err != nil {
+				return Errorf(ExitUsage, "folder add: %v", err)
+			}
 			path, err := filepath.Abs(args[0])
 			if err != nil {
 				return fmt.Errorf("resolve path %q: %w", args[0], err)
@@ -98,8 +107,8 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 				ID:             id,
 				Path:           filepath.Clean(path),
 				Label:          opts.label,
-				Mode:           folder.Mode(opts.mode),
-				DeletePolicy:   folder.DeletePolicy(opts.deletePolicy),
+				Mode:           mode,
+				DeletePolicy:   deletePolicy,
 				Symlinks:       folder.SymlinkPolicy(opts.symlinks),
 				IncludeHidden:  opts.includeHidden,
 				KeepEmptyDirs:  !opts.noEmptyDirs,
@@ -199,12 +208,69 @@ func newFolderListCmd(deps *Deps) *cobra.Command {
 			rows := make([][]string, 0, len(list))
 			for _, f := range list {
 				rows = append(rows, []string{
-					string(f.ID), f.Path, f.Label, string(f.Mode), strconv.FormatBool(f.Paused),
+					string(f.ID), f.Path, f.Label, string(f.Mode), string(f.DeletePolicy),
+					strconv.FormatBool(f.Paused),
 				})
 			}
-			return deps.printer().Table([]string{"ID", "PATH", "LABEL", "MODE", "PAUSED"}, rows)
+			return deps.printer().Table(
+				[]string{"ID", "PATH", "LABEL", "MODE", "DELETE POLICY", "PAUSED"}, rows)
 		},
 	}
+}
+
+// newFolderSetCmd builds the "folder set" command.
+func newFolderSetCmd(deps *Deps) *cobra.Command {
+	var mode, deletePolicy string
+
+	cmd := &cobra.Command{
+		Use:   "set ID",
+		Short: "Change the mode or the delete policy of a folder",
+		Long: "set changes how a configured folder synchronizes. A running daemon picks\n" +
+			"the new setting up at its next scan and sync cycle.",
+		Args: requireArgs(1, "expected exactly one folder ID"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var changes folders.Changes
+			if cmd.Flags().Changed("mode") {
+				m, err := folder.ParseMode(mode)
+				if err != nil {
+					return Errorf(ExitUsage, "folder set: %v", err)
+				}
+				changes.Mode = &m
+			}
+			if cmd.Flags().Changed("delete-policy") {
+				p, err := folder.ParseDeletePolicy(deletePolicy)
+				if err != nil {
+					return Errorf(ExitUsage, "folder set: %v", err)
+				}
+				changes.DeletePolicy = &p
+			}
+			if changes.Empty() {
+				return Errorf(ExitUsage, "folder set: pass --mode or --delete-policy")
+			}
+
+			app, err := deps.app(cmd.Context(), true)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = app.Close() }()
+
+			updated, err := app.Folders.Update(cmd.Context(), folder.ID(args[0]), changes)
+			if err != nil {
+				return err
+			}
+			if deps.Global.JSON {
+				return deps.printer().PrintJSON(viewOf(updated))
+			}
+			_, err = fmt.Fprintf(deps.Stdout, "folder %s: mode %s, delete policy %s\n",
+				updated.ID, updated.Mode, updated.DeletePolicy)
+			return err
+		},
+	}
+
+	f := cmd.Flags()
+	f.StringVar(&mode, "mode", "", "sendreceive|sendonly|receiveonly")
+	f.StringVar(&deletePolicy, "delete-policy", "", "propagate|never")
+	return cmd
 }
 
 // newFolderRemoveCmd builds the "folder remove" command.
