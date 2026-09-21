@@ -13,4 +13,6 @@ var (
 	_ ports.MetadataStore = (*Store)(nil)
 	_ ports.Dialer        = (*Dialer)(nil)
 	_ ports.PeerConn      = (*PeerConn)(nil)
+	_ ports.Limiter       = (*Limiter)(nil)
+	_ ports.SettingsStore = (*Settings)(nil)
 )

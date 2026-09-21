@@ -3,6 +3,7 @@
 package jsonconfig
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
@@ -59,6 +62,10 @@ type Config struct {
 	RescanInterval Duration `json:"rescan_interval"`
 	SyncInterval   Duration `json:"sync_interval"`
 	LogLevel       string   `json:"log_level"`
+	// UploadLimit and DownloadLimit are bytes per second, 0 for
+	// unlimited. They cover chunk payloads only.
+	UploadLimit   int64 `json:"upload_limit"`
+	DownloadLimit int64 `json:"download_limit"`
 }
 
 // Default returns the configuration used when none has been written yet.
@@ -88,7 +95,22 @@ func Load(dir string) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", FileName, err)
 	}
+	if err := cfg.validate(); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", FileName, err)
+	}
 	return cfg, nil
+}
+
+// validate refuses a configuration the rest of the program cannot make sense
+// of. A missing key is not a mistake: Load starts from the defaults.
+func (c Config) validate() error {
+	if c.UploadLimit < 0 {
+		return fmt.Errorf("upload_limit %d: %w", c.UploadLimit, bandwidth.ErrInvalidRate)
+	}
+	if c.DownloadLimit < 0 {
+		return fmt.Errorf("download_limit %d: %w", c.DownloadLimit, bandwidth.ErrInvalidRate)
+	}
+	return nil
 }
 
 // Save writes c to config.json in dir, creating the directory if needed.
@@ -105,4 +127,65 @@ func Save(dir string, c Config) error {
 		return fmt.Errorf("write %s: %w", FileName, err)
 	}
 	return nil
+}
+
+// Store reads and writes the settings of one data directory. It is the
+// ports.SettingsStore the daemon re-reads its limits through, and the only way
+// the application layer ever touches config.json.
+type Store struct{ dir string }
+
+var _ ports.SettingsStore = (*Store)(nil)
+
+// NewStore returns a store over the config.json in dir.
+func NewStore(dir string) *Store { return &Store{dir: dir} }
+
+// Load reads the settings. A missing file yields the defaults.
+func (s *Store) Load(_ context.Context) (ports.Settings, error) {
+	cfg, err := Load(s.dir)
+	if err != nil {
+		return ports.Settings{}, err
+	}
+	return toSettings(cfg), nil
+}
+
+// Save writes the settings, keeping every key the port does not carry, such as
+// the device name.
+func (s *Store) Save(_ context.Context, set ports.Settings) error {
+	cfg, err := Load(s.dir)
+	if err != nil {
+		return err
+	}
+	applySettings(&cfg, set)
+	if err := cfg.validate(); err != nil {
+		return fmt.Errorf("%s: %w", FileName, err)
+	}
+	return Save(s.dir, cfg)
+}
+
+// toSettings is the configuration as the application sees it.
+func toSettings(c Config) ports.Settings {
+	return ports.Settings{
+		Listen:         c.Listen,
+		Interface:      c.Interface,
+		ChunkSize:      c.ChunkSize,
+		MaxFileSize:    c.MaxFileSize,
+		RescanInterval: c.RescanInterval.Duration(),
+		SyncInterval:   c.SyncInterval.Duration(),
+		LogLevel:       c.LogLevel,
+		UploadLimit:    bandwidth.Rate(c.UploadLimit),
+		DownloadLimit:  bandwidth.Rate(c.DownloadLimit),
+	}
+}
+
+// applySettings overlays s onto c, leaving the keys s does not carry alone.
+func applySettings(c *Config, s ports.Settings) {
+	c.Listen = s.Listen
+	c.Interface = s.Interface
+	c.ChunkSize = s.ChunkSize
+	c.MaxFileSize = s.MaxFileSize
+	c.RescanInterval = Duration(s.RescanInterval)
+	c.SyncInterval = Duration(s.SyncInterval)
+	c.LogLevel = s.LogLevel
+	c.UploadLimit = int64(s.UploadLimit)
+	c.DownloadLimit = int64(s.DownloadLimit)
 }
