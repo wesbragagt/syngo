@@ -2,8 +2,12 @@ package e2edocker
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand/v2"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // crashFileSize is big enough that a daemon killed while it is being
@@ -176,5 +180,126 @@ func TestCrash_SenderKilledMidTransfer(t *testing.T) {
 	}
 	if got, want := b.Tree()["huge.bin"].Hash, a.Tree()["huge.bin"].Hash; got != want {
 		t.Errorf("b holds huge.bin as %s, want the sender's %s", got, want)
+	}
+}
+
+// containerKills is how often the container is killed while the writer keeps
+// going, and writesDuringKills how many files it writes in total.
+const (
+	containerKills     = 3
+	writesDuringKills  = 200
+	restartStormRounds = 20
+)
+
+// TestCrash_ContainerKilledDuringWrites takes a whole device away in the
+// middle of a stream of changes, the way a machine losing power does: no
+// signal, no flush, nothing the daemon can do about it. The database has to
+// survive it, because the device has to come back and catch up.
+func TestCrash_ContainerKilledDuringWrites(t *testing.T) {
+	c := Start(t, 3)
+	a, b := c.Device(0), c.Device(1)
+
+	writes := writesDuringKills
+	if testing.Short() {
+		writes = 50
+	}
+	done := make(chan struct{})
+	var writer sync.WaitGroup
+	writer.Add(1)
+	go func() {
+		defer writer.Done()
+		defer close(done)
+		for i := 0; i < writes; i++ {
+			// Every path is written once. A path rewritten while a
+			// peer pulls it would run into KF-1 of the plan, which
+			// is not what this test is about.
+			a.WriteFile(fmt.Sprintf("stream/f%03d.bin", i), payload((i%3)*chunkSize+64, byte(i)))
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	for kill := 0; kill < containerKills; kill++ {
+		// The kills are spread through the stream rather than all
+		// landing at its start, so one of them catches a transfer.
+		want := (kill + 1) * writes / 4
+		waitFor(t, fmt.Sprintf("b holds more than %d files", want), convergeTimeout, func() bool {
+			return len(b.Tree()) > want
+		})
+		b.KillContainer()
+		b.StartDaemon()
+	}
+	<-done
+	writer.Wait()
+
+	c.WaitPeersConnected()
+	c.WaitConverged()
+	c.CheckInvariants()
+
+	if got := len(b.Tree()); got != writes+1 {
+		t.Errorf("b holds %d entries, want %d files and their directory", got, writes)
+	}
+	// Nothing is left to fix: a dry run that would change something exits
+	// with the dry-run code instead of zero.
+	if out, code := b.Run("repair", folderID, "--dry-run"); code != 0 {
+		t.Errorf("repair --dry-run on b exited %d, want 0: %s", code, out)
+	}
+}
+
+// TestCrash_RestartStorm restarts devices over and over while the folder keeps
+// changing. A daemon that comes back has to claim the data directory its
+// predecessor left behind, whether it shut down cleanly or was killed; a start
+// that exits 6 means it refused to, believing the dead daemon is still there.
+func TestCrash_RestartStorm(t *testing.T) {
+	c := Start(t, 3)
+	writer := c.Device(0)
+
+	rounds := restartStormRounds
+	if testing.Short() {
+		rounds = 5
+	}
+	stop := make(chan struct{})
+	var writing sync.WaitGroup
+	writing.Add(1)
+	go func() {
+		defer writing.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			writer.WriteFile(fmt.Sprintf("storm/f%03d.bin", i), payload(chunkSize+i, byte(i)))
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	random := rand.New(rand.NewPCG(7, 11))
+	for round := 0; round < rounds; round++ {
+		dev := c.Device(random.IntN(len(c.Devices)))
+		// Every fourth round the daemon is killed instead of asked to
+		// stop, so the next start finds a pid file and a socket nobody
+		// removed.
+		if round%4 == 3 {
+			dev.KillDaemon()
+			dev.StartDaemon()
+		} else {
+			dev.Restart()
+		}
+		time.Sleep(time.Duration(random.IntN(500)) * time.Millisecond)
+	}
+	close(stop)
+	writing.Wait()
+
+	c.WaitPeersConnected()
+	c.WaitConverged()
+	c.CheckInvariants()
+
+	for _, dev := range c.Devices {
+		for i, code := range dev.DaemonExits() {
+			if code == 6 {
+				t.Errorf("%s: daemon run %d exited 6: it refused to claim a data directory nobody owns",
+					dev.Name, i)
+			}
+		}
 	}
 }
