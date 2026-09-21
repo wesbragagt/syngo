@@ -2,17 +2,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/wesbragagt/syncthis/internal/cli"
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "syncthis:", err)
-		os.Exit(1)
-	}
-}
-
-func run(_ []string) error {
-	return nil
+	os.Exit(cli.Execute(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
