@@ -119,7 +119,13 @@ func TestShow_CompleteTransferHasNoMissingChunks(t *testing.T) {
 func TestShow_UnknownID(t *testing.T) {
 	svc := newService(t)
 
-	if _, err := svc.Show(context.Background(), "nope"); !errors.Is(err, ports.ErrNotFound) {
+	_, err := svc.Show(context.Background(), "nope")
+	if !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("show unknown = %v, want ErrNotFound", err)
+	}
+	// The store already names the transfer, so the service does not name
+	// it again.
+	if got, want := err.Error(), `transfer "nope": not found`; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

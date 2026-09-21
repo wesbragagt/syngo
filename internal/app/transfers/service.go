@@ -4,7 +4,6 @@ package transfers
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -59,11 +58,13 @@ func (s *Service) List(ctx context.Context, f Filter) ([]View, error) {
 }
 
 // Show returns one transfer including the indexes of the chunks it still
-// needs. It fails with ports.ErrNotFound when no transfer has that id.
+// needs. It fails with ports.ErrNotFound when no transfer has that id. The
+// store already names the transfer in its error, so the message is passed on
+// unchanged rather than prefixed a second time.
 func (s *Service) Show(ctx context.Context, id transfer.ID) (View, error) {
 	t, err := s.store.GetTransfer(ctx, id)
 	if err != nil {
-		return View{}, fmt.Errorf("transfer %q: %w", id, err)
+		return View{}, err
 	}
 	return viewOf(t, true), nil
 }

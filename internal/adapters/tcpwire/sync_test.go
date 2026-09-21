@@ -204,3 +204,17 @@ func TestBroadcast_ReachesTheConnectedPeer(t *testing.T) {
 		t.Fatal("no folder change notification arrived")
 	}
 }
+
+func TestRequestManifest_RefusalReportsTheReasonOnce(t *testing.T) {
+	conn, _ := connectTo(t, &syncHandler{err: ports.ErrFolderReceiveOnly})
+
+	_, err := conn.RequestManifest(context.Background(), "docs")
+	if !errors.Is(err, ports.ErrFolderReceiveOnly) {
+		t.Fatalf("error = %v, want ErrFolderReceiveOnly", err)
+	}
+	// The peer's message already names the reason, so the client does not
+	// add it a second time.
+	if got, want := err.Error(), `folder "docs": folder is receive-only`; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}

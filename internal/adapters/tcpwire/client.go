@@ -217,7 +217,8 @@ func (c *conn) Ping(ctx context.Context) (time.Duration, error) {
 }
 
 // RequestManifest asks the peer for everything it knows about a folder,
-// tombstones included.
+// tombstones included. The failures name what went wrong but not the folder:
+// the caller already says which manifest it was asking for.
 func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error) {
 	frame, err := frameOf(MsgManifestRequest, manifestRequestHeader{FolderID: string(id)}, nil)
 	if err != nil {
@@ -225,10 +226,10 @@ func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Mani
 	}
 	reply, err := c.request(ctx, frame)
 	if err != nil {
-		return manifest.Manifest{}, fmt.Errorf("manifest of %s: %w", id, err)
+		return manifest.Manifest{}, err
 	}
 	if reply.Type != MsgManifestReply {
-		return manifest.Manifest{}, fmt.Errorf("manifest of %s: expected %s, got %s", id, MsgManifestReply, reply.Type)
+		return manifest.Manifest{}, fmt.Errorf("expected %s, got %s", MsgManifestReply, reply.Type)
 	}
 
 	var header manifestReplyHeader
@@ -237,10 +238,10 @@ func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Mani
 	}
 	m, err := fromWireManifest(header)
 	if err != nil {
-		return manifest.Manifest{}, fmt.Errorf("manifest of %s: %w", id, err)
+		return manifest.Manifest{}, err
 	}
 	if m.FolderID != id {
-		return manifest.Manifest{}, fmt.Errorf("manifest of %s: peer answered for folder %q", id, m.FolderID)
+		return manifest.Manifest{}, fmt.Errorf("peer answered for folder %q, want %q", m.FolderID, id)
 	}
 	return m, nil
 }
@@ -424,10 +425,24 @@ func peerError(frame Frame) error {
 		return err
 	}
 	if sentinel := errorSentinel(header.Code); sentinel != nil {
-		return fmt.Errorf("%s: %w", header.Message, sentinel)
+		return &remotePeerError{message: header.Message, sentinel: sentinel}
 	}
 	return fmt.Errorf("peer reported %s: %s", header.Code, header.Message)
 }
+
+// remotePeerError carries a failure the peer reported. The message is the
+// peer's own, which already names the sentinel, so it is not prefixed with it
+// again; Unwrap keeps errors.Is working.
+type remotePeerError struct {
+	message  string
+	sentinel error
+}
+
+// Error returns the message the peer sent.
+func (e *remotePeerError) Error() string { return e.message }
+
+// Unwrap returns the sentinel the peer's error code maps to.
+func (e *remotePeerError) Unwrap() error { return e.sentinel }
 
 // keepalive pings the peer whenever the connection has been idle, so the
 // peer's read deadline does not fire.
