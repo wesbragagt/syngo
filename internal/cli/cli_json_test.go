@@ -66,6 +66,12 @@ func jsonCases() []jsonCase {
 		{"folder set", cli.ExitOK, func(t *testing.T) (env, []string) {
 			return withDocs(t), []string{"folder", "set", "docs", "--mode", "sendonly"}
 		}},
+		{"folder set with a sync window", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withDocs(t), []string{"folder", "set", "docs", "--sync-window", "22:00-06:00"}
+		}},
+		{"folder set with a bad sync window", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return withDocs(t), []string{"folder", "set", "docs", "--sync-window", "22:00-22:00"}
+		}},
 		{"folder set on an unknown folder", cli.ExitNotFound, func(t *testing.T) (env, []string) {
 			return initialized(t), []string{"folder", "set", "gone", "--mode", "sendonly"}
 		}},

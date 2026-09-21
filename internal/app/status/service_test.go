@@ -173,3 +173,73 @@ func TestReport_CountsConflicts(t *testing.T) {
 		t.Fatalf("conflicts = %+v, want one unresolved", report.Conflicts)
 	}
 }
+
+// scheduleFolder gives the docs folder a window the fixed clock is outside of:
+// the report reads 10:00 UTC and the window is the night.
+func scheduleFolder(t *testing.T, store *fakes.Store) {
+	t.Helper()
+	ctx := context.Background()
+	f, err := store.GetFolder(ctx, "docs")
+	if err != nil {
+		t.Fatalf("GetFolder error: %v", err)
+	}
+	windows, err := folder.ParseWindows([]string{"22:00-06:00"})
+	if err != nil {
+		t.Fatalf("parse window: %v", err)
+	}
+	f.SyncWindows = windows
+	if err := store.SaveFolder(ctx, f); err != nil {
+		t.Fatalf("SaveFolder error: %v", err)
+	}
+}
+
+func TestReport_ScheduledStateAndNextWindow(t *testing.T) {
+	svc, store := newService(t)
+	scheduleFolder(t, store)
+
+	report, err := svc.Report(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Report error: %v", err)
+	}
+	f := report.Folders[0]
+	if f.State != status.StateScheduled {
+		t.Fatalf("state = %q, want %q", f.State, status.StateScheduled)
+	}
+	if f.InWindow {
+		t.Fatal("in_window is true at 10:00 for a 22:00-06:00 window")
+	}
+	if len(f.SyncWindows) != 1 || f.SyncWindows[0] != "22:00-06:00" {
+		t.Fatalf("sync_windows = %v, want the configured window", f.SyncWindows)
+	}
+	if f.NextWindow == nil || *f.NextWindow != "2026-09-20T22:00:00Z" {
+		t.Fatalf("next_window = %v, want tonight's opening", f.NextWindow)
+	}
+
+	// A folder without windows is open and has no next opening.
+	svc2, _ := newService(t)
+	plain, err := svc2.Report(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Report error: %v", err)
+	}
+	if !plain.Folders[0].InWindow || plain.Folders[0].NextWindow != nil {
+		t.Fatalf("an always open folder reports %+v", plain.Folders[0])
+	}
+}
+
+func TestReport_ScanningWinsOverScheduled(t *testing.T) {
+	svc, store := newService(t)
+	scheduleFolder(t, store)
+
+	live := &status.LiveInfo{FolderStates: map[string]string{"docs": status.StateScanning}}
+	report, err := svc.Report(context.Background(), live)
+	if err != nil {
+		t.Fatalf("Report error: %v", err)
+	}
+	f := report.Folders[0]
+	if f.State != status.StateScanning {
+		t.Fatalf("state = %q, want %q: a closed folder still scans", f.State, status.StateScanning)
+	}
+	if f.InWindow {
+		t.Fatal("in_window is true while the folder is outside its window")
+	}
+}

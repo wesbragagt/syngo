@@ -61,6 +61,8 @@ $ bin/syncthis --data-dir /tmp/b/data status
   up with both files.
 - `conflict list`, `show`, `resolve --keep local|remote|both` and `export` to
   see what diverged and decide what to keep.
+- Per-folder sync windows: `folder set docs --sync-window 22:00-06:00` pulls
+  the folder at night only, while it keeps scanning and keeps serving.
 - `sync-plan` prints what a sync would do without doing it.
 - Every command speaks `--json`, and every failure has its own exit code.
 

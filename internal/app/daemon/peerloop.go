@@ -186,7 +186,9 @@ func (l *peerLoop) sync(ctx context.Context, conn ports.PeerConn, id folder.ID) 
 }
 
 // syncable returns the folders this device may pull from the peer: those both
-// sides have, that this side receives into and that are not paused.
+// sides have, that this side receives into, that are not paused and that are
+// inside one of their sync windows. A folder outside its windows keeps
+// scanning and keeps serving; only the pull waits for the window to open.
 func (l *peerLoop) syncable(ctx context.Context, conn ports.PeerConn, only folder.ID) []folder.Folder {
 	advertised := make(map[folder.ID]struct{})
 	for _, advert := range conn.RemoteHello().Folders {
@@ -209,6 +211,9 @@ func (l *peerLoop) syncable(ctx context.Context, conn ports.PeerConn, only folde
 			continue
 		}
 		if _, shared := advertised[f.ID]; !shared || f.Paused || !f.CanReceive() {
+			continue
+		}
+		if !f.InWindow(l.daemon.deps.Clock.Now()) {
 			continue
 		}
 		out = append(out, f)

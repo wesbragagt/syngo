@@ -1117,3 +1117,61 @@ func TestStatus_ReportsLimits(t *testing.T) {
 		t.Fatalf("daemon.download_limit = %d, want 0 for unlimited", report.Daemon.DownloadLimit)
 	}
 }
+
+// closedFolder returns a folder whose sync window excludes the fake clock's
+// time, which reads 10:00 UTC.
+func closedFolder(t *testing.T, id folder.ID) folder.Folder {
+	t.Helper()
+	f := testFolder(id, false)
+	windows, err := folder.ParseWindows([]string{"22:00-06:00"})
+	if err != nil {
+		t.Fatalf("parse window: %v", err)
+	}
+	f.SyncWindows = windows
+	return f
+}
+
+func TestPeerLoop_SkipsFolderOutsideItsWindow(t *testing.T) {
+	const peerID = device.ID("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW")
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: time.Hour, SyncInterval: 20 * time.Millisecond},
+		[]device.Device{testPeer(peerID, "nas:22000")},
+		testFolder("open", false), closedFolder(t, "closed"))
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe:   ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+		Handler: folderAnnouncer{store: h.store},
+	})
+
+	// Several cycles run; the closed folder is in none of them.
+	waitFor(t, "two sync cycles", func() bool { return len(h.syncer.syncedFolders()) >= 2 })
+	for _, id := range h.syncer.syncedFolders() {
+		if id != "open" {
+			t.Fatalf("synced %v, want only the folder inside its window", h.syncer.syncedFolders())
+		}
+	}
+}
+
+func TestReload_WindowRemovedSyncsAtOnce(t *testing.T) {
+	const peerID = device.ID("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+	// An hour of sync interval: only the reload `folder set` asks for can
+	// make the folder sync now that its window is gone.
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: time.Hour, SyncInterval: time.Hour},
+		[]device.Device{testPeer(peerID, "nas:22000")}, closedFolder(t, "docs"))
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe:   ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+		Handler: folderAnnouncer{store: h.store},
+	})
+	waitFor(t, "the peer connection", func() bool { return len(h.dialer.Conns()) == 1 })
+	if got := h.syncer.syncedFolders(); len(got) != 0 {
+		t.Fatalf("synced %v, want nothing while the folder is outside its window", got)
+	}
+
+	open := testFolder("docs", false)
+	if err := h.store.SaveFolder(h.ctx, open); err != nil {
+		t.Fatalf("clear the sync windows: %v", err)
+	}
+	h.reload(t)
+
+	waitFor(t, "a sync cycle once the window is gone", func() bool {
+		return len(h.syncer.syncedFolders()) >= 1
+	})
+}

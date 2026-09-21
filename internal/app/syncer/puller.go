@@ -33,6 +33,12 @@ const (
 	tempDirMode fs.FileMode = 0o700
 )
 
+// ErrOutsideWindow reports that a folder's sync windows do not cover the
+// current local time, so this device does not pull for it. It is the error a
+// transfer that stopped for it carries, so the message a user reads is exactly
+// this one.
+var ErrOutsideWindow = errors.New("outside sync window")
+
 // Summary counts what one folder sync cycle did.
 type Summary struct {
 	Pulled    int
@@ -119,6 +125,13 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.Folder) (Summary, error) {
 	var summary Summary
 	if !f.CanReceive() || f.Paused {
+		return summary, nil
+	}
+	// The peer loop leaves a closed folder out of the cycle; this is the
+	// second guard, for a caller that asked for one folder directly.
+	if !f.InWindow(p.clock.Now()) {
+		p.log.Debug("folder is outside its sync window, not pulling",
+			"folder", f.ID, "windows", folder.EncodeWindows(f.SyncWindows))
 		return summary, nil
 	}
 	release, err := p.lockFolder(ctx, f.ID)
@@ -214,6 +227,19 @@ func (p *Puller) pausedNow(ctx context.Context, id folder.ID) bool {
 		return ctx.Err() == nil
 	}
 	return f.Paused
+}
+
+// outsideWindowNow re-reads the sync windows of a folder, so a window that
+// closes while a transfer runs is noticed without waiting for the next cycle.
+// A folder that cannot be read counts as open: pausedNow already stops the
+// transfer in that case, and calling it closed as well would file the stop
+// under the wrong reason.
+func (p *Puller) outsideWindowNow(ctx context.Context, id folder.ID) bool {
+	f, err := p.store.GetFolder(ctx, id)
+	if err != nil {
+		return false
+	}
+	return !f.InWindow(p.clock.Now())
 }
 
 // rootUsable reports whether the folder root is still a directory.
@@ -410,10 +436,11 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 				}
 				summary.Bytes += bytes
 				mu.Unlock()
-			case errors.Is(err, ports.ErrPaused):
-				// Every worker notices the pause on its own and
-				// leaves its transfer resumable, so the cycle
-				// ends without a failure.
+			case errors.Is(err, ports.ErrPaused), errors.Is(err, ErrOutsideWindow):
+				// Every worker notices the pause, or the window
+				// closing, on its own and leaves its transfer
+				// resumable, so the cycle ends without a
+				// failure.
 				mu.Lock()
 				summary.Skipped++
 				mu.Unlock()
@@ -644,6 +671,12 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 		// recorded, and nothing more is asked for.
 		if p.pausedNow(ctx, t.FolderID) {
 			return fmt.Errorf("folder %q: %w", t.FolderID, ports.ErrPaused)
+		}
+		// A window that closed stops the transfer just as a pause
+		// does, within one chunk. It stays pending, so the first
+		// cycle after the window opens continues it from the journal.
+		if p.outsideWindowNow(ctx, t.FolderID) {
+			return ErrOutsideWindow
 		}
 		chunk := t.Chunks[idx]
 		// The budget is taken before the request, not after the reply:

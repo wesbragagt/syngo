@@ -18,6 +18,10 @@ const (
 	StateSyncing  = "syncing"
 	StatePaused   = "paused"
 	StateError    = "error"
+	// StateScheduled is a folder that is outside every one of its sync
+	// windows: it still scans and still serves, but this device does not
+	// pull for it until the next window opens.
+	StateScheduled = "scheduled"
 )
 
 // Report is the full status document, as emitted by `status --json`.
@@ -65,6 +69,12 @@ type Folder struct {
 	LastScanAt     *string `json:"last_scan_at"`
 	PendingChanges int     `json:"pending_changes"`
 	Error          *string `json:"error"`
+	// SyncWindows are the folder's windows in canonical form; an empty list
+	// means it is always open. InWindow says whether it is open now, and
+	// NextWindow is when it opens next, or nil when it is open already.
+	SyncWindows []string `json:"sync_windows"`
+	InWindow    bool     `json:"in_window"`
+	NextWindow  *string  `json:"next_window"`
 }
 
 // Peer is the per-peer section of the report.

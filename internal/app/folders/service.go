@@ -76,10 +76,15 @@ func (s *Service) Get(ctx context.Context, id folder.ID) (folder.Folder, error) 
 type Changes struct {
 	Mode         *folder.Mode
 	DeletePolicy *folder.DeletePolicy
+	// SyncWindows replaces the whole window list. A pointer to an empty
+	// list clears it, which is what makes the folder always open again.
+	SyncWindows *folder.Windows
 }
 
 // Empty reports whether the change set would alter nothing.
-func (c Changes) Empty() bool { return c.Mode == nil && c.DeletePolicy == nil }
+func (c Changes) Empty() bool {
+	return c.Mode == nil && c.DeletePolicy == nil && c.SyncWindows == nil
+}
 
 // Update applies c to a configured folder and stores the result. The new
 // configuration is validated before it is written, so an invalid mode or
@@ -95,6 +100,9 @@ func (s *Service) Update(ctx context.Context, id folder.ID, c Changes) (folder.F
 	}
 	if c.DeletePolicy != nil {
 		f.DeletePolicy = *c.DeletePolicy
+	}
+	if c.SyncWindows != nil {
+		f.SyncWindows = *c.SyncWindows
 	}
 	if err := f.Validate(); err != nil {
 		return folder.Folder{}, err

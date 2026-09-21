@@ -25,6 +25,7 @@ type folderView struct {
 	IncludeHidden  bool     `json:"include_hidden"`
 	KeepEmptyDirs  bool     `json:"keep_empty_dirs"`
 	IgnorePatterns []string `json:"ignore_patterns"`
+	SyncWindows    []string `json:"sync_windows"`
 	Paused         bool     `json:"paused"`
 }
 
@@ -38,7 +39,7 @@ func viewOf(f folder.Folder) folderView {
 		ID: string(f.ID), Path: f.Path, Label: f.Label, Mode: string(f.Mode),
 		DeletePolicy: string(f.DeletePolicy), Symlinks: string(f.Symlinks),
 		IncludeHidden: f.IncludeHidden, KeepEmptyDirs: f.KeepEmptyDirs,
-		IgnorePatterns: patterns, Paused: f.Paused,
+		IgnorePatterns: patterns, SyncWindows: f.SyncWindows.Strings(), Paused: f.Paused,
 	}
 }
 
@@ -66,6 +67,7 @@ type folderAddOpts struct {
 	includeHidden bool
 	noEmptyDirs   bool
 	ignore        []string
+	syncWindows   []string
 }
 
 // newFolderAddCmd builds the "folder add" command.
@@ -95,6 +97,10 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return Errorf(ExitUsage, "folder add: %v", err)
 			}
+			windows, err := folder.ParseWindows(opts.syncWindows)
+			if err != nil {
+				return Errorf(ExitUsage, "folder add: %v", err)
+			}
 			path, err := filepath.Abs(args[0])
 			if err != nil {
 				return fmt.Errorf("resolve path %q: %w", args[0], err)
@@ -113,6 +119,7 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 				IncludeHidden:  opts.includeHidden,
 				KeepEmptyDirs:  !opts.noEmptyDirs,
 				IgnorePatterns: opts.ignore,
+				SyncWindows:    windows,
 			}
 			if err := f.Validate(); err != nil {
 				return Errorf(ExitUsage, "folder add: %v", err)
@@ -146,7 +153,21 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 	f.BoolVar(&opts.includeHidden, "include-hidden", false, "synchronize dot files too")
 	f.BoolVar(&opts.noEmptyDirs, "no-empty-dirs", false, "do not keep empty directories")
 	f.StringArrayVar(&opts.ignore, "ignore", nil, "ignore pattern; repeatable")
+	f.StringArrayVar(&opts.syncWindows, "sync-window", nil, syncWindowUsage)
 	return cmd
+}
+
+// syncWindowUsage is the help of the --sync-window flag, shared by add and
+// set.
+const syncWindowUsage = "local-time window this folder pulls in, HH:MM-HH:MM; repeatable"
+
+// windowsColumn renders a folder's windows for the text output, naming the
+// empty list rather than printing nothing.
+func windowsColumn(ws folder.Windows) string {
+	if ws.Always() {
+		return "always"
+	}
+	return strings.Join(ws.Strings(), ",")
 }
 
 // checkDirectory reports whether path can be synchronized: it must exist and
@@ -210,24 +231,30 @@ func newFolderListCmd(deps *Deps) *cobra.Command {
 			for _, f := range list {
 				rows = append(rows, []string{
 					string(f.ID), f.Path, f.Label, string(f.Mode), string(f.DeletePolicy),
-					strconv.FormatBool(f.Paused),
+					windowsColumn(f.SyncWindows), strconv.FormatBool(f.Paused),
 				})
 			}
 			return deps.printer().Table(
-				[]string{"ID", "PATH", "LABEL", "MODE", "DELETE POLICY", "PAUSED"}, rows)
+				[]string{"ID", "PATH", "LABEL", "MODE", "DELETE POLICY", "WINDOWS", "PAUSED"}, rows)
 		},
 	}
 }
 
 // newFolderSetCmd builds the "folder set" command.
 func newFolderSetCmd(deps *Deps) *cobra.Command {
-	var mode, deletePolicy string
+	var (
+		mode, deletePolicy string
+		syncWindows        []string
+		clearSyncWindows   bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "set ID",
-		Short: "Change the mode or the delete policy of a folder",
+		Short: "Change the mode, the delete policy or the sync windows of a folder",
 		Long: "set changes how a configured folder synchronizes. A running daemon is\n" +
-			"told at once, and announces the new mode to the peers it is connected to.",
+			"told at once, and announces the new mode to the peers it is connected to.\n" +
+			"--sync-window replaces the whole window list; --clear-sync-windows empties\n" +
+			"it, which makes the folder pull at any time again.",
 		Args: requireArgs(1, "expected exactly one folder ID"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var changes folders.Changes
@@ -245,8 +272,22 @@ func newFolderSetCmd(deps *Deps) *cobra.Command {
 				}
 				changes.DeletePolicy = &p
 			}
+			switch {
+			case cmd.Flags().Changed("sync-window") && clearSyncWindows:
+				return Errorf(ExitUsage,
+					"folder set: pass either --sync-window or --clear-sync-windows, not both")
+			case cmd.Flags().Changed("sync-window"):
+				windows, err := folder.ParseWindows(syncWindows)
+				if err != nil {
+					return Errorf(ExitUsage, "folder set: %v", err)
+				}
+				changes.SyncWindows = &windows
+			case clearSyncWindows:
+				changes.SyncWindows = &folder.Windows{}
+			}
 			if changes.Empty() {
-				return Errorf(ExitUsage, "folder set: pass --mode or --delete-policy")
+				return Errorf(ExitUsage,
+					"folder set: pass --mode, --delete-policy, --sync-window or --clear-sync-windows")
 			}
 
 			app, err := deps.app(cmd.Context(), true)
@@ -263,8 +304,8 @@ func newFolderSetCmd(deps *Deps) *cobra.Command {
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(viewOf(updated))
 			}
-			_, err = fmt.Fprintf(deps.Stdout, "folder %s: mode %s, delete policy %s\n",
-				updated.ID, updated.Mode, updated.DeletePolicy)
+			_, err = fmt.Fprintf(deps.Stdout, "folder %s: mode %s, delete policy %s, windows %s\n",
+				updated.ID, updated.Mode, updated.DeletePolicy, windowsColumn(updated.SyncWindows))
 			return err
 		},
 	}
@@ -272,6 +313,9 @@ func newFolderSetCmd(deps *Deps) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&mode, "mode", "", "sendreceive|sendonly|receiveonly")
 	f.StringVar(&deletePolicy, "delete-policy", "", "propagate|never")
+	f.StringArrayVar(&syncWindows, "sync-window", nil, syncWindowUsage)
+	f.BoolVar(&clearSyncWindows, "clear-sync-windows", false,
+		"drop every sync window, so the folder pulls at any time")
 	return cmd
 }
 

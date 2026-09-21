@@ -217,3 +217,54 @@ func TestUpdate_UnknownFolder(t *testing.T) {
 		t.Fatalf("update unknown = %v, want ErrNotFound", err)
 	}
 }
+
+func TestUpdate_SyncWindowsReplaceAndClear(t *testing.T) {
+	ctx := context.Background()
+	svc, store, _ := newService(t)
+	added, err := svc.Add(ctx, docsFolder("docs", "/docs"))
+	if err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if !added.SyncWindows.Always() {
+		t.Fatalf("a new folder has windows %v, want none", added.SyncWindows.Strings())
+	}
+
+	nightly, err := folder.ParseWindows([]string{"22:00-06:00"})
+	if err != nil {
+		t.Fatalf("parse window: %v", err)
+	}
+	updated, err := svc.Update(ctx, "docs", folders.Changes{SyncWindows: &nightly})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if folder.EncodeWindows(updated.SyncWindows) != "22:00-06:00" {
+		t.Fatalf("windows = %v, want the one that was set", updated.SyncWindows.Strings())
+	}
+
+	// A second list replaces the first rather than adding to it.
+	noon, err := folder.ParseWindows([]string{"12:00-13:00"})
+	if err != nil {
+		t.Fatalf("parse window: %v", err)
+	}
+	if updated, err = svc.Update(ctx, "docs", folders.Changes{SyncWindows: &noon}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if folder.EncodeWindows(updated.SyncWindows) != "12:00-13:00" {
+		t.Fatalf("windows = %v, want only the second list", updated.SyncWindows.Strings())
+	}
+
+	cleared := folder.Windows{}
+	if updated, err = svc.Update(ctx, "docs", folders.Changes{SyncWindows: &cleared}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if !updated.SyncWindows.Always() {
+		t.Fatalf("windows = %v, want them cleared", updated.SyncWindows.Strings())
+	}
+	stored, err := store.GetFolder(ctx, "docs")
+	if err != nil {
+		t.Fatalf("GetFolder error: %v", err)
+	}
+	if !stored.SyncWindows.Always() {
+		t.Fatalf("stored windows = %v, want them cleared", stored.SyncWindows.Strings())
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
@@ -39,10 +40,16 @@ func (s *Service) Report(ctx context.Context, live *LiveInfo) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	now := s.clock.Now()
 	for _, f := range folders {
 		stats, err := s.store.FolderStats(ctx, f.ID)
 		if err != nil {
 			return Report{}, err
+		}
+		inWindow := f.InWindow(now)
+		var nextWindow *string
+		if next, ok := f.SyncWindows.Next(now); ok {
+			nextWindow = rfc3339(next)
 		}
 		report.Folders = append(report.Folders, Folder{
 			ID:           string(f.ID),
@@ -51,13 +58,16 @@ func (s *Service) Report(ctx context.Context, live *LiveInfo) (Report, error) {
 			Mode:         string(f.Mode),
 			DeletePolicy: string(f.DeletePolicy),
 			Paused:       f.Paused,
-			State:        folderState(f.Paused, f.LastError, live, string(f.ID)),
+			State:        folderState(f, inWindow, live),
 			Files:        stats.Files,
 			Dirs:         stats.Dirs,
 			Symlinks:     stats.Symlinks,
 			Bytes:        stats.Bytes,
 			LastScanAt:   rfc3339(f.LastScanAt),
 			Error:        nonEmpty(f.LastError),
+			SyncWindows:  f.SyncWindows.Strings(),
+			InWindow:     inWindow,
+			NextWindow:   nextWindow,
 		})
 	}
 
@@ -114,18 +124,21 @@ func daemonSection(live *LiveInfo) Daemon {
 }
 
 // folderState derives the reported state of a folder. A running daemon may
-// override it while scanning or syncing.
-func folderState(paused bool, lastError string, live *LiveInfo, id string) string {
+// override it while scanning or syncing, which is why a folder waiting for its
+// window is only reported as scheduled once nothing else is happening to it.
+func folderState(f folder.Folder, inWindow bool, live *LiveInfo) string {
 	if live != nil {
-		if state, ok := live.FolderStates[id]; ok && state != "" {
+		if state, ok := live.FolderStates[string(f.ID)]; ok && state != "" {
 			return state
 		}
 	}
 	switch {
-	case paused:
+	case f.Paused:
 		return StatePaused
-	case lastError != "":
+	case f.LastError != "":
 		return StateError
+	case !inWindow:
+		return StateScheduled
 	default:
 		return StateIdle
 	}

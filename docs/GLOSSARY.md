@@ -19,7 +19,7 @@ in dashed groups of 13 characters, and both forms are accepted wherever an ID
 is typed. See [CLI.md](CLI.md#syncthis-peer-add-hostport).
 
 **Folder.** A directory plus an id shared by every device that synchronizes it,
-a mode, a delete policy and its ignore patterns. See
+a mode, a delete policy, its ignore patterns and its sync windows. See
 [CLI.md](CLI.md#syncthis-folder-add-path---id-id).
 
 **Folder ID.** The name two devices agree to call the same folder by, matching
@@ -30,11 +30,21 @@ the id is what is on the wire.
 `sendonly` serves its contents and never pulls, `receiveonly` pulls and never
 serves. It is a per-device setting, so one device may be `sendonly` for a
 folder the other has as `receiveonly`. See
-[CLI.md](CLI.md#syncthis-folder-set-id---mode-m---delete-policy-p).
+[CLI.md](CLI.md#syncthis-folder-set-id---mode-m---delete-policy-p---sync-window-w---clear-sync-windows).
 
 **Delete policy.** What happens locally when a peer deleted a path:
 `propagate` deletes it here too, `never` keeps the local file and reports the
 item with reason `delete-policy-never`.
+
+**Sync window.** A span of the device's local wall-clock time in which it
+pulls one folder, written `HH:MM-HH:MM` with the start inclusive and the end
+exclusive; a start after the end wraps past midnight. A folder without windows
+pulls at any time. Outside its windows a folder still scans and still serves.
+See [CLI.md](CLI.md#sync-windows).
+
+**Scheduled.** The state `status` reports for a folder that is outside its sync
+windows and is otherwise idle: it is not paused, has no error and is neither
+scanning nor syncing, it is waiting for its next window.
 
 **Symlink policy.** What a scan does with a symbolic link it finds: `store`
 records it as an entry of kind symlink, `skip` leaves it out of the manifest.

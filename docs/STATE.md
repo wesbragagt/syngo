@@ -74,7 +74,7 @@ holds it open.
 
 | Table | Holds |
 |---|---|
-| `folders` | one row per configured folder, with its mode and policies |
+| `folders` | one row per configured folder, with its mode, policies and sync windows |
 | `folder_ignore_patterns` | the ignore patterns of a folder, in order |
 | `files` | one row per path of a folder, tombstones included |
 | `folder_sequence` | the next per-folder version number to hand out |
@@ -85,7 +85,7 @@ holds it open.
 
 ### Migrations
 
-The schema is at version 3. `Open` reads `schema_version`, applies every
+The schema is at version 4. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
@@ -93,11 +93,21 @@ migration above it in one transaction and records the new version:
 | 1 | `001_init.sql` | every table, including ones later milestones fill |
 | 2 | `002_synced_mode.sql` | `files.synced_mode` |
 | 3 | `003_conflict_reason.sql` | `conflicts.reason` |
+| 4 | `004_sync_windows.sql` | `folders.sync_windows` |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,
 so an older binary cannot write a newer schema. Migrations only add; a column
 is never renamed or dropped.
+
+### folders
+
+`sync_windows` holds the folder's sync windows as canonical `HH:MM-HH:MM`
+spans in the device's local time, separated by commas, for example
+`22:00-06:00,12:00-13:00`. The empty string means the folder is always open,
+which is what every row written before the column existed means. Outside its
+windows a folder still scans and still serves; only the pull waits. See
+[CLI.md](CLI.md#sync-windows).
 
 ### files
 

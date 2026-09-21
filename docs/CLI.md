@@ -90,6 +90,7 @@ Starts synchronizing a directory.
 | `--include-hidden` | off | synchronize dot files |
 | `--no-empty-dirs` | off | do not keep directories that hold nothing |
 | `--ignore PATTERN` | none | gitignore-style pattern; repeatable |
+| `--sync-window HH:MM-HH:MM` | none | local-time window this folder pulls in; repeatable, see [Sync windows](#sync-windows) |
 
 The ignore rules are the patterns given here plus the lines of
 `<PATH>/.syncthisignore`, and they decide both what is scanned and what is
@@ -110,6 +111,7 @@ $ syncthis folder add ~/docs --id docs --json
   "include_hidden": false,
   "keep_empty_dirs": true,
   "ignore_patterns": [],
+  "sync_windows": [],
   "paused": false
 }
 ```
@@ -119,21 +121,58 @@ not an existing directory or a flag value is not one of the listed words.
 
 ### `syncthis folder list`
 
-Prints the columns `ID`, `PATH`, `LABEL`, `MODE`, `DELETE POLICY`, `PAUSED`.
-With `--json` it prints an array of the object `folder add` returns.
+Prints the columns `ID`, `PATH`, `LABEL`, `MODE`, `DELETE POLICY`, `WINDOWS`,
+`PAUSED`. `WINDOWS` reads `always` for a folder without sync windows. With
+`--json` it prints an array of the object `folder add` returns.
 
-### `syncthis folder set ID [--mode M] [--delete-policy P]`
+### `syncthis folder set ID [--mode M] [--delete-policy P] [--sync-window W] [--clear-sync-windows]`
 
-Changes the mode or the delete policy of a configured folder and prints the
-folder in the shape `folder add` uses. At least one of the two flags is
+Changes the mode, the delete policy or the sync windows of a configured folder
+and prints the folder in the shape `folder add` uses. At least one flag is
 required, otherwise the command exits 2. A running daemon is asked to reload,
 so it applies the new setting to its connected peers right away; see
 [Lifecycle](#lifecycle).
 
+`--sync-window` replaces the whole window list, it does not add to it.
+`--clear-sync-windows` empties the list, which makes the folder pull at any
+time again. Passing both is a usage error, exit 2.
+
 ```console
 $ syncthis folder set docs --mode sendonly
-folder docs: mode sendonly, delete policy propagate
+folder docs: mode sendonly, delete policy propagate, windows always
+$ syncthis folder set docs --sync-window 22:00-06:00
+folder docs: mode sendonly, delete policy propagate, windows 22:00-06:00
 ```
+
+#### Sync windows
+
+A sync window is a span of the device's local wall-clock time in which this
+device pulls a folder from its peers. `--sync-window 22:00-06:00` is the night;
+the start is inclusive, the end is exclusive, and a start after the end wraps
+past midnight. Repeating the flag makes the folder open during the union of the
+windows. A folder with no window is open at all times. A window whose start
+equals its end is refused with exit 2, as is anything that is not `HH:MM-HH:MM`.
+
+Outside every window the folder still scans, so the local manifest and what the
+peers are told about this device stay current, and it still serves, so a peer
+may download from it: whether the other device pulls is the other device's
+decision, exactly as folder modes work. What stops is the pull. A transfer in
+flight when the window closes stops within one chunk, exactly like a pause,
+stays `pending` with the error `outside sync window`, and the first cycle after
+the window opens continues it from the journal.
+
+A window opening is noticed at the next sync tick, so within `sync_interval`
+(30 s by default). There is no extra timer. A window change through `folder
+set` reloads the daemon, which runs a cycle at once, so removing a window takes
+effect immediately.
+
+The zone is the daemon process's local time, taken when the process starts; a
+zone change needs a daemon restart. Across daylight saving the windows are read
+as wall-clock times: a start inside the hour spring forward skips opens when
+the wall clock reaches the normalized time (02:30 becomes 03:30), and a window
+spanning the hour autumn repeats is one hour longer that night. There is no
+per-folder sync interval: the global `sync_interval` covers it, and windows
+plus the peers' change notifications do the rest.
 
 ### `syncthis folder remove ID [--yes]`
 
@@ -300,7 +339,9 @@ from the database and `daemon.running` is `false`.
     {"id": "docs", "path": "/home/u/docs", "label": "", "mode": "sendreceive",
      "delete_policy": "propagate", "paused": false, "state": "idle",
      "files": 1, "dirs": 0, "symlinks": 0, "bytes": 13,
-     "last_scan_at": "2026-09-21T08:32:15Z", "pending_changes": 0, "error": null}
+     "last_scan_at": "2026-09-21T08:32:15Z", "pending_changes": 0, "error": null,
+     "sync_windows": ["22:00-06:00"], "in_window": false,
+     "next_window": "2026-09-21T20:00:00Z"}
   ],
   "peers": [
     {"id": "ETI3RRZ…", "name": "nas", "address": "127.0.0.1:22002", "verified": true,
@@ -316,7 +357,11 @@ from the database and `daemon.running` is `false`.
 running daemon, in bytes per second, `0` for unlimited and for no daemon.
 `conflicts.unresolved` counts the paths both sides changed that nobody has
 decided about yet; `conflict list` shows them. `folders[].state` is `idle`,
-`scanning`, `syncing`, `paused` or `error`. Times
+`scanning`, `syncing`, `paused`, `scheduled` or `error`; `scheduled` is a
+folder outside its [sync windows](#sync-windows). `folders[].sync_windows`
+lists them in canonical form, `folders[].in_window` says whether the folder is
+open now, and `folders[].next_window` is when it opens next, or `null` when it
+is open already or has no window. Times
 are RFC3339 in UTC, or `null`. `transfers.items` holds the same objects as
 `transfer list`. Fields are added over time but never renamed or removed, and
 `schema_version` says which shape this is.
