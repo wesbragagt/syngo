@@ -1,6 +1,8 @@
 package tcpwire
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -106,7 +108,7 @@ func TestFromWireManifest_RejectsAHostileManifest(t *testing.T) {
 					{Path: p, Kind: 1, Size: 10},
 				},
 			}
-			if _, err := fromWireManifest(header); err == nil {
+			if _, err := fromWireManifest(header, DefaultMaxFileSize); err == nil {
 				t.Fatalf("fromWireManifest accepted the path %q", p)
 			}
 		})
@@ -120,7 +122,7 @@ func TestFromWireManifest_RejectsATombstoneOutsideTheFolder(t *testing.T) {
 		FolderID: "docs",
 		Entries:  []manifestEntry{{Path: "../x", Kind: 1, Deleted: true}},
 	}
-	if _, err := fromWireManifest(header); err == nil {
+	if _, err := fromWireManifest(header, DefaultMaxFileSize); err == nil {
 		t.Fatal("fromWireManifest accepted a tombstone for a path outside the folder")
 	}
 }
@@ -132,7 +134,7 @@ func TestFromWireManifest_RejectsASymlinkLeavingTheFolder(t *testing.T) {
 				FolderID: "docs",
 				Entries:  []manifestEntry{{Path: "a", Kind: 3, LinkTarget: target}},
 			}
-			if _, err := fromWireManifest(header); err == nil {
+			if _, err := fromWireManifest(header, DefaultMaxFileSize); err == nil {
 				t.Fatalf("fromWireManifest accepted the link target %q", target)
 			}
 		})
@@ -148,11 +150,39 @@ func TestFromWireManifest_KeepsValidEntries(t *testing.T) {
 			{Path: "a/link", Kind: 3, LinkTarget: "b.txt"},
 		},
 	}
-	m, err := fromWireManifest(header)
+	m, err := fromWireManifest(header, DefaultMaxFileSize)
 	if err != nil {
 		t.Fatalf("fromWireManifest error: %v", err)
 	}
 	if len(m.Entries) != 3 {
 		t.Fatalf("entries = %d, want 3", len(m.Entries))
+	}
+}
+
+// TestFromWireManifest_RejectsAnAbsurdSize proves a peer cannot decide how
+// much memory and how many journal rows this device spends: the size is
+// checked before anything is built from it.
+func TestFromWireManifest_RejectsAnAbsurdSize(t *testing.T) {
+	for _, size := range []int64{1 << 60, 1<<63 - 1, DefaultMaxFileSize + 1, -1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			header := manifestReplyHeader{
+				FolderID: "docs",
+				Entries:  []manifestEntry{{Path: "huge.bin", Kind: 1, Size: size}},
+			}
+			_, err := fromWireManifest(header, DefaultMaxFileSize)
+			if !errors.Is(err, ErrEntryTooLarge) {
+				t.Fatalf("fromWireManifest(size %d) = %v, want ErrEntryTooLarge", size, err)
+			}
+		})
+	}
+}
+
+func TestFromWireManifest_AcceptsTheLargestAllowedFile(t *testing.T) {
+	header := manifestReplyHeader{
+		FolderID: "docs",
+		Entries:  []manifestEntry{{Path: "huge.bin", Kind: 1, Size: 4096}},
+	}
+	if _, err := fromWireManifest(header, 4096); err != nil {
+		t.Fatalf("fromWireManifest error: %v", err)
 	}
 }

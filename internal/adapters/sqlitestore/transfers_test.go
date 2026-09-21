@@ -161,3 +161,72 @@ func TestLiveUniqueIndex_RejectsSecondLive(t *testing.T) {
 		t.Fatalf("SaveTransfer after failure error: %v", err)
 	}
 }
+
+// TestSaveTransfer_WritesChunksInBatches proves a transfer with more chunks
+// than one batch holds is stored completely, and that the rows land in several
+// transactions rather than one.
+func TestSaveTransfer_WritesChunksInBatches(t *testing.T) {
+	ctx := context.Background()
+	store := storeWithFolder(t)
+
+	// 1201 chunks at a batch size of 500: three transactions and a
+	// remainder that is not a full one.
+	const chunks = 1201
+	tr := inbound("t1", "big.iso", chunks*transfer.MinChunkSize)
+	if err := store.SaveTransfer(ctx, tr); err != nil {
+		t.Fatalf("SaveTransfer error: %v", err)
+	}
+
+	got, err := store.GetTransfer(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTransfer error: %v", err)
+	}
+	if len(got.Chunks) != chunks {
+		t.Fatalf("chunks = %d, want %d", len(got.Chunks), chunks)
+	}
+	if len(got.MissingChunks()) != chunks {
+		t.Fatalf("missing = %d, want all of them", len(got.MissingChunks()))
+	}
+	last := got.Chunks[chunks-1]
+	if last.Index != chunks-1 || last.Offset != int64(chunks-1)*transfer.MinChunkSize {
+		t.Fatalf("last chunk = %+v", last)
+	}
+}
+
+// TestLoadChunks_RebuildsARowThatWasNeverWritten covers the price of batching:
+// a save interrupted between two batches leaves the transfer row claiming more
+// chunks than there are rows. The missing ones are unverified chunks, not a
+// shorter file.
+func TestLoadChunks_RebuildsARowThatWasNeverWritten(t *testing.T) {
+	ctx := context.Background()
+	store := storeWithFolder(t)
+	if err := store.SaveTransfer(ctx, inbound("t1", "big.iso", 3*transfer.MinChunkSize)); err != nil {
+		t.Fatalf("SaveTransfer error: %v", err)
+	}
+	if err := store.DropChunkRowsFrom(ctx, "t1", 1); err != nil {
+		t.Fatalf("drop chunk rows: %v", err)
+	}
+
+	got, err := store.GetTransfer(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTransfer error: %v", err)
+	}
+	if len(got.Chunks) != 3 {
+		t.Fatalf("chunks = %d, want 3", len(got.Chunks))
+	}
+	if len(got.MissingChunks()) != 3 {
+		t.Fatalf("missing = %v, want every chunk", got.MissingChunks())
+	}
+
+	// A chunk whose row is gone is verified like any other.
+	if err := store.MarkChunkVerified(ctx, "t1", 2, hashOf(3), testTime); err != nil {
+		t.Fatalf("MarkChunkVerified error: %v", err)
+	}
+	got, err = store.GetTransfer(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTransfer error: %v", err)
+	}
+	if !got.Chunks[2].Verified || got.Chunks[2].Hash != hashOf(3) {
+		t.Fatalf("chunk 2 = %+v", got.Chunks[2])
+	}
+}

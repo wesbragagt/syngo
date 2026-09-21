@@ -12,6 +12,13 @@ type Chunk struct {
 	Verified bool
 }
 
+// MaxChunks is the largest number of chunks one transfer may be split into.
+// The chunk list is held in memory and journalled row by row, so a peer that
+// announces an absurd size must not be able to decide how much memory and how
+// many database rows this device spends. At the default chunk size it allows a
+// file of four tebibytes.
+const MaxChunks = 4 << 20
+
 // ChunkCount returns how many chunks a file of the given size is split into. A
 // zero-byte file has no chunks.
 func ChunkCount(size int64, chunkSize int) int {

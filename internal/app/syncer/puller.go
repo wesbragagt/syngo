@@ -481,6 +481,13 @@ func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
 func (p *Puller) transferFor(ctx context.Context, f folder.Folder, item syncplan.Item,
 	peer device.ID) (transfer.Transfer, error) {
 	remote := *item.Remote
+	// The chunk list is built from the size the peer announced, and every
+	// chunk becomes a journal row, so a file that would need more chunks
+	// than a transfer may have is refused before anything is allocated.
+	if n := transfer.ChunkCount(remote.Size, p.chunkSize); n > transfer.MaxChunks {
+		return transfer.Transfer{}, fmt.Errorf("%s: %d chunks, the limit is %d: %w",
+			item.Path, n, transfer.MaxChunks, ErrTooManyChunks)
+	}
 	existing, err := p.store.FindLiveTransfer(ctx, f.ID, item.Path)
 	switch {
 	case err == nil:
@@ -768,7 +775,8 @@ func isPerFile(err error) bool {
 		return refused.Reason == ports.ChunkHashChanged || refused.Reason == ports.ChunkNotFound
 	}
 	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath) ||
-		errors.Is(err, ErrDirNotEmpty)
+		errors.Is(err, ErrDirNotEmpty) || errors.Is(err, ErrTooManyChunks) ||
+		errors.Is(err, ErrUnsafePath)
 }
 
 // isFileReplace reports whether an item replaces another kind with a file,

@@ -32,6 +32,17 @@ type Dialer struct {
 	pingInterval time.Duration
 	idleTimeout  time.Duration
 	dialTimeout  time.Duration
+	maxFileSize  int64
+}
+
+// SetMaxFileSize bounds the file size this device accepts from a peer. A
+// manifest announcing a bigger file is refused whole. Zero or less restores
+// the default.
+func (d *Dialer) SetMaxFileSize(max int64) {
+	if max <= 0 {
+		max = DefaultMaxFileSize
+	}
+	d.maxFileSize = max
 }
 
 // NewDialer returns a dialer presenting cert. hello supplies the Hello sent on
@@ -48,6 +59,7 @@ func NewDialer(cert tls.Certificate, hello func() ports.HelloInfo, log *slog.Log
 		pingInterval: DefaultPingInterval,
 		idleTimeout:  DefaultIdleTimeout,
 		dialTimeout:  DefaultDialTimeout,
+		maxFileSize:  DefaultMaxFileSize,
 	}
 }
 
@@ -134,6 +146,7 @@ func (d *Dialer) connect(ctx context.Context, addr string, expect device.ID) (*c
 		idleTimeout:   d.idleTimeout,
 		notifications: make(chan folder.ID, notificationBuffer),
 		done:          make(chan struct{}),
+		maxFileSize:   d.maxFileSize,
 	}
 	c.active = time.Now()
 	go c.readLoop()
@@ -172,6 +185,7 @@ type conn struct {
 	pending chan Frame
 	active  time.Time
 
+	maxFileSize   int64
 	notifications chan folder.ID
 	done          chan struct{}
 	closeOnce     sync.Once
@@ -244,7 +258,7 @@ func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Mani
 	if err := decodeHeader(reply, &header); err != nil {
 		return manifest.Manifest{}, err
 	}
-	m, err := fromWireManifest(header)
+	m, err := fromWireManifest(header, c.maxFileSize)
 	if err != nil {
 		// A manifest naming paths outside the folder is hostile, not
 		// merely wrong: the connection goes rather than the next

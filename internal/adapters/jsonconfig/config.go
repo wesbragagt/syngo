@@ -16,6 +16,10 @@ import (
 // FileName is the name of the config file inside the data directory.
 const FileName = "config.json"
 
+// DefaultMaxFileSize is the largest file accepted from a peer unless the
+// configuration says otherwise: one tebibyte.
+const DefaultMaxFileSize = 1 << 40
+
 // Duration is a time.Duration encoded in JSON as a string such as "10m".
 type Duration time.Duration
 
@@ -43,10 +47,15 @@ func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
 // Config is the persisted daemon and CLI configuration.
 type Config struct {
-	DeviceName     string   `json:"device_name"`
-	Listen         string   `json:"listen"`
-	Interface      string   `json:"interface"`
-	ChunkSize      int      `json:"chunk_size"`
+	DeviceName string `json:"device_name"`
+	Listen     string `json:"listen"`
+	Interface  string `json:"interface"`
+	ChunkSize  int    `json:"chunk_size"`
+	// MaxFileSize is the largest file this device accepts from a peer. A
+	// manifest announcing a bigger one is refused whole: the size decides
+	// how many chunks are allocated and journalled, so it is not a number
+	// a peer may choose freely.
+	MaxFileSize    int64    `json:"max_file_size"`
 	RescanInterval Duration `json:"rescan_interval"`
 	SyncInterval   Duration `json:"sync_interval"`
 	LogLevel       string   `json:"log_level"`
@@ -57,6 +66,7 @@ func Default() Config {
 	return Config{
 		Listen:         "127.0.0.1:22000",
 		ChunkSize:      transfer.DefaultChunkSize,
+		MaxFileSize:    DefaultMaxFileSize,
 		RescanInterval: Duration(10 * time.Minute),
 		SyncInterval:   Duration(30 * time.Second),
 		LogLevel:       "info",

@@ -44,6 +44,9 @@ var (
 	// that still holds entries the peer does not know about. It is kept, and
 	// only that one path is skipped.
 	ErrDirNotEmpty = errors.New("directory is not empty")
+	// ErrTooManyChunks reports a file whose size would split it into more
+	// chunks than one transfer may hold. Only that file is refused.
+	ErrTooManyChunks = errors.New("file would need more chunks than a transfer may have")
 	// ErrUnsafePath reports a path that would be written outside the folder
 	// root: one a peer may not name at all, or one whose parent is a
 	// symbolic link, which the operating system would follow.

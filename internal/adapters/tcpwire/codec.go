@@ -236,8 +236,18 @@ func toWireManifest(m manifest.Manifest) manifestReplyHeader {
 	return manifestReplyHeader{FolderID: string(m.FolderID), Sequence: m.Sequence, Entries: entries}
 }
 
-// fromWireManifest converts a received manifest into the domain form.
-func fromWireManifest(h manifestReplyHeader) (manifest.Manifest, error) {
+// DefaultMaxFileSize is the largest file accepted from a peer when a dialer
+// is given no limit: one tebibyte.
+const DefaultMaxFileSize int64 = 1 << 40
+
+// ErrEntryTooLarge reports a manifest entry announcing a file this device does
+// not accept. The whole manifest is refused.
+var ErrEntryTooLarge = errors.New("manifest entry announces a file that is too large")
+
+// fromWireManifest converts a received manifest into the domain form. maxSize
+// is the largest file the caller accepts; an entry announcing more, or a
+// negative size, refuses the whole manifest.
+func fromWireManifest(h manifestReplyHeader, maxSize int64) (manifest.Manifest, error) {
 	m := manifest.New(folder.ID(h.FolderID))
 	m.Sequence = h.Sequence
 	for _, e := range h.Entries {
@@ -251,6 +261,13 @@ func fromWireManifest(h manifestReplyHeader) (manifest.Manifest, error) {
 			if err := manifest.ValidLinkTarget(e.Path, e.LinkTarget); err != nil {
 				return manifest.Manifest{}, err
 			}
+		}
+		if e.Size < 0 || e.Size > maxSize {
+			// The size decides how many chunks are allocated and
+			// journalled, so it is checked before anything is built
+			// from it.
+			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: size %d is outside 0..%d: %w",
+				e.Path, e.Size, maxSize, ErrEntryTooLarge)
 		}
 		hash, err := manifest.ParseHash(e.Hash)
 		if err != nil {

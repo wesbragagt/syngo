@@ -226,6 +226,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		dialer := tcpwire.NewDialer(identity.TLSCertificate(), func() ports.HelloInfo {
 			return handler.Hello(context.Background())
 		}, logger)
+		dialer.SetMaxFileSize(cfg.MaxFileSize)
 		app.PeerHandler = handler
 		app.Dialer = dialer
 		app.Peers = peers.New(store, dialer, clock, identity, listenPort(cfg.Listen))
