@@ -70,7 +70,32 @@ func (d *Daemon) Resume(ctx context.Context, id folder.ID) error {
 	if err := d.setPaused(ctx, id, false); err != nil {
 		return err
 	}
+	if err := d.resumeTransfers(ctx, id); err != nil {
+		return err
+	}
 	return d.Rescan(ctx, id)
+}
+
+// resumeTransfers takes the transfers of the resumed folders out of the paused
+// state, so the journal stops calling paused what the folder no longer is.
+func (d *Daemon) resumeTransfers(ctx context.Context, id folder.ID) error {
+	if d.deps.Syncer == nil {
+		return nil
+	}
+	targets, err := d.targets(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		f, err := d.deps.Store.GetFolder(ctx, target)
+		if err != nil {
+			return err
+		}
+		if err := d.deps.Syncer.ResumeAll(ctx, f); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setPaused writes the paused flag of one or every folder.

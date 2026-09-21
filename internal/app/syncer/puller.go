@@ -168,22 +168,37 @@ func (p *Puller) rootUsable(f folder.Folder) bool {
 	return info.IsDir()
 }
 
-// ResumeAll prepares the live transfers of a folder for a new process: a
-// transfer nobody is fetching any more is pending, not active.
+// ReasonSendOnly explains a transfer that is waiting for a folder which never
+// pulls, so it is not labelled paused when the folder is not.
+const ReasonSendOnly = "folder is send-only"
+
+// ResumeAll prepares the live transfers of a folder for a new process or for a
+// resume: a transfer nobody is fetching any more is pending, not active, and a
+// transfer of a folder that is no longer paused stops claiming it is. f must
+// be the folder as it is configured now. A folder that cannot receive keeps
+// the transfer pending and says why, because "paused" means the folder is
+// paused and nothing else.
 func (p *Puller) ResumeAll(ctx context.Context, f folder.Folder) error {
 	list, err := p.store.ListTransfers(ctx, ports.TransferFilter{FolderID: f.ID})
 	if err != nil {
 		return err
 	}
 	for _, t := range list {
-		if t.State != transfer.StateActive && t.State != transfer.StateVerifying {
+		reason := ""
+		switch {
+		case t.State == transfer.StateActive || t.State == transfer.StateVerifying:
+		case t.State == transfer.StatePaused && !f.Paused:
+			if !f.CanReceive() {
+				reason = ReasonSendOnly
+			}
+		default:
 			continue
 		}
-		if err := p.store.SetTransferState(ctx, t.ID, transfer.StatePending, "", p.clock.Now()); err != nil {
+		if err := p.store.SetTransferState(ctx, t.ID, transfer.StatePending, reason, p.clock.Now()); err != nil {
 			return err
 		}
 		p.log.Debug("transfer picked up again", "folder", f.ID, "path", t.Path,
-			"chunks_done", len(t.Chunks)-len(t.MissingChunks()))
+			"chunks_done", len(t.Chunks)-len(t.MissingChunks()), "reason", reason)
 	}
 	return nil
 }

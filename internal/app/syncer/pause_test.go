@@ -8,6 +8,7 @@ import (
 
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/app/syncer"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
@@ -148,5 +149,83 @@ func TestSync_PausedFolderStartsNoTransfer(t *testing.T) {
 	}
 	if _, err := d.store.FindLiveTransfer(context.Background(), d.folder.ID, "big.bin"); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("live transfer = %v, want none", err)
+	}
+}
+
+// pausedTransfer leaves one paused transfer of big.bin in the journal, the way
+// `syncthis pause` does while a file is being pulled.
+func pausedTransfer(t *testing.T) *dest {
+	t.Helper()
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "big.bin", payload(chunkSize*4, 7))
+
+	d, _ := newDest(t, src.server)
+	if _, err := d.puller.SyncFolder(context.Background(), pauseAfter(t, src, d, 1), d.folder); err != nil {
+		t.Fatalf("sync folder: %v", err)
+	}
+	if live := d.liveTransfer(t, "big.bin"); live.State != transfer.StatePaused {
+		t.Fatalf("transfer state = %q, want %q before the resume", live.State, transfer.StatePaused)
+	}
+	return d
+}
+
+// setFolder writes a changed folder configuration, as `folder set` does.
+func setFolder(t *testing.T, d *dest, mode folder.Mode, paused bool) folder.Folder {
+	t.Helper()
+	f := d.folder
+	f.Mode = mode
+	f.Paused = paused
+	if err := d.store.SaveFolder(context.Background(), f); err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	return f
+}
+
+func TestResumeAll_SendOnlyFolderIsPendingWithAReason(t *testing.T) {
+	d := pausedTransfer(t)
+	f := setFolder(t, d, folder.ModeSendOnly, false)
+
+	if err := d.puller.ResumeAll(context.Background(), f); err != nil {
+		t.Fatalf("resume all: %v", err)
+	}
+
+	// The folder is not paused, so the transfer must not say it is; it
+	// waits, and the journal says what for.
+	live := d.liveTransfer(t, "big.bin")
+	if live.State != transfer.StatePending {
+		t.Fatalf("transfer state = %q, want %q", live.State, transfer.StatePending)
+	}
+	if live.Error != syncer.ReasonSendOnly {
+		t.Fatalf("transfer error = %q, want %q", live.Error, syncer.ReasonSendOnly)
+	}
+}
+
+func TestResumeAll_ReceivingFolderIsPendingWithoutAReason(t *testing.T) {
+	d := pausedTransfer(t)
+	f := setFolder(t, d, folder.ModeSendReceive, false)
+
+	if err := d.puller.ResumeAll(context.Background(), f); err != nil {
+		t.Fatalf("resume all: %v", err)
+	}
+
+	live := d.liveTransfer(t, "big.bin")
+	if live.State != transfer.StatePending {
+		t.Fatalf("transfer state = %q, want %q", live.State, transfer.StatePending)
+	}
+	if live.Error != "" {
+		t.Fatalf("transfer error = %q, want none: the transfer only waits", live.Error)
+	}
+}
+
+func TestResumeAll_PausedFolderKeepsThePausedLabel(t *testing.T) {
+	d := pausedTransfer(t)
+	f := setFolder(t, d, folder.ModeSendReceive, true)
+
+	if err := d.puller.ResumeAll(context.Background(), f); err != nil {
+		t.Fatalf("resume all: %v", err)
+	}
+
+	if live := d.liveTransfer(t, "big.bin"); live.State != transfer.StatePaused {
+		t.Fatalf("transfer state = %q, want %q while the folder is paused", live.State, transfer.StatePaused)
 	}
 }
