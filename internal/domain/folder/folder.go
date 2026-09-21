@@ -88,10 +88,13 @@ type Folder struct {
 	Symlinks       SymlinkPolicy
 	KeepEmptyDirs  bool
 	IgnorePatterns []string
-	Paused         bool
-	LastScanAt     time.Time
-	LastError      string
-	CreatedAt      time.Time
+	// SyncWindows are the spans of local time this device pulls the folder
+	// in. An empty list means it pulls at any time.
+	SyncWindows Windows
+	Paused      bool
+	LastScanAt  time.Time
+	LastError   string
+	CreatedAt   time.Time
 }
 
 // Validate reports whether the folder configuration is usable.
@@ -123,8 +126,12 @@ func (f Folder) Validate() error {
 	default:
 		return fmt.Errorf("invalid symlink policy %q", f.Symlinks)
 	}
-	return nil
+	return f.SyncWindows.Validate()
 }
+
+// InWindow reports whether the folder may pull at t. The wall-clock fields of
+// t decide, in t's own location.
+func (f Folder) InWindow(t time.Time) bool { return f.SyncWindows.Contains(t) }
 
 // CanReceive reports whether the folder accepts changes from peers.
 func (f Folder) CanReceive() bool { return f.Mode != ModeSendOnly }

@@ -12,7 +12,7 @@ import (
 
 // folderColumns is the column list shared by the folder queries.
 const folderColumns = `id, path, label, mode, delete_policy, include_hidden, symlink_policy,
-	keep_empty_dirs, paused, last_scan_at, last_error, created_at`
+	keep_empty_dirs, paused, last_scan_at, last_error, created_at, sync_windows`
 
 // SaveFolder inserts or updates a folder and its ignore patterns.
 func (s *Store) SaveFolder(ctx context.Context, f folder.Folder) error {
@@ -28,16 +28,16 @@ func (s *Store) SaveFolder(ctx context.Context, f folder.Folder) error {
 
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO folders (`+folderColumns+`)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET
 				path = excluded.path, label = excluded.label, mode = excluded.mode,
 				delete_policy = excluded.delete_policy, include_hidden = excluded.include_hidden,
 				symlink_policy = excluded.symlink_policy, keep_empty_dirs = excluded.keep_empty_dirs,
 				paused = excluded.paused, last_scan_at = excluded.last_scan_at,
-				last_error = excluded.last_error`,
+				last_error = excluded.last_error, sync_windows = excluded.sync_windows`,
 			string(f.ID), f.Path, f.Label, string(f.Mode), string(f.DeletePolicy), boolToInt(f.IncludeHidden),
 			string(f.Symlinks), boolToInt(f.KeepEmptyDirs), boolToInt(f.Paused), nullTime(f.LastScanAt),
-			f.LastError, f.CreatedAt.UnixNano())
+			f.LastError, f.CreatedAt.UnixNano(), folder.EncodeWindows(f.SyncWindows))
 		if err != nil {
 			return asAlreadyExists(err, fmt.Sprintf("save folder %q", f.ID))
 		}
@@ -176,11 +176,17 @@ func scanFolder(row scanner) (folder.Folder, error) {
 		paused       int
 		lastScan     sql.NullInt64
 		createdAt    int64
+		windows      string
 	)
 	if err := row.Scan(&id, &f.Path, &f.Label, &mode, &deletePolicy, &hidden, &symlinks,
-		&keepEmpty, &paused, &lastScan, &f.LastError, &createdAt); err != nil {
+		&keepEmpty, &paused, &lastScan, &f.LastError, &createdAt, &windows); err != nil {
 		return folder.Folder{}, err
 	}
+	syncWindows, err := folder.DecodeWindows(windows)
+	if err != nil {
+		return folder.Folder{}, fmt.Errorf("folder %q: %w", id, err)
+	}
+	f.SyncWindows = syncWindows
 	f.ID = folder.ID(id)
 	f.Mode = folder.Mode(mode)
 	f.DeletePolicy = folder.DeletePolicy(deletePolicy)

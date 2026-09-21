@@ -113,3 +113,65 @@ func schemaVersionOf(t *testing.T, path string) int {
 	}
 	return version
 }
+
+// writeVersion3DB creates a database holding the first three migrations plus
+// one folder row, which is what a folder configured before sync windows
+// existed looks like, and returns its path.
+func writeVersion3DB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	for version := 1; version <= 3; version++ {
+		script, err := sqlitestore.MigrationSQL(version)
+		if err != nil {
+			t.Fatalf("read migration %d: %v", version, err)
+		}
+		if _, err := db.ExecContext(ctx, script); err != nil {
+			t.Fatalf("apply migration %d: %v", version, err)
+		}
+	}
+	for _, stmt := range []string{
+		`INSERT INTO schema_version (version) VALUES (3)`,
+		`INSERT INTO folders (id, path, label, mode, delete_policy, include_hidden, symlink_policy,
+			keep_empty_dirs, paused, last_error, created_at)
+		 VALUES ('docs', '/srv/docs', '', 'sendreceive', 'propagate', 0, 'store', 1, 0, '', 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare version 3 database: %v", err)
+		}
+	}
+	return path
+}
+
+func TestMigrate_3To4_KeepsFoldersAndReadsThemAsAlwaysOpen(t *testing.T) {
+	ctx := context.Background()
+	path := writeVersion3DB(t)
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	f, err := store.GetFolder(ctx, folder.ID("docs"))
+	if err != nil {
+		t.Fatalf("folder after the migration: %v", err)
+	}
+	if f.Path != "/srv/docs" {
+		t.Fatalf("folder = %+v, want the row written before the migration", f)
+	}
+	if !f.SyncWindows.Always() {
+		t.Fatalf("sync windows = %v, want a folder that predates the column to be always open",
+			f.SyncWindows.Strings())
+	}
+	if got := schemaVersionOf(t, path); got != 4 {
+		t.Fatalf("schema version = %d, want 4", got)
+	}
+}
