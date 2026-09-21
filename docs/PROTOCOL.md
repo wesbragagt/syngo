@@ -63,7 +63,15 @@ the receiver can tell "never had it" from "deleted". One entry is
 
 `kind` is 1 for a file, 2 for a directory, 3 for a symlink. `hash` is the
 BLAKE3-256 of the contents, empty for directories, symlinks and tombstones.
-The synced hash is local bookkeeping and is never sent.
+`mode` carries the permission bits only; a receiver whose copy already has the
+announced content applies them with a `chmod` and transfers nothing. A path
+that is a file on one side and a directory or a symlink on the other is a
+`replace`: the receiver removes its entry and creates the announced kind in its
+place. Both decisions are the receiver's; the wire only says what the sender
+has.
+
+The synced hash and the synced mode are local bookkeeping, described in
+[STATE.md](STATE.md#files), and are never sent.
 
 `ManifestChanged` is the only unsolicited frame. It says a folder moved on; the
 receiver answers it by requesting the manifest again, so a missed notification

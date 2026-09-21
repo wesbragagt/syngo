@@ -32,13 +32,18 @@ claims.
 
 ## Database
 
-`sqlitestore.Open` applies the migrations `001_init.sql` and
-`002_synced_mode.sql` in order, up to the schema version the binary knows, and
-sets
-`journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000` and
-`foreign_keys=ON`. The daemon opens the database with one connection, so writes
-serialize in Go rather than in SQLite. Every multi-row write is a transaction
-of at most 500 rows.
+`sqlitestore.Open` sets `journal_mode=WAL`, `synchronous=NORMAL`,
+`busy_timeout=5000` and `foreign_keys=ON` through the connection string, so the
+pragmas hold whichever pooled connection a statement runs on, and transactions
+take the write lock up front. The daemon opens the database with one
+connection, so writes serialize in Go rather than in SQLite. Every multi-row
+write is a transaction of at most 500 rows.
+
+Because the database is in WAL mode with a five second busy timeout, a command
+such as `syncthis sync-plan` or `syncthis status` reads it while the daemon
+holds it open.
+
+### Tables
 
 | Table | Holds |
 |---|---|
@@ -50,6 +55,21 @@ of at most 500 rows.
 | `devices` | known peers and when they were last seen |
 | `transfers`, `transfer_chunks` | the journal of inbound downloads |
 | `conflicts` | detected divergences (milestone 9) |
+
+### Migrations
+
+The schema is at version 2. `Open` reads `schema_version`, applies every
+migration above it in one transaction and records the new version:
+
+| Version | Migration | Adds |
+|---|---|---|
+| 1 | `001_init.sql` | every table, including ones later milestones fill |
+| 2 | `002_synced_mode.sql` | `files.synced_mode` |
+
+A database at an older version is migrated in place, keeping its rows. A
+database at a version the binary does not know is refused rather than opened,
+so an older binary cannot write a newer schema. Migrations only add; a column
+is never renamed or dropped.
 
 ### files
 
@@ -109,7 +129,17 @@ The journal is advisory and the partial file is the authority:
    with the expected hash. A mismatch fails the transfer and keeps the partial
    file for inspection; nothing is installed.
 
-The install itself sets the mode and the modification time on the partial file
-and renames it over the target. A target that is no longer the version the plan
-was made against is left alone: the download is discarded rather than the local
-change.
+The install sets the mode and the modification time on the partial file,
+flushes it, renames it over the target and then flushes the directory that now
+holds it. A crash at any point in that sequence therefore leaves either the old
+file or the complete new one, never a half-written target and never a name
+pointing at content that has not reached the disk.
+
+A target that is no longer the version the plan was made against is left alone:
+the download is discarded rather than the local change.
+
+The row in `files` is written after the rename. A crash in between leaves a
+file the database does not know about; the next scan records it as a local
+creation, and because its content equals what the peer has, the following sync
+recognizes it as already in sync and writes the agreement down instead of
+sending it back.
