@@ -1,0 +1,597 @@
+package e2edocker
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/testutil/tree"
+)
+
+// Topology is the set of pairings of a cluster, as index pairs. Every pair is
+// paired in both directions, which is what two `peer add` calls do.
+type Topology func(n int) [][2]int
+
+// Mesh pairs every device with every other one.
+func Mesh(n int) [][2]int {
+	var edges [][2]int
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			edges = append(edges, [2]int{i, j})
+		}
+	}
+	return edges
+}
+
+// Star pairs every device with the hub and no two spokes with each other, so
+// anything a spoke has reaches the other spokes only by being relayed.
+func Star(hub int) Topology {
+	return func(n int) [][2]int {
+		var edges [][2]int
+		for i := 0; i < n; i++ {
+			if i != hub {
+				edges = append(edges, [2]int{hub, i})
+			}
+		}
+		return edges
+	}
+}
+
+// DeviceSpec is how one device of a cluster is configured. The zero value is
+// a sendreceive device with one folder, bound with --allow-public.
+type DeviceSpec struct {
+	Name string
+	// Mode is the folder mode: sendreceive, sendonly or receiveonly.
+	Mode string
+	// DeletePolicy is propagate or never.
+	DeletePolicy string
+	// NoFolder starts the device with nothing configured, so a test can
+	// add the folder through the CLI while the daemon runs.
+	NoFolder bool
+	// BindIface runs the daemon with --interface eth0 rather than
+	// --allow-public, which is the other way to reach a bindable address.
+	BindIface bool
+}
+
+// ClusterOptions is how a cluster is built.
+type ClusterOptions struct {
+	Devices  []DeviceSpec
+	Topology Topology
+	// Config changes the settings written to config.json before init, on
+	// every device.
+	Config func(*jsonconfig.Config)
+}
+
+// Cluster is a set of devices, one container each, on a network of their own.
+type Cluster struct {
+	T       *testing.T
+	RunID   string
+	Network string
+	Subnet  string
+	Devices []*Device
+
+	d       docker
+	tmp     string
+	started time.Time
+}
+
+// Device is one daemon in one container.
+type Device struct {
+	Index    int
+	Name     string
+	ID       string
+	IP       string
+	Ctr      string
+	HostData string
+	HostRoot string
+	Spec     DeviceSpec
+
+	c *Cluster
+}
+
+// Start brings up n sendreceive devices in a mesh, each with the docs folder.
+func Start(t *testing.T, n int) *Cluster {
+	t.Helper()
+	specs := make([]DeviceSpec, n)
+	for i := range specs {
+		specs[i] = DeviceSpec{Name: string(rune('a' + i))}
+	}
+	return StartWith(t, ClusterOptions{Devices: specs})
+}
+
+// StartWith brings up a cluster: containers, identities, folders, daemons and
+// pairings, and waits until every edge is connected.
+func StartWith(t *testing.T, o ClusterOptions) *Cluster {
+	t.Helper()
+	if len(o.Devices) == 0 {
+		t.Fatal("a cluster needs at least one device")
+	}
+	if o.Topology == nil {
+		o.Topology = Mesh
+	}
+
+	c := &Cluster{
+		T:       t,
+		RunID:   runID(),
+		d:       docker{t: t, bin: dockerBin},
+		tmp:     t.TempDir(),
+		started: time.Now(),
+	}
+	c.Network = "syncthis-e2e-" + c.RunID
+	t.Cleanup(c.Close)
+	c.createNetwork()
+
+	for i, spec := range o.Devices {
+		if spec.Name == "" {
+			spec.Name = string(rune('a' + i))
+		}
+		c.Devices = append(c.Devices, c.createDevice(i, spec, o.Config))
+	}
+	for _, dev := range c.Devices {
+		dev.StartDaemon()
+	}
+	for _, edge := range o.Topology(len(c.Devices)) {
+		c.Pair(edge[0], edge[1])
+	}
+	c.WaitPeersConnected()
+	t.Logf("cluster %s up with %d devices in %s", c.RunID, len(c.Devices), time.Since(c.started).Round(time.Millisecond))
+	return c
+}
+
+// runID is what every container, network and artifact directory of one
+// cluster is named after.
+func runID() string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("read random: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// createNetwork makes the bridge the devices talk over. The subnet is fixed
+// so the addresses are known before the containers exist; another network
+// already holding it is retried past, because a dev machine runs other
+// containers too.
+func (c *Cluster) createNetwork() {
+	for attempt := 0; attempt < 10; attempt++ {
+		subnet := fmt.Sprintf("172.30.%d.0/24", 100+attempt)
+		res, err := c.d.try("network", "create",
+			"--label", "syncthis.e2e=1", "--label", "syncthis.e2e.run="+c.RunID,
+			"--subnet", subnet, c.Network)
+		if err != nil {
+			c.T.Fatalf("create network %s: %v", c.Network, err)
+		}
+		if res.code == 0 {
+			c.Subnet = subnet
+			return
+		}
+		c.T.Logf("subnet %s unavailable: %s", subnet, strings.TrimSpace(res.stderr))
+	}
+	c.T.Fatalf("no free subnet in 172.30.100.0/24..172.30.109.0/24 for %s", c.Network)
+}
+
+// createDevice starts one container, writes its configuration, creates its
+// identity and adds its folder. The daemon is started separately, after every
+// device exists, so pairing addresses are all known.
+func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Config)) *Device {
+	c.T.Helper()
+	dev := &Device{
+		Index: i, Name: spec.Name, Spec: spec, c: c,
+		IP:       fmt.Sprintf("%s.%d", strings.TrimSuffix(c.Subnet, ".0/24"), 10+i),
+		Ctr:      fmt.Sprintf("syncthis-e2e-%s-%s", c.RunID, spec.Name),
+		HostData: filepath.Join(c.tmp, spec.Name, "data"),
+		HostRoot: filepath.Join(c.tmp, spec.Name, "docs"),
+	}
+	for _, dir := range []string{dev.HostData, dev.HostRoot} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			c.T.Fatalf("make %s: %v", dir, err)
+		}
+	}
+
+	// config.json is written before init, which preserves a configuration
+	// that is already there.
+	config := jsonconfig.Default()
+	config.Listen = fmt.Sprintf("0.0.0.0:%d", peerPort)
+	config.ChunkSize = chunkSize
+	config.RescanInterval = jsonconfig.Duration(rescanEvery)
+	config.SyncInterval = jsonconfig.Duration(syncEvery)
+	config.LogLevel = "debug"
+	if tweak != nil {
+		tweak(&config)
+	}
+	if err := jsonconfig.Save(dev.HostData, config); err != nil {
+		c.T.Fatalf("write config of %s: %v", dev.Name, err)
+	}
+
+	// The container runs as the host user, so everything the daemon
+	// writes on the two bind mounts is owned by whoever runs the test:
+	// the host can hash the tree, read .syncthis and delete the temporary
+	// directory afterwards. Commands that need capabilities (iptables,
+	// tc) are execed as root instead.
+	c.d.mustRun("run", "-d", "--name", dev.Ctr, "--user", hostUser(),
+		"--label", "syncthis.e2e=1", "--label", "syncthis.e2e.run="+c.RunID,
+		"--network", c.Network, "--ip", dev.IP,
+		"--cap-add", "NET_ADMIN",
+		"-v", dev.HostData+":"+containerData,
+		"-v", dev.HostRoot+":"+containerRoot,
+		image)
+
+	var identity struct {
+		DeviceID string `json:"device_id"`
+	}
+	dev.RunJSON(&identity, "init", "--name", dev.Name)
+	dev.ID = identity.DeviceID
+
+	if !spec.NoFolder {
+		args := []string{"folder", "add", containerRoot, "--id", folderID}
+		if spec.Mode != "" {
+			args = append(args, "--mode", spec.Mode)
+		}
+		if spec.DeletePolicy != "" {
+			args = append(args, "--delete-policy", spec.DeletePolicy)
+		}
+		dev.RunOK(args...)
+	}
+	return dev
+}
+
+// rootUser is the user a docker exec takes to keep the capabilities the
+// container was given; the containers themselves run as the host user.
+const rootUser = "0:0"
+
+// hostUser is the uid:gid the containers run as.
+func hostUser() string { return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()) }
+
+// Device returns one device of the cluster.
+func (c *Cluster) Device(i int) *Device { return c.Devices[i] }
+
+// Pair makes two devices know each other, which is what `peer add` on both
+// sides does.
+func (c *Cluster) Pair(a, b int) {
+	c.T.Helper()
+	c.Devices[a].addPeer(c.Devices[b])
+	c.Devices[b].addPeer(c.Devices[a])
+}
+
+// Unpair makes two devices forget each other.
+func (c *Cluster) Unpair(a, b int) {
+	c.T.Helper()
+	c.Devices[a].RunOK("peer", "remove", c.Devices[b].ID, "--yes")
+	c.Devices[b].RunOK("peer", "remove", c.Devices[a].ID, "--yes")
+}
+
+// addPeer stores one peer on this device, pinning the identity so nothing is
+// asked.
+func (d *Device) addPeer(peer *Device) {
+	d.c.T.Helper()
+	d.RunOK("peer", "add", fmt.Sprintf("%s:%d", peer.IP, peerPort),
+		"--device-id", peer.ID, "--name", peer.Name, "--yes")
+}
+
+// Close removes everything the cluster created. It runs from t.Cleanup, after
+// the artifacts are saved.
+func (c *Cluster) Close() {
+	if c.T.Failed() || keepArtifacts {
+		c.SaveArtifacts("failed")
+	}
+	for _, dev := range c.Devices {
+		c.d.quiet("rm", "-f", dev.Ctr)
+	}
+	if c.Network != "" {
+		c.d.quiet("network", "rm", c.Network)
+	}
+}
+
+// Run executes a syncthis command in the container and returns its stdout and
+// exit code. Anything on stderr is logged.
+func (d *Device) Run(args ...string) (string, int) {
+	d.c.T.Helper()
+	res := d.c.d.exec(d.Ctr, "", append([]string{"syncthis", "--data-dir", containerData}, args...)...)
+	if strings.TrimSpace(res.stderr) != "" {
+		d.c.T.Logf("%s stderr: %s", d.Name, strings.TrimSpace(res.stderr))
+	}
+	return res.stdout, res.code
+}
+
+// RunOK executes a syncthis command and fails the test unless it exits zero.
+func (d *Device) RunOK(args ...string) string {
+	d.c.T.Helper()
+	out, code := d.Run(args...)
+	if code != 0 {
+		d.c.T.Fatalf("%s: syncthis %s: exit %d: %s", d.Name, strings.Join(args, " "), code, out)
+	}
+	return out
+}
+
+// RunJSON executes a syncthis command with --json and decodes the document.
+func (d *Device) RunJSON(v any, args ...string) {
+	d.c.T.Helper()
+	out := d.RunOK(append(args, "--json")...)
+	if err := json.Unmarshal([]byte(out), v); err != nil {
+		d.c.T.Fatalf("%s: decode `syncthis %s --json`: %v: %s", d.Name, strings.Join(args, " "), err, out)
+	}
+}
+
+// Status reports what the device knows. It works with or without a daemon:
+// without one the answer comes from the database.
+func (d *Device) Status() status.Report {
+	d.c.T.Helper()
+	var report status.Report
+	d.RunJSON(&report, "status")
+	return report
+}
+
+// transferRow is one entry of the download journal.
+type transferRow struct {
+	ID          string `json:"id"`
+	FolderID    string `json:"folder_id"`
+	Path        string `json:"path"`
+	State       string `json:"state"`
+	ChunksTotal int    `json:"chunks_total"`
+	ChunksDone  int    `json:"chunks_done"`
+	Error       any    `json:"error"`
+}
+
+// Transfers lists the download journal of the device.
+func (d *Device) Transfers() []transferRow {
+	d.c.T.Helper()
+	var rows []transferRow
+	d.RunJSON(&rows, "transfer", "list")
+	return rows
+}
+
+// conflictRow is one recorded conflict.
+type conflictRow struct {
+	ID           string `json:"id"`
+	FolderID     string `json:"folder_id"`
+	Path         string `json:"path"`
+	ConflictPath string `json:"conflict_path"`
+	Reason       string `json:"reason"`
+	LocalHash    string `json:"local_hash"`
+	RemoteHash   string `json:"remote_hash"`
+	Resolved     bool   `json:"resolved"`
+}
+
+// Conflicts lists the conflicts the device recorded.
+func (d *Device) Conflicts() []conflictRow {
+	d.c.T.Helper()
+	var rows []conflictRow
+	d.RunJSON(&rows, "conflict", "list")
+	return rows
+}
+
+// StartDaemon starts the daemon inside the container and waits until it
+// answers. Its output goes to daemon.log on the data mount, so the host reads
+// it without docker.
+func (d *Device) StartDaemon() {
+	d.c.T.Helper()
+	bind := "--allow-public"
+	if d.Spec.BindIface {
+		bind = "--interface eth0"
+	}
+	cmd := fmt.Sprintf(
+		"exec syncthis --data-dir %s --log-level debug --log-format json daemon run %s >>%s/daemon.stdout 2>>%s/daemon.log",
+		containerData, bind, containerData, containerData)
+	d.c.d.execDetached(d.Ctr, "", "sh", "-c", cmd)
+
+	waitFor(d.c.T, d.Name+" daemon running", daemonTimeout, func() bool {
+		return d.Status().Daemon.Running
+	})
+}
+
+// StopDaemon asks the daemon to shut down and waits until it has.
+func (d *Device) StopDaemon() {
+	d.c.T.Helper()
+	d.signalDaemon("TERM")
+}
+
+// KillDaemon takes the daemon down without letting it clean up, which is what
+// a crash looks like.
+func (d *Device) KillDaemon() {
+	d.c.T.Helper()
+	d.signalDaemon("KILL")
+}
+
+// signalDaemon sends a signal to the daemon process and waits until it is
+// gone. The pid comes from the pid file, so a daemon that was killed before
+// is noticed rather than signalled.
+func (d *Device) signalDaemon(sig string) {
+	d.c.T.Helper()
+	pid := d.DaemonPID()
+	d.c.d.exec(d.Ctr, "", "kill", "-"+sig, strconv.Itoa(pid))
+	waitFor(d.c.T, fmt.Sprintf("%s daemon pid %d gone", d.Name, pid), daemonTimeout, func() bool {
+		return d.c.d.exec(d.Ctr, "", "kill", "-0", strconv.Itoa(pid)).code != 0
+	})
+}
+
+// KillContainer kills the container outright and starts it again. The daemon
+// is not running afterwards; the data and folder mounts and the address are
+// the same ones.
+func (d *Device) KillContainer() {
+	d.c.T.Helper()
+	d.c.d.mustRun("kill", "-s", "KILL", d.Ctr)
+	d.c.d.mustRun("start", d.Ctr)
+}
+
+// Restart stops the daemon and starts it again from the same data directory.
+func (d *Device) Restart() {
+	d.c.T.Helper()
+	d.StopDaemon()
+	d.StartDaemon()
+}
+
+// DaemonPID reads the pid the daemon wrote.
+func (d *Device) DaemonPID() int {
+	d.c.T.Helper()
+	raw, err := os.ReadFile(filepath.Join(d.HostData, "daemon.pid"))
+	if err != nil {
+		d.c.T.Fatalf("%s: read pid file: %v", d.Name, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		d.c.T.Fatalf("%s: pid file holds %q: %v", d.Name, raw, err)
+	}
+	return pid
+}
+
+// WriteFile puts a file in the folder, from the host side of the bind mount.
+func (d *Device) WriteFile(rel string, data []byte) {
+	d.c.T.Helper()
+	path := filepath.Join(d.HostRoot, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		d.c.T.Fatalf("%s: make parent of %s: %v", d.Name, rel, err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		d.c.T.Fatalf("%s: write %s: %v", d.Name, rel, err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		d.c.T.Fatalf("%s: chmod %s: %v", d.Name, rel, err)
+	}
+}
+
+// Remove deletes a path of the folder.
+func (d *Device) Remove(rel string) {
+	d.c.T.Helper()
+	if err := os.RemoveAll(filepath.Join(d.HostRoot, rel)); err != nil {
+		d.c.T.Fatalf("%s: remove %s: %v", d.Name, rel, err)
+	}
+}
+
+// Tree describes what the device holds in its folder.
+func (d *Device) Tree() map[string]tree.Entry {
+	d.c.T.Helper()
+	entries, err := tree.Read(d.HostRoot)
+	if err != nil {
+		d.c.T.Fatalf("%s: read tree: %v", d.Name, err)
+	}
+	return entries
+}
+
+// PartFiles lists the partial downloads sitting in the state directory. A
+// converged folder has none.
+func (d *Device) PartFiles() []string {
+	d.c.T.Helper()
+	var parts []string
+	root := filepath.Join(d.HostRoot, ".syncthis")
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(path, ".part") {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			parts = append(parts, rel)
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		d.c.T.Fatalf("%s: walk %s: %v", d.Name, root, err)
+	}
+	return parts
+}
+
+// Logs is everything the daemon has logged in this container so far.
+func (d *Device) Logs() string {
+	d.c.T.Helper()
+	raw, err := os.ReadFile(filepath.Join(d.HostData, "daemon.log"))
+	if err != nil && !os.IsNotExist(err) {
+		d.c.T.Fatalf("%s: read daemon.log: %v", d.Name, err)
+	}
+	return string(raw)
+}
+
+// slogLine is one JSON log line of the daemon.
+type slogLine struct {
+	Time  string `json:"time"`
+	Level string `json:"level"`
+	Msg   string `json:"msg"`
+	Raw   string `json:"-"`
+}
+
+// LogLines returns the log lines at one level, or every parsable line when
+// level is empty.
+func (d *Device) LogLines(level string) []slogLine {
+	d.c.T.Helper()
+	var lines []slogLine
+	for _, raw := range strings.Split(d.Logs(), "\n") {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		var line slogLine
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			// A panic or a runtime message is not a log line; it is
+			// still evidence, so it is reported as one.
+			line = slogLine{Level: "unparsed", Msg: raw}
+		}
+		line.Raw = raw
+		if level == "" || strings.EqualFold(line.Level, level) {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// SaveArtifacts writes what a failed run needs to be explained: the log, the
+// three JSON reports, the container description and the network state of
+// every device.
+func (c *Cluster) SaveArtifacts(reason string) {
+	base := envOr("SYNCTHIS_E2E_ARTIFACTS", filepath.Join("..", "..", "bin", "e2e-artifacts"))
+	base = filepath.Join(base, strings.ReplaceAll(c.T.Name(), "/", "_"))
+	c.T.Logf("saving artifacts (%s) to %s", reason, base)
+
+	for _, dev := range c.Devices {
+		dir := filepath.Join(base, dev.Name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			c.T.Logf("artifacts: make %s: %v", dir, err)
+			continue
+		}
+		c.writeArtifact(dir, "daemon.log", dev.Logs())
+		for _, report := range [][]string{
+			{"status.json", "status"},
+			{"transfers.json", "transfer", "list"},
+			{"conflicts.json", "conflict", "list", "--all"},
+		} {
+			out, _ := dev.Run(append(report[1:], "--json")...)
+			c.writeArtifact(dir, report[0], out)
+		}
+		c.writeArtifact(dir, "iptables.txt", dev.c.d.exec(dev.Ctr, rootUser, "iptables", "-S").stdout)
+		c.writeArtifact(dir, "tc.txt", dev.c.d.exec(dev.Ctr, rootUser, "tc", "qdisc", "show").stdout)
+		res, err := c.d.try("inspect", dev.Ctr)
+		if err == nil {
+			c.writeArtifact(dir, "inspect.json", res.stdout)
+		}
+	}
+}
+
+// writeArtifact saves one piece of evidence. A failure to write it is logged
+// and not fatal: the test result is the thing being reported.
+func (c *Cluster) writeArtifact(dir, name, content string) {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		c.T.Logf("artifacts: write %s: %v", filepath.Join(dir, name), err)
+	}
+}
+
+// payload builds n bytes that differ per seed, so a wrong version of a file
+// is a different hash rather than a coincidence.
+func payload(n int, seed byte) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = seed + byte(i%251)
+	}
+	return out
+}
