@@ -157,8 +157,9 @@ type manifestRequestHeader struct {
 	FolderID string `json:"folder_id"`
 }
 
-// manifestEntry is one entry of a ManifestResponse. The synced hash is local
-// bookkeeping and is never sent.
+// manifestEntry is one entry of a ManifestResponse. SyncedHash is the version
+// the sender last agreed on with a peer, which is what the receiver needs to
+// tell a newer version from a diverged one.
 type manifestEntry struct {
 	Path       string `json:"path"`
 	Kind       uint8  `json:"kind"`
@@ -170,6 +171,7 @@ type manifestEntry struct {
 	Deleted    bool   `json:"deleted"`
 	ModifiedBy string `json:"modified_by"`
 	Sequence   uint64 `json:"sequence"`
+	SyncedHash string `json:"synced_hash"`
 }
 
 // manifestReplyHeader is the ManifestResponse frame header.
@@ -227,6 +229,7 @@ func toWireManifest(m manifest.Manifest) manifestReplyHeader {
 			Deleted:    e.Deleted,
 			ModifiedBy: string(e.ModifiedBy),
 			Sequence:   e.Sequence,
+			SyncedHash: e.SyncedHash.String(),
 		})
 	}
 	return manifestReplyHeader{FolderID: string(m.FolderID), Sequence: m.Sequence, Entries: entries}
@@ -241,6 +244,12 @@ func fromWireManifest(h manifestReplyHeader) (manifest.Manifest, error) {
 		if err != nil {
 			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
 		}
+		// A peer that predates the field sends nothing, which parses to
+		// the zero hash and means "no baseline known".
+		synced, err := manifest.ParseHash(e.SyncedHash)
+		if err != nil {
+			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
+		}
 		m.Add(manifest.Entry{
 			Path:       e.Path,
 			Kind:       manifest.Kind(e.Kind),
@@ -252,6 +261,7 @@ func fromWireManifest(h manifestReplyHeader) (manifest.Manifest, error) {
 			Deleted:    e.Deleted,
 			ModifiedBy: device.ID(e.ModifiedBy),
 			Sequence:   e.Sequence,
+			SyncedHash: synced,
 		})
 	}
 	return m, nil

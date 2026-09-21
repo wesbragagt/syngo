@@ -188,6 +188,22 @@ func remoteFile(item Item, local, remote *manifest.Entry) Item {
 	case local.Kind == manifest.KindFile && remote.Hash == local.SyncedHash:
 		// Only the local side moved on; the peer will pull it.
 		return with(item, ActionNone, ReasonLocalNewer)
+	case local.Kind == manifest.KindFile && remote.SyncedHash == local.Hash:
+		// The peer's version was made on top of the version this side
+		// holds, so it is the newer one and nothing is lost by taking
+		// it. Only the local baseline is behind, which happens when the
+		// peer edited the file before this side recorded that both had
+		// agreed on it.
+		return with(item, ActionPull, ReasonRemoteNewer)
+	case local.Kind == manifest.KindFile && remote.ModifiedBy != "" &&
+		remote.ModifiedBy == local.ModifiedBy:
+		// The same device wrote both versions, so they are not two
+		// independent edits. Reaching this point means the local
+		// version is not the one the peer sent back, and a version this
+		// side pulled would have matched its own baseline above; what
+		// is left is an unconfirmed local change whose earlier version
+		// travelled to the peer. The peer pulls the newer one.
+		return with(item, ActionNone, ReasonLocalNewer)
 	default:
 		return with(item, ActionConflict, ReasonBothModified)
 	}

@@ -98,7 +98,8 @@ func TestRequestManifest_RoundTrip(t *testing.T) {
 	m.Add(manifest.Entry{
 		Path: "sub/ünïcode.txt", Kind: manifest.KindFile, Size: 1234,
 		ModTime: time.Unix(0, 1700000000123456789).UTC(), Mode: 0o640,
-		Hash: hashOf(t, "content"), ModifiedBy: "SOMEDEVICE", Sequence: 7,
+		Hash: hashOf(t, "content"), SyncedHash: hashOf(t, "agreed"),
+		ModifiedBy: "SOMEDEVICE", Sequence: 7,
 	})
 	when := time.Unix(0, 1699999999000000000).UTC()
 	m.Add(manifest.Entry{Path: "dir", Kind: manifest.KindDir, Mode: 0o755, ModTime: when, Sequence: 8})
@@ -125,7 +126,8 @@ func TestRequestManifest_RoundTrip(t *testing.T) {
 		if have.Kind != want.Kind || have.Size != want.Size || have.Mode != want.Mode ||
 			have.Hash != want.Hash || have.LinkTarget != want.LinkTarget ||
 			have.Deleted != want.Deleted || have.ModifiedBy != want.ModifiedBy ||
-			have.Sequence != want.Sequence || !have.ModTime.Equal(want.ModTime) {
+			have.Sequence != want.Sequence || !have.ModTime.Equal(want.ModTime) ||
+			have.SyncedHash != want.SyncedHash {
 			t.Fatalf("entry %q = %+v, want %+v", path, have, want)
 		}
 	}

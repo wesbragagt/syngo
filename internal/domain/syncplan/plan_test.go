@@ -3,6 +3,7 @@ package syncplan_test
 import (
 	"testing"
 
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
@@ -37,6 +38,12 @@ func modedFile(path, content, synced string, mode, syncedMode uint32) manifest.E
 	e := file(path, content, synced)
 	e.Mode = mode
 	e.SyncedMode = syncedMode
+	return e
+}
+
+// byDevice attributes an entry to the device that last wrote it.
+func byDevice(e manifest.Entry, id device.ID) manifest.Entry {
+	e.ModifiedBy = id
 	return e
 }
 
@@ -109,6 +116,29 @@ func TestPlan_Rules(t *testing.T) {
 			name:   "both changed is a conflict, never an overwrite",
 			local:  manifestOf(file("a.txt", "local", "v1")),
 			remote: manifestOf(file("a.txt", "remote", "")),
+			action: syncplan.ActionConflict, reason: syncplan.ReasonBothModified,
+		},
+		{
+			name: "a version the peer made on top of ours is pulled",
+			// The local baseline is behind, but the peer says its
+			// version was made on top of what this side holds, so
+			// taking it loses nothing.
+			local:  manifestOf(file("a.txt", "v2", "v1")),
+			remote: manifestOf(file("a.txt", "v3", "v2")),
+			action: syncplan.ActionPull, reason: syncplan.ReasonRemoteNewer,
+		},
+		{
+			name: "an earlier version of our own change is not a conflict",
+			// The peer holds a version this device wrote and has not
+			// caught up with the newer one, which it pulls itself.
+			local:  manifestOf(byDevice(file("a.txt", "v2", ""), "SELF")),
+			remote: manifestOf(byDevice(file("a.txt", "v1", "v1"), "SELF")),
+			action: syncplan.ActionNone, reason: syncplan.ReasonLocalNewer,
+		},
+		{
+			name:   "two devices changing the same file is still a conflict",
+			local:  manifestOf(byDevice(file("a.txt", "local", "v1"), "SELF")),
+			remote: manifestOf(byDevice(file("a.txt", "remote", "v1"), "PEER")),
 			action: syncplan.ActionConflict, reason: syncplan.ReasonBothModified,
 		},
 		{

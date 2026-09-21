@@ -59,7 +59,7 @@ the receiver can tell "never had it" from "deleted". One entry is
 ```json
 {"path":"sub/a.txt","kind":1,"size":1234,"mtime_ns":1700000000123456789,
  "mode":420,"hash":"<64 hex>","link_target":"","deleted":false,
- "modified_by":"<device id>","sequence":7}
+ "modified_by":"<device id>","sequence":7,"synced_hash":"<64 hex>"}
 ```
 
 `kind` is 1 for a file, 2 for a directory, 3 for a symlink. `hash` is the
@@ -71,8 +71,13 @@ that is a file on one side and a directory or a symlink on the other is a
 place. Both decisions are the receiver's; the wire only says what the sender
 has.
 
-The synced hash and the synced mode are local bookkeeping, described in
-[STATE.md](STATE.md#files), and are never sent.
+`synced_hash` is the version the sender last agreed on with a peer, described
+in [STATE.md](STATE.md#files). It is what lets the receiver tell a newer
+version from a diverged one: an entry whose `synced_hash` is the version the
+receiver holds was written on top of that version, so taking it loses nothing
+and it is a pull rather than a conflict. A sender that omits the field, as one
+from before it existed does, is read as "no baseline known", which changes no
+other decision. The synced mode stays local bookkeeping and is never sent.
 
 `ManifestChanged` says a folder moved on; the receiver answers it by requesting
 the manifest again, so a missed notification costs nothing but time.
