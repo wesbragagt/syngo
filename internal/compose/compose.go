@@ -19,6 +19,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
 	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syncthis/internal/adapters/tokenbucket"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
 	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
@@ -30,6 +31,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/app/syncer"
 	"github.com/wesbragagt/syncthis/internal/app/transfers"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 )
 
 // ErrNotInitialized is returned when the data directory holds no identity and
@@ -43,6 +45,11 @@ var ErrPublicAddress = tcpwire.ErrPublicAddress
 // ErrListenAddress is returned when the daemon is given a listen address or
 // interface it cannot make sense of.
 var ErrListenAddress = tcpwire.ErrListenAddress
+
+// ValidateListen reports whether a listen address can be bound at all. It is
+// what `config set --listen` checks before writing a value the daemon would
+// choke on at its next start.
+func ValidateListen(listen string) error { return tcpwire.ValidateListen(listen) }
 
 // DatabaseFile is the name of the SQLite database inside the data directory.
 const DatabaseFile = "state.db"
@@ -71,6 +78,12 @@ type App struct {
 	Identity *identityfile.Identity
 	Events   ports.EventSink
 	Logger   *slog.Logger
+	// Settings reads and writes the part of config.json the application is
+	// allowed to change while it runs.
+	Settings ports.SettingsStore
+	// Upload and Download are the device-wide byte budgets, shared by every
+	// folder and every peer connection.
+	Upload, Download ports.Limiter
 
 	Folders *folders.Service
 	Status  *status.Service
@@ -198,6 +211,8 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 	fs := localfs.New()
 	clock := sysclock.New()
 	hasher := blake3hash.New()
+	upload := tokenbucket.New(bandwidth.Rate(cfg.UploadLimit))
+	download := tokenbucket.New(bandwidth.Rate(cfg.DownloadLimit))
 	app := &App{
 		DataDir:   dir,
 		Config:    cfg,
@@ -208,6 +223,9 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		Identity:  identity,
 		Events:    events,
 		Logger:    logger,
+		Settings:  jsonconfig.NewStore(dir),
+		Upload:    upload,
+		Download:  download,
 		Folders:   folders.New(store, fs, clock),
 		Transfers: transfers.New(store),
 		Conflicts: conflicts.New(store, fs, hasher),
@@ -219,8 +237,9 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.Repair = repair.New(fs, app.Hasher, store, clock, identity)
 
 		handler := syncer.New(store, fs, app.Hasher, identity, logger)
+		handler.SetUploadLimiter(upload)
 		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, events,
-			syncer.PullerConfig{ChunkSize: cfg.ChunkSize}, logger)
+			syncer.PullerConfig{ChunkSize: cfg.ChunkSize, Download: download}, logger)
 		// The Hello is built per connection because the folder list
 		// changes while the process runs.
 		dialer := tcpwire.NewDialer(identity.TLSCertificate(), func() ports.HelloInfo {

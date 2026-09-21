@@ -10,7 +10,8 @@ Resolved from `--data-dir`, else `$SYNCTHIS_DATA_DIR`, else
 `$XDG_DATA_HOME/syncthis`, else `~/.local/share/syncthis`.
 
 ```
-config.json      device name, listen address, chunk size, size cap and intervals
+config.json      device name, listen address, chunk size, size cap, intervals
+                 and bandwidth limits
 identity.key     ed25519 private key, PKCS#8 PEM, mode 0600
 identity.crt     self-signed certificate; its public key is the device ID
 state.db         SQLite database, WAL mode
@@ -25,6 +26,13 @@ the machine may speak to it.
 `max_file_size` in `config.json` is the largest file this device accepts from a
 peer, one tebibyte unless it says otherwise. A manifest announcing a bigger one
 is refused whole.
+
+`upload_limit` and `download_limit` in `config.json` are the device-wide
+transfer rates in bytes per second, `0` for unlimited, which is the default and
+what a file written before they existed means. They cover chunk payloads only.
+A negative value is refused when the file is read. `config set` writes them and
+a running daemon picks them up at once; see
+[CLI.md](CLI.md#bandwidth-limits).
 
 ## Folder state directory
 

@@ -10,6 +10,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/peers"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 )
 
 // Process exit codes. They are part of the CLI contract; see docs/CLI.md.
@@ -96,6 +97,10 @@ func codeOf(err error) int {
 		// Both are mistakes in what the user typed.
 		return ExitUsage
 	case errors.Is(err, compose.ErrListenAddress):
+		return ExitUsage
+	case errors.Is(err, bandwidth.ErrInvalidRate):
+		// A rate that cannot be read is a mistake in what the user
+		// typed, or in what config.json holds.
 		return ExitUsage
 	case errors.Is(err, compose.ErrPublicAddress):
 		// The refusal is about the flags the daemon was given.

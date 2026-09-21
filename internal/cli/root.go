@@ -85,6 +85,7 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 		newCompletionCmd(deps),
 		newInitCmd(deps),
 		newFolderCmd(deps),
+		newConfigCmd(deps),
 		newStatusCmd(deps),
 		newScanCmd(deps),
 		newRescanCmd(deps),

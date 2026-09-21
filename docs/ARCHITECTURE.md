@@ -42,6 +42,8 @@ build when a rule is broken.
 | `Identity` | `identityfile` | the device key, certificate and derived ID |
 | `ControlServer`, `ControlClient` | `unixctl` | the control socket |
 | `EventSink` | the daemon, the tests | what happened, as named events |
+| `Limiter` | `tokenbucket` | waiting for a byte budget |
+| `SettingsStore` | `jsonconfig` | the settings in `config.json` that change while the process runs |
 
 The application never constructs an adapter. `compose.Build` wires them and
 returns an `App`; every command asks the `App` for the service it needs.

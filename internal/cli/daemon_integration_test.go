@@ -25,10 +25,12 @@ const convergeTimeout = 5 * time.Second
 // statusReport is the part of `status --json` the daemon tests look at.
 type statusReport struct {
 	Daemon struct {
-		Running   bool    `json:"running"`
-		PID       int     `json:"pid"`
-		Listen    string  `json:"listen"`
-		StartedAt *string `json:"started_at"`
+		Running       bool    `json:"running"`
+		PID           int     `json:"pid"`
+		Listen        string  `json:"listen"`
+		StartedAt     *string `json:"started_at"`
+		UploadLimit   int64   `json:"upload_limit"`
+		DownloadLimit int64   `json:"download_limit"`
 	} `json:"daemon"`
 	Folders []struct {
 		ID     string `json:"id"`

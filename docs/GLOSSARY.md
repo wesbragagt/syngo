@@ -120,6 +120,16 @@ renamed onto its target without crossing a filesystem boundary.
 modification time are set on the partial file, then it is renamed onto the
 target path, so the path never holds half a file.
 
+**Bandwidth limit.** The device-wide transfer rate one direction is held to,
+in bytes per second, `0` for unlimited. Chunk payloads are metered; manifests,
+hellos, pings and the control socket are not. See
+[CLI.md](CLI.md#bandwidth-limits).
+
+**Token bucket.** How a bandwidth limit is enforced: a bucket holding 100 ms of
+traffic at the configured rate, refilled as time passes. A wait for more bytes
+than the bucket holds lets the level go negative and sleeps off the debt, so a
+chunk larger than the bucket is still admitted.
+
 ## Conflicts
 
 **Conflict.** A path two devices changed independently. Neither version is

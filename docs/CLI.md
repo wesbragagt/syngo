@@ -146,6 +146,68 @@ $ syncthis folder remove docs --json --yes
 {"removed": "docs"}
 ```
 
+### `syncthis config show`
+
+Prints the device settings from `config.json`, the ones commands and the daemon
+read. It does not need a running daemon.
+
+```console
+$ syncthis config show
+listen = 127.0.0.1:22000
+interface =
+chunk_size = 1048576
+max_file_size = 1099511627776
+rescan_interval = 10m0s
+sync_interval = 30s
+log_level = info
+upload_limit = 4 MiB/s
+download_limit = unlimited
+```
+
+With `--json` the same settings, with the rates as bytes per second and `0` for
+unlimited:
+
+```json
+{
+  "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 1048576,
+  "max_file_size": 1099511627776, "rescan_interval": "10m0s", "sync_interval": "30s",
+  "log_level": "info", "upload_limit": 4194304, "download_limit": 0
+}
+```
+
+### `syncthis config set [FLAGS]`
+
+Writes one or more settings and asks a running daemon to reload. It needs at
+least one flag and exits 2 without one. It prints the settings afterwards, in
+the same shape as `config show`.
+
+| Flag | Meaning |
+|---|---|
+| `--upload-limit RATE` | outgoing chunk rate; `0` or `unlimited` lifts the limit |
+| `--download-limit RATE` | incoming chunk rate; `0` or `unlimited` lifts the limit |
+| `--rescan-interval DUR` | how often every folder is fully rescanned |
+| `--sync-interval DUR` | how often a connected peer is asked what changed |
+| `--listen HOST:PORT` | address peers connect to |
+| `--interface NAME` | network interface to bind the first IPv4 address of |
+| `--log-level L` | level the daemon logs at: `debug`, `info`, `warn` or `error` |
+
+A `RATE` is a whole number of bytes per second, or a number with a unit:
+`KB`, `MB` and `GB` are decimal, `KiB`, `MiB` and `GiB` binary, a trailing
+`/s` is accepted, and a fraction such as `1.5MiB` is allowed. A rate that
+cannot be read exits 2, as does a `--listen` that cannot be bound or a
+`--log-level` outside the list, and nothing is written.
+
+The bandwidth limits take effect at once, on the connections the daemon
+already has. The other settings take effect when the daemon next starts.
+
+```console
+$ syncthis config set --download-limit 4MiB
+...
+download_limit = 4 MiB/s
+$ syncthis config set --download-limit 0 --json | jq .download_limit
+0
+```
+
 ### `syncthis scan ID [--dry-run]`
 
 Walks the folder, hashes what changed and records it. `--dry-run` classifies
@@ -232,7 +294,8 @@ from the database and `daemon.running` is `false`.
   "schema_version": 1,
   "device": {"id": "RCUFGP7…", "name": "laptop", "data_dir": "/home/u/.local/share/syncthis"},
   "daemon": {"running": true, "pid": 3776214, "listen": "127.0.0.1:22001",
-             "started_at": "2026-09-21T08:32:15Z"},
+             "started_at": "2026-09-21T08:32:15Z",
+             "upload_limit": 0, "download_limit": 4194304},
   "folders": [
     {"id": "docs", "path": "/home/u/docs", "label": "", "mode": "sendreceive",
      "delete_policy": "propagate", "paused": false, "state": "idle",
@@ -249,6 +312,8 @@ from the database and `daemon.running` is `false`.
 }
 ```
 
+`daemon.upload_limit` and `daemon.download_limit` are the rates in force in the
+running daemon, in bytes per second, `0` for unlimited and for no daemon.
 `conflicts.unresolved` counts the paths both sides changed that nobody has
 decided about yet; `conflict list` shows them. `folders[].state` is `idle`,
 `scanning`, `syncing`, `paused` or `error`. Times
@@ -267,6 +332,8 @@ answers the control socket until it is interrupted with SIGINT or SIGTERM.
 | `--interface NAME` | bind the first IPv4 address of a network interface, replacing the host part of `--listen` |
 | `--allow-public` | allow binding an address reachable beyond this machine and its private network |
 | `--rescan-interval DUR` | how often every folder is fully rescanned; default from `config.json` |
+| `--upload-limit RATE` | outgoing chunk rate for this run; default from `config.json` |
+| `--download-limit RATE` | incoming chunk rate for this run; default from `config.json` |
 
 Without `--allow-public` the resolved address must be loopback, link-local,
 [RFC 1918](https://www.rfc-editor.org/rfc/rfc1918) private, or in the
@@ -293,6 +360,27 @@ With `--log-format json` every log line on stderr is a JSON object with at
 least `time`, `level` and `msg`, plus the fields the event carries (`folder`,
 `peer`, `path`, `transfer` and so on). Paths are only logged at `debug` level.
 
+#### Bandwidth limits
+
+One upload budget and one download budget per device, shared by every folder
+and every peer connection, in bytes per second, `0` for unlimited, which is the
+default. Only chunk payloads are metered: manifests, hellos, pings and the
+control socket are not, because they are small and slowing them would slow the
+very exchange that tells a peer to stop.
+
+The budget is a token bucket holding 100 ms of traffic, so a whole chunk goes
+out in one go and an idle hour cannot be spent at once. A wait for more bytes
+than the bucket holds is granted by letting the level go negative and sleeping
+off the debt, so a 1 MiB chunk is admitted at any rate. That is what makes 20
+MiB at 4 MiB/s take about five seconds: the transfer is the burst short of the
+full five.
+
+A rate given to `daemon run` holds for that run and survives every reload; a
+rate written with `config set` is picked up by the reload the command asks for,
+without dropping a connection, unless a flag pinned that direction. The
+download side is paced on the request side, so a peer is never asked faster
+than this device admits and nothing is buffered waiting for the limit.
+
 #### Lifecycle
 
 1. `daemon run` binds `<data-dir>/control.sock`. A socket left behind by a dead
@@ -305,8 +393,8 @@ least `time`, `level` and `msg`, plus the fields the event carries (`folder`,
    listener, and removes the pid file and the socket before it returns.
 
 The folder and device tables are read when the daemon starts and again at every
-rescan interval. `folder add`, `folder set`, `folder remove`, `peer add` and
-`peer remove` do not wait for that tick: each asks the running daemon to reload
+rescan interval. `folder add`, `folder set`, `folder remove`, `peer add`,
+`peer remove` and `config set` do not wait for that tick: each asks the running daemon to reload
 over the control socket, which starts and stops folder loops, dials peers that
 were added, drops peers that were removed together with the connections those
 peers had opened, announces the new folder list to the peers that are already

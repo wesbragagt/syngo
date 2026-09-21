@@ -20,6 +20,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
@@ -99,6 +100,11 @@ type nodeConfig struct {
 	// RescanInterval overrides how often the node re-reads its tables. A
 	// long one proves that something other than the tick did the work.
 	RescanInterval time.Duration
+	// ChunkSize overrides the chunk size of the node; zero takes the small
+	// one the other tests share.
+	ChunkSize int
+	// UploadLimit and DownloadLimit are bytes per second, 0 for unlimited.
+	UploadLimit, DownloadLimit bandwidth.Rate
 }
 
 // startNode initializes a data directory, adds one folder in the given mode
@@ -125,6 +131,11 @@ func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 
 	config := jsonconfig.Default()
 	config.ChunkSize = testChunkSize
+	if cfg.ChunkSize > 0 {
+		config.ChunkSize = cfg.ChunkSize
+	}
+	config.UploadLimit = int64(cfg.UploadLimit)
+	config.DownloadLimit = int64(cfg.DownloadLimit)
 	config.Listen = "127.0.0.1:0"
 	config.RescanInterval = jsonconfig.Duration(cfg.RescanInterval)
 	config.SyncInterval = jsonconfig.Duration(testSyncInterval)

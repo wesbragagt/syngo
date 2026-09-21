@@ -78,6 +78,18 @@ func jsonCases() []jsonCase {
 		{"folder without a subcommand", cli.ExitUsage, func(t *testing.T) (env, []string) {
 			return initialized(t), []string{"folder"}
 		}},
+		{"config show", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"config", "show"}
+		}},
+		{"config set", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"config", "set", "--upload-limit", "1MiB"}
+		}},
+		{"config set without a flag", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"config", "set"}
+		}},
+		{"config without a subcommand", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"config"}
+		}},
 		{"scan", cli.ExitOK, func(t *testing.T) (env, []string) {
 			return withDocs(t), []string{"scan", "docs"}
 		}},

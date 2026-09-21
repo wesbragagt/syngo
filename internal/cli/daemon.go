@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 )
 
 // newDaemonCmd builds the "daemon" command group.
@@ -51,6 +52,8 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 		iface          string
 		allowPublic    bool
 		rescanInterval time.Duration
+		uploadLimit    string
+		downloadLimit  string
 	)
 
 	cmd := &cobra.Command{
@@ -60,6 +63,15 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 			"control requests on <data-dir>/control.sock until it is interrupted.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			upload, err := rateFlag(cmd, "upload-limit", uploadLimit)
+			if err != nil {
+				return err
+			}
+			download, err := rateFlag(cmd, "download-limit", downloadLimit)
+			if err != nil {
+				return err
+			}
+
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {
 				return err
@@ -87,6 +99,8 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 				Interface:      iface,
 				AllowPublic:    allowPublic,
 				RescanInterval: rescanInterval,
+				UploadLimit:    upload,
+				DownloadLimit:  download,
 				Ready:          ready,
 			})
 			stop()
@@ -100,5 +114,23 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 		"allow binding an address reachable outside this machine and its private network")
 	cmd.Flags().DurationVar(&rescanInterval, "rescan-interval", 0,
 		"how often every folder is fully rescanned (default from config.json)")
+	cmd.Flags().StringVar(&uploadLimit, "upload-limit", "",
+		"outgoing chunk rate for this run, for example 4MiB or 0 for unlimited (default from config.json)")
+	cmd.Flags().StringVar(&downloadLimit, "download-limit", "",
+		"incoming chunk rate for this run, for example 4MiB or 0 for unlimited (default from config.json)")
 	return cmd
+}
+
+// rateFlag reads an optional rate flag. A flag that was not given returns nil,
+// which leaves the rate to config.json and to every later reload; one that was
+// given pins that rate for the whole run.
+func rateFlag(cmd *cobra.Command, name, value string) (*bandwidth.Rate, error) {
+	if !cmd.Flags().Changed(name) {
+		return nil, nil
+	}
+	rate, err := parseRateFlag("--"+name, value)
+	if err != nil {
+		return nil, err
+	}
+	return &rate, nil
 }

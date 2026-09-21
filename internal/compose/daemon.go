@@ -15,7 +15,41 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 )
+
+// pinnedSettings is the settings store the daemon reads, with the rates a run
+// was started with overlaid on top of the file. A rate given on the command
+// line is what that run does, whatever config.json says later; the other
+// settings keep coming from the file.
+type pinnedSettings struct {
+	base             ports.SettingsStore
+	upload, download *bandwidth.Rate
+}
+
+var _ ports.SettingsStore = (*pinnedSettings)(nil)
+
+// Load reads the settings and overlays the pinned rates.
+func (p *pinnedSettings) Load(ctx context.Context) (ports.Settings, error) {
+	settings, err := p.base.Load(ctx)
+	if err != nil {
+		return ports.Settings{}, err
+	}
+	if p.upload != nil {
+		settings.UploadLimit = *p.upload
+	}
+	if p.download != nil {
+		settings.DownloadLimit = *p.download
+	}
+	return settings, nil
+}
+
+// Save writes the settings through, pins and all: a pin only decides what this
+// run uses, not what is written down.
+func (p *pinnedSettings) Save(ctx context.Context, s ports.Settings) error {
+	return p.base.Save(ctx, s)
+}
 
 // Names of the files a running daemon owns inside the data directory.
 const (
@@ -48,6 +82,11 @@ type DaemonOptions struct {
 	// SyncInterval overrides how often a connected peer is asked what
 	// changed on its side.
 	SyncInterval time.Duration
+	// UploadLimit and DownloadLimit pin a rate for this run. A nil pointer
+	// takes the rate from config.json and keeps following it, so `config
+	// set` plus a reload changes it while the daemon runs; a pinned rate
+	// survives every reload until the daemon is restarted.
+	UploadLimit, DownloadLimit *bandwidth.Rate
 	// Ready, when not nil, is closed once the daemon is serving requests.
 	Ready chan<- struct{}
 }
@@ -86,6 +125,9 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 	a.Logger.Info("peer listener bound", "address", listener.Addr())
 
 	d := daemon.New(cfg, daemon.Deps{
+		Settings: &pinnedSettings{base: a.Settings, upload: o.UploadLimit, download: o.DownloadLimit},
+		Upload:   a.Upload,
+		Download: a.Download,
 		Store:    a.Store,
 		Clock:    a.Clock,
 		Watcher:  fsnotifywatch.New(a.Logger),
