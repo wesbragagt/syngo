@@ -410,3 +410,47 @@ func TestHandshake_ServerSendsHelloBeforeReadingOne(t *testing.T) {
 		t.Fatalf("hello header = %s, want the server device id", frame.Header)
 	}
 }
+
+func TestFoldersChanged_FromTheClientIsAcceptedAndIgnored(t *testing.T) {
+	server, client := newIdentity(t, "server"), newIdentity(t, "client")
+	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+
+	conn, err := tls.Dial("tcp", ln.Addr(), tcpwire.ClientTLS(client.cert, server.id))
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+
+	hello := `{"protocol_version":1,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
+	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(hello)}); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	if frame, err := tcpwire.ReadFrame(conn); err != nil || frame.Type != tcpwire.MsgHello {
+		t.Fatalf("read hello = %v, %v, want a hello", frame.Type, err)
+	}
+
+	// The serving side keeps no view of the peer's folders, but the frame
+	// may travel either way, so it must not end the connection.
+	changed := `{"folders":[{"id":"docs","mode":"sendreceive"}]}`
+	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgFoldersChanged, Header: []byte(changed)}); err != nil {
+		t.Fatalf("write folders_changed: %v", err)
+	}
+	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgPing, Header: []byte(`{"nonce":7}`)}); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+
+	frame, err := tcpwire.ReadFrame(conn)
+	if err != nil {
+		t.Fatalf("read pong: %v", err)
+	}
+	if frame.Type != tcpwire.MsgPong {
+		t.Fatalf("frame type = %s, want %s: the announcement was answered or broke the connection",
+			frame.Type, tcpwire.MsgPong)
+	}
+	if !strings.Contains(string(frame.Header), "7") {
+		t.Fatalf("pong header = %s, want nonce 7", frame.Header)
+	}
+}

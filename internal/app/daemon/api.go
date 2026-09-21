@@ -19,6 +19,7 @@ const (
 	CmdResume   = "resume"
 	CmdRescan   = "rescan"
 	CmdRepair   = "repair"
+	CmdReload   = "reload"
 	CmdShutdown = "shutdown"
 )
 
@@ -39,6 +40,8 @@ type API interface {
 	// Rescan queues a full scan; it does not wait for the scan to finish.
 	Rescan(ctx context.Context, id folder.ID) error
 	Repair(ctx context.Context, id folder.ID, dryRun bool) (repair.Report, error)
+	// Reload re-reads the folder and device tables.
+	Reload(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 }
 
@@ -114,6 +117,29 @@ func (d *Daemon) Repair(ctx context.Context, id folder.ID, dryRun bool) (repair.
 	return d.deps.Repair.Run(ctx, id, dryRun)
 }
 
+// Reload re-reads the folder and device tables: it starts and stops folder
+// loops, dials peers that were added, drops peers that were removed, and tells
+// the peers that are connected which folders this device serves now. It is
+// what the CLI calls after it has changed one of those tables, so a running
+// daemon does not have to wait for its next rescan tick.
+func (d *Daemon) Reload(ctx context.Context) error {
+	if err := d.refresh(ctx); err != nil {
+		return err
+	}
+	d.announceFolders(ctx)
+	return nil
+}
+
+// announceFolders tells every connected peer which folders this device serves
+// now, so a peer that is already connected learns about a folder added, given
+// another mode or removed without reconnecting.
+func (d *Daemon) announceFolders(ctx context.Context) {
+	if d.deps.Listener == nil || d.deps.Peers == nil {
+		return
+	}
+	d.deps.Listener.AnnounceFolders(d.deps.Peers.Hello(ctx).Folders)
+}
+
 // Shutdown asks the daemon to stop. Run returns once every folder loop and the
 // control server have stopped.
 func (d *Daemon) Shutdown(_ context.Context) error {
@@ -166,6 +192,8 @@ func (d *Daemon) Handle(ctx context.Context, req ports.ControlRequest) ports.Con
 	case CmdRepair:
 		report, err := d.Repair(ctx, id, req.DryRun)
 		return result(report, err)
+	case CmdReload:
+		return result(struct{}{}, d.Reload(ctx))
 	case CmdShutdown:
 		return result(struct{}{}, d.Shutdown(ctx))
 	default:

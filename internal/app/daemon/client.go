@@ -62,6 +62,11 @@ func (c *Client) Repair(ctx context.Context, id folder.ID, dryRun bool) (repair.
 	return report, err
 }
 
+// Reload asks the daemon to re-read the folder and device tables.
+func (c *Client) Reload(ctx context.Context) error {
+	return c.call(ctx, ports.ControlRequest{Cmd: CmdReload}, nil)
+}
+
 // Shutdown asks the daemon to stop.
 func (c *Client) Shutdown(ctx context.Context) error {
 	return c.call(ctx, ports.ControlRequest{Cmd: CmdShutdown}, nil)

@@ -92,17 +92,37 @@ type errorHeader struct {
 	Message string `json:"message"`
 }
 
+// foldersChangedHeader is the unsolicited FoldersChanged frame header. It
+// replaces the folder list the peer announced in its Hello.
+type foldersChangedHeader struct {
+	Folders []folderAdvert `json:"folders"`
+}
+
+// toWireAdverts converts announced folders into their wire form.
+func toWireAdverts(adverts []ports.FolderAdvert) []folderAdvert {
+	out := make([]folderAdvert, 0, len(adverts))
+	for _, f := range adverts {
+		out = append(out, folderAdvert{ID: string(f.ID), Mode: string(f.Mode)})
+	}
+	return out
+}
+
+// fromWireAdverts converts received folder announcements into the port's form.
+func fromWireAdverts(adverts []folderAdvert) []ports.FolderAdvert {
+	out := make([]ports.FolderAdvert, 0, len(adverts))
+	for _, f := range adverts {
+		out = append(out, ports.FolderAdvert{ID: folder.ID(f.ID), Mode: folder.Mode(f.Mode)})
+	}
+	return out
+}
+
 // toWireHello converts the application's Hello into its wire form.
 func toWireHello(h ports.HelloInfo) helloHeader {
-	folders := make([]folderAdvert, 0, len(h.Folders))
-	for _, f := range h.Folders {
-		folders = append(folders, folderAdvert{ID: string(f.ID), Mode: string(f.Mode)})
-	}
 	return helloHeader{
 		ProtocolVersion: ProtocolVersion,
 		DeviceID:        string(h.DeviceID),
 		DeviceName:      h.Name,
-		Folders:         folders,
+		Folders:         toWireAdverts(h.Folders),
 	}
 }
 
@@ -112,11 +132,7 @@ func fromWireHello(h helloHeader) (ports.HelloInfo, error) {
 	if err != nil {
 		return ports.HelloInfo{}, fmt.Errorf("hello device id: %w", err)
 	}
-	folders := make([]ports.FolderAdvert, 0, len(h.Folders))
-	for _, f := range h.Folders {
-		folders = append(folders, ports.FolderAdvert{ID: folder.ID(f.ID), Mode: folder.Mode(f.Mode)})
-	}
-	return ports.HelloInfo{DeviceID: id, Name: h.DeviceName, Folders: folders}, nil
+	return ports.HelloInfo{DeviceID: id, Name: h.DeviceName, Folders: fromWireAdverts(h.Folders)}, nil
 }
 
 // frameOf builds a frame whose header is the JSON encoding of h.

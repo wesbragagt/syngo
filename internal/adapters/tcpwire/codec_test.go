@@ -58,3 +58,32 @@ func TestFrameOf_EncodesHeaderAsJSON(t *testing.T) {
 		t.Fatalf("nonce = %d, want 42", header.Nonce)
 	}
 }
+
+func TestFoldersChanged_HeaderRoundTrip(t *testing.T) {
+	want := []ports.FolderAdvert{
+		{ID: folder.ID("docs"), Mode: folder.ModeSendReceive},
+		{ID: folder.ID("photos"), Mode: folder.ModeReceiveOnly},
+	}
+
+	frame, err := frameOf(MsgFoldersChanged, foldersChangedHeader{Folders: toWireAdverts(want)}, nil)
+	if err != nil {
+		t.Fatalf("frameOf error: %v", err)
+	}
+	if frame.Type != MsgFoldersChanged || frame.Type.String() != "folders_changed" {
+		t.Fatalf("type = %s (0x%02x), want folders_changed (0x13)", frame.Type, uint8(frame.Type))
+	}
+
+	var header foldersChangedHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		t.Fatalf("decodeHeader error: %v", err)
+	}
+	got := fromWireAdverts(header.Folders)
+	if len(got) != len(want) {
+		t.Fatalf("folders = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("folder %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

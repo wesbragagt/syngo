@@ -78,7 +78,7 @@ func (d *Dialer) Probe(ctx context.Context, addr string) (ports.ProbeResult, err
 	}
 	defer func() { _ = c.Close() }()
 
-	result := ports.ProbeResult{DeviceID: c.remote, Name: c.hello.Name}
+	result := ports.ProbeResult{DeviceID: c.remote, Name: c.RemoteHello().Name}
 	latency, err := c.Ping(ctx)
 	var rejected *ports.RejectedError
 	switch {
@@ -182,8 +182,13 @@ type conn struct {
 // RemoteID returns the peer's device ID, derived from its certificate.
 func (c *conn) RemoteID() device.ID { return c.remote }
 
-// RemoteHello returns what the peer announced when it connected.
-func (c *conn) RemoteHello() ports.HelloInfo { return c.hello }
+// RemoteHello returns what the peer announced: its Hello, with the folder list
+// replaced by the last FoldersChanged frame it sent.
+func (c *conn) RemoteHello() ports.HelloInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hello
+}
 
 // Notifications reports folders the peer says have changed. The channel is
 // never closed; it simply stops delivering once the connection ends.
@@ -365,6 +370,8 @@ func (c *conn) readLoop() {
 		switch frame.Type {
 		case MsgManifestChanged:
 			c.notify(frame)
+		case MsgFoldersChanged:
+			c.foldersChanged(frame)
 		case MsgRejected:
 			var header rejectedHeader
 			if err := decodeHeader(frame, &header); err != nil {
@@ -400,6 +407,31 @@ func (c *conn) notify(frame Frame) {
 	case c.notifications <- folder.ID(header.FolderID):
 	default:
 		c.log.Debug("dropped folder change notification", "folder", header.FolderID)
+	}
+}
+
+// foldersChanged replaces the folder list the peer announced in its Hello and
+// asks for a sync cycle: a folder both sides now share is synchronized without
+// waiting for the connection to be made again.
+func (c *conn) foldersChanged(frame Frame) {
+	var header foldersChangedHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		c.log.Warn("bad folder announcement", "error", err)
+		return
+	}
+	adverts := fromWireAdverts(header.Folders)
+
+	c.mu.Lock()
+	// The Hello is handed out by value, so the list is replaced rather
+	// than written into: a caller that still holds the old one is safe.
+	c.hello.Folders = adverts
+	c.mu.Unlock()
+	c.log.Debug("peer announced its folders", "folders", len(adverts))
+
+	// An empty id means "every folder both sides share".
+	select {
+	case c.notifications <- "":
+	default:
 	}
 }
 

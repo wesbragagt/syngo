@@ -29,6 +29,7 @@ type Dialer struct {
 	peers   map[string]PeerScript
 	dialed  []string
 	probed  []string
+	conns   []*PeerConn
 	Latency time.Duration
 }
 
@@ -95,7 +96,18 @@ func (d *Dialer) Dial(_ context.Context, addr string, expect device.ID) (ports.P
 			Err:   &ports.RejectedError{Reason: script.Probe.RejectReason},
 		}
 	}
-	return NewPeerConn(script.Probe.DeviceID, script.Probe.Name, script.Handler, latency), nil
+	conn := NewPeerConn(script.Probe.DeviceID, script.Probe.Name, script.Handler, latency)
+	d.mu.Lock()
+	d.conns = append(d.conns, conn)
+	d.mu.Unlock()
+	return conn, nil
+}
+
+// Conns returns the connections Dial handed out, in order.
+func (d *Dialer) Conns() []*PeerConn {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]*PeerConn(nil), d.conns...)
 }
 
 // NewPeerConn returns an established fake connection answering through
@@ -135,8 +147,22 @@ type PeerConn struct {
 // RemoteID returns the peer's device ID.
 func (c *PeerConn) RemoteID() device.ID { return c.ID }
 
-// RemoteHello returns what the peer announced.
-func (c *PeerConn) RemoteHello() ports.HelloInfo { return c.Hello }
+// RemoteHello returns what the peer announced, with the folder list as the
+// last SetFolders left it.
+func (c *PeerConn) RemoteHello() ports.HelloInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Hello
+}
+
+// SetFolders replaces the folder list the peer announced and notifies the
+// consumer, the way a FoldersChanged frame does on a real connection.
+func (c *PeerConn) SetFolders(adverts []ports.FolderAdvert) {
+	c.mu.Lock()
+	c.Hello.Folders = adverts
+	c.mu.Unlock()
+	c.Notify("")
+}
 
 // Ping returns the configured latency and counts the call.
 func (c *PeerConn) Ping(context.Context) (time.Duration, error) {

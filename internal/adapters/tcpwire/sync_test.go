@@ -218,3 +218,48 @@ func TestRequestManifest_RefusalReportsTheReasonOnce(t *testing.T) {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
+
+func TestAnnounceFolders_ReplacesWhatTheHelloAnnounced(t *testing.T) {
+	conn, ln := connectTo(t, &syncHandler{manifest: manifest.New("docs")})
+
+	// The first request proves the connection is established before the
+	// announcement is sent.
+	if _, err := conn.RequestManifest(context.Background(), "docs"); err != nil {
+		t.Fatalf("request manifest: %v", err)
+	}
+	ln.AnnounceFolders([]ports.FolderAdvert{
+		{ID: "docs", Mode: folder.ModeSendOnly},
+		{ID: "pics", Mode: folder.ModeSendReceive},
+	})
+
+	// An empty id asks for a cycle over every folder both sides share,
+	// which is what a new folder list calls for.
+	select {
+	case id := <-conn.Notifications():
+		if id != "" {
+			t.Fatalf("notified about %q, want every folder", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no folder announcement arrived")
+	}
+
+	got := conn.RemoteHello().Folders
+	want := []ports.FolderAdvert{
+		{ID: "docs", Mode: folder.ModeSendOnly},
+		{ID: "pics", Mode: folder.ModeSendReceive},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("folders = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("folder %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// The connection is still usable: the announcement is not a reply to
+	// anything and must not disturb a request.
+	if _, err := conn.RequestManifest(context.Background(), "docs"); err != nil {
+		t.Fatalf("request manifest after the announcement: %v", err)
+	}
+}

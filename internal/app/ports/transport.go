@@ -170,4 +170,8 @@ type Listener interface {
 	Addr() string
 	// Broadcast tells every connected peer that a folder changed.
 	Broadcast(id folder.ID, seq uint64)
+	// AnnounceFolders tells every connected peer which folders this device
+	// serves now, so a peer learns about a folder added, removed or given
+	// another mode while the connection is up, without reconnecting.
+	AnnounceFolders(folders []FolderAdvert)
 }

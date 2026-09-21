@@ -46,8 +46,9 @@ type Syncer interface {
 // Config holds the daemon's runtime settings.
 type Config struct {
 	// RescanInterval is how often every folder is fully rescanned. It is
-	// also how often the folder table is re-read, so folders added or
-	// removed while the daemon runs are picked up.
+	// also how often the folder and device tables are re-read, as a
+	// backstop: a CLI command that changes them asks the daemon to reload
+	// right away.
 	RescanInterval time.Duration
 	// Debounce is how long a burst of filesystem events is collected before
 	// the affected subtrees are scanned.
@@ -191,7 +192,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}()
 	}
 
-	if err := d.reload(ctx); err != nil {
+	if err := d.refresh(ctx); err != nil {
 		d.deps.Log.Error("load folders", "error", err)
 	}
 	d.readyOnce.Do(func() { close(d.ready) })
@@ -213,16 +214,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.deps.Log.Info("daemon stopped")
 			return nil
 		case <-ticker.C:
-			if err := d.reload(ctx); err != nil {
+			if err := d.refresh(ctx); err != nil {
 				d.deps.Log.Error("load folders", "error", err)
 			}
 		}
 	}
 }
 
-// reload starts a loop for every folder that does not have one and stops the
-// loops of folders that disappeared from the configuration.
-func (d *Daemon) reload(ctx context.Context) error {
+// refresh starts a loop for every folder that does not have one and stops the
+// loops of folders that disappeared from the configuration. It then does the
+// same for peers.
+func (d *Daemon) refresh(ctx context.Context) error {
 	configured, err := d.deps.Store.ListFolders(ctx)
 	if err != nil {
 		return err

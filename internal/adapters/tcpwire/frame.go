@@ -22,6 +22,7 @@ const (
 	MsgManifestRequest MsgType = 0x10
 	MsgManifestReply   MsgType = 0x11
 	MsgManifestChanged MsgType = 0x12
+	MsgFoldersChanged  MsgType = 0x13
 	MsgChunkRequest    MsgType = 0x20
 	MsgChunkData       MsgType = 0x21
 	MsgChunkError      MsgType = 0x22
@@ -45,6 +46,8 @@ func (t MsgType) String() string {
 		return "manifest_reply"
 	case MsgManifestChanged:
 		return "manifest_changed"
+	case MsgFoldersChanged:
+		return "folders_changed"
 	case MsgChunkRequest:
 		return "chunk_request"
 	case MsgChunkData:

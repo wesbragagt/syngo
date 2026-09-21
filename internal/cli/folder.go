@@ -128,6 +128,7 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reloadDaemon(cmd.Context(), deps, app)
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(viewOf(added))
 			}
@@ -225,8 +226,8 @@ func newFolderSetCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set ID",
 		Short: "Change the mode or the delete policy of a folder",
-		Long: "set changes how a configured folder synchronizes. A running daemon picks\n" +
-			"the new setting up at its next scan and sync cycle.",
+		Long: "set changes how a configured folder synchronizes. A running daemon is\n" +
+			"told at once, and announces the new mode to the peers it is connected to.",
 		Args: requireArgs(1, "expected exactly one folder ID"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var changes folders.Changes
@@ -258,6 +259,7 @@ func newFolderSetCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reloadDaemon(cmd.Context(), deps, app)
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(viewOf(updated))
 			}
@@ -297,6 +299,7 @@ func newFolderRemoveCmd(deps *Deps) *cobra.Command {
 			if err := app.Folders.Remove(cmd.Context(), id); err != nil {
 				return err
 			}
+			reloadDaemon(cmd.Context(), deps, app)
 
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(map[string]any{"removed": string(id)})

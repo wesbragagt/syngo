@@ -131,6 +131,7 @@ func newPeerAddCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reloadDaemon(cmd.Context(), deps, app)
 
 			if deps.Global.JSON {
 				view := peerViewOf(result.Device)
@@ -228,6 +229,7 @@ func newPeerRemoveCmd(deps *Deps) *cobra.Command {
 			if err := app.Peers.Remove(cmd.Context(), device.ID(args[0])); err != nil {
 				return err
 			}
+			reloadDaemon(cmd.Context(), deps, app)
 
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(map[string]any{"removed": args[0]})

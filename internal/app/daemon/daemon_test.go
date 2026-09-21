@@ -14,8 +14,10 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/repair"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/app/syncer"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // folderRoot is the path the test folder claims to live at. Nothing touches
@@ -101,6 +103,64 @@ func (s *recordingScanner) snapshot() []scanCall {
 	return append([]scanCall(nil), s.calls...)
 }
 
+// folderAnnouncer is a ports.PeerHandler that only answers what this device
+// announces: the folders in the store that are not paused, the way
+// syncer.Server does. Nothing in these tests serves content.
+type folderAnnouncer struct {
+	store *fakes.Store
+}
+
+// Hello announces the folders the store holds.
+func (h folderAnnouncer) Hello(ctx context.Context) ports.HelloInfo {
+	info := ports.HelloInfo{DeviceID: "DEVICE", Name: "test", Folders: []ports.FolderAdvert{}}
+	configured, err := h.store.ListFolders(ctx)
+	if err != nil {
+		return info
+	}
+	for _, f := range configured {
+		if f.Paused {
+			continue
+		}
+		info.Folders = append(info.Folders, ports.FolderAdvert{ID: f.ID, Mode: f.Mode})
+	}
+	return info
+}
+
+// Manifest serves nothing.
+func (folderAnnouncer) Manifest(context.Context, device.ID, folder.ID) (manifest.Manifest, error) {
+	return manifest.Manifest{}, errors.New("this fake peer handler serves no manifests")
+}
+
+// Chunk serves nothing.
+func (folderAnnouncer) Chunk(context.Context, device.ID, ports.ChunkRequest) (ports.ChunkData, error) {
+	return ports.ChunkData{}, errors.New("this fake peer handler serves no chunks")
+}
+
+// recordingSyncer is a daemon.Syncer that records which folders it was asked
+// to pull, and moves nothing.
+type recordingSyncer struct {
+	mu     sync.Mutex
+	synced []folder.ID
+}
+
+// SyncFolder records the folder and reports an empty cycle.
+func (s *recordingSyncer) SyncFolder(_ context.Context, _ ports.PeerConn, f folder.Folder) (syncer.Summary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.synced = append(s.synced, f.ID)
+	return syncer.Summary{}, nil
+}
+
+// ResumeAll does nothing: no transfer exists in these tests.
+func (s *recordingSyncer) ResumeAll(context.Context, folder.Folder) error { return nil }
+
+// syncedFolders returns the folders SyncFolder was called with.
+func (s *recordingSyncer) syncedFolders() []folder.ID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]folder.ID(nil), s.synced...)
+}
+
 // nopRepairer is a daemon.Repairer that reports nothing to fix.
 type nopRepairer struct{}
 
@@ -111,14 +171,16 @@ func (nopRepairer) Run(_ context.Context, id folder.ID, dryRun bool) (repair.Rep
 
 // harness is a daemon running against fakes.
 type harness struct {
-	daemon  *daemon.Daemon
-	store   *fakes.Store
-	watcher *fakes.Watcher
-	scanner *recordingScanner
-	dialer  *fakes.Dialer
-	done    chan error
-	cancel  context.CancelFunc
-	ctx     context.Context
+	daemon   *daemon.Daemon
+	store    *fakes.Store
+	watcher  *fakes.Watcher
+	scanner  *recordingScanner
+	dialer   *fakes.Dialer
+	listener *fakes.Listener
+	syncer   *recordingSyncer
+	done     chan error
+	cancel   context.CancelFunc
+	ctx      context.Context
 
 	stopOnce sync.Once
 	stopped  chan struct{}
@@ -172,6 +234,8 @@ func startDaemonWatching(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
 		}
 	}
 	dialer := fakes.NewDialer()
+	listener := fakes.NewListener()
+	pulls := &recordingSyncer{}
 	clock := fakes.NewClock(time.Time{})
 	identity := fakes.NewIdentity("DEVICE", "test")
 	fakeWatcher := fakes.NewWatcher()
@@ -187,18 +251,21 @@ func startDaemonWatching(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
 		cfg.Debounce = 10 * time.Millisecond
 	}
 	d := daemon.New(cfg, daemon.Deps{
-		Store:   store,
-		Clock:   clock,
-		Watcher: watcher,
-		Scanner: scanner,
-		Repair:  nopRepairer{},
-		Status:  status.New(store, identity, clock, "/data"),
-		Dialer:  dialer,
+		Store:    store,
+		Clock:    clock,
+		Watcher:  watcher,
+		Scanner:  scanner,
+		Repair:   nopRepairer{},
+		Status:   status.New(store, identity, clock, "/data"),
+		Dialer:   dialer,
+		Listener: listener,
+		Peers:    folderAnnouncer{store: store},
+		Syncer:   pulls,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &harness{daemon: d, store: store, watcher: fakeWatcher, scanner: scanner, dialer: dialer,
-		done: make(chan error, 1), cancel: cancel, ctx: ctx, stopped: make(chan struct{})}
+		listener: listener, syncer: pulls, done: make(chan error, 1), cancel: cancel, ctx: ctx, stopped: make(chan struct{})}
 	go func() { h.done <- d.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
@@ -614,4 +681,194 @@ func TestDaemon_ReattachesWatchWhenTheRootComesBack(t *testing.T) {
 	waitFor(t, "the watch to be re-established", func() bool { return watcher.attaches() >= 2 })
 	after := len(h.scanner.snapshot())
 	waitFor(t, "a scan after the root came back", func() bool { return len(h.scanner.snapshot()) > after })
+}
+
+// reload asks the daemon to re-read its configuration the way the CLI does,
+// over the control API.
+func (h *harness) reload(t *testing.T) {
+	t.Helper()
+	if resp := h.daemon.Handle(h.ctx, ports.ControlRequest{Cmd: daemon.CmdReload}); !resp.OK {
+		t.Fatalf("reload = %+v, want ok", resp)
+	}
+}
+
+func TestReload_WatchesAFolderAddedWhileRunning(t *testing.T) {
+	// An hour of rescan interval: nothing but the reload can pick the new
+	// folder up.
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+
+	if err := h.store.SaveFolder(h.ctx, testFolder("pics", false)); err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	h.reload(t)
+
+	waitFor(t, "the new folder to be scanned", func() bool {
+		for _, call := range h.scanner.snapshot() {
+			if call.ID == "pics" {
+				return true
+			}
+		}
+		return false
+	})
+	waitFor(t, "the watch on the new folder", func() bool {
+		for _, root := range h.watcher.Roots() {
+			if root == "/srv/pics" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestReload_StopsWatchingAFolderRemovedWhileRunning(t *testing.T) {
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+
+	if err := h.store.DeleteFolder(h.ctx, "docs"); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+	h.reload(t)
+
+	report, err := h.daemon.Status(h.ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(report.Folders) != 0 {
+		t.Fatalf("status lists %+v, want no folder", report.Folders)
+	}
+}
+
+func TestReload_DialsAPeerAddedWhileRunning(t *testing.T) {
+	const peerID = device.ID("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+	// Without a reload the peer would only be dialled at the next rescan
+	// tick, an hour away.
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: time.Hour}, nil, testFolder("docs", false))
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe: ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+	})
+
+	if err := h.store.SaveDevice(h.ctx, testPeer(peerID, "nas:22000")); err != nil {
+		t.Fatalf("save device: %v", err)
+	}
+	h.reload(t)
+
+	waitFor(t, "the new peer to be dialled", func() bool {
+		dialed := h.dialer.Dialed()
+		return len(dialed) == 1 && dialed[0] == "nas:22000"
+	})
+}
+
+func TestReload_AnnouncesTheFoldersToConnectedPeers(t *testing.T) {
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+
+	if err := h.store.SaveFolder(h.ctx, testFolder("pics", false)); err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	h.reload(t)
+
+	// The peers that are connected learn the new list without
+	// reconnecting, so they can pull the folder both sides now have.
+	announcements := h.listener.Announcements()
+	if len(announcements) != 1 {
+		t.Fatalf("%d announcements, want one per reload", len(announcements))
+	}
+	ids := make(map[folder.ID]folder.Mode)
+	for _, advert := range announcements[0] {
+		ids[advert.ID] = advert.Mode
+	}
+	if len(ids) != 2 || ids["docs"] != folder.ModeSendReceive || ids["pics"] != folder.ModeSendReceive {
+		t.Fatalf("announced %+v, want docs and pics as sendreceive", ids)
+	}
+}
+
+func TestReload_AnnouncesAModeChange(t *testing.T) {
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+
+	changed := testFolder("docs", false)
+	changed.Mode = folder.ModeSendOnly
+	if err := h.store.SaveFolder(h.ctx, changed); err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	h.reload(t)
+
+	announcements := h.listener.Announcements()
+	if len(announcements) != 1 || len(announcements[0]) != 1 {
+		t.Fatalf("announcements = %+v, want one folder announced once", announcements)
+	}
+	if got := announcements[0][0]; got.ID != "docs" || got.Mode != folder.ModeSendOnly {
+		t.Fatalf("announced %+v, want docs as sendonly", got)
+	}
+}
+
+func TestPeerLoop_SyncsAFolderTheHelloDidNotList(t *testing.T) {
+	const peerID = device.ID("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD")
+	// The peer connects announcing no folder at all, which is what a peer
+	// that had not configured the folder yet does.
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: time.Hour, SyncInterval: 20 * time.Millisecond},
+		[]device.Device{testPeer(peerID, "nas:22000")}, testFolder("docs", false))
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe: ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+	})
+
+	var conn *fakes.PeerConn
+	waitFor(t, "the peer connection", func() bool {
+		conns := h.dialer.Conns()
+		if len(conns) == 0 {
+			return false
+		}
+		conn = conns[0]
+		return true
+	})
+	if got := h.syncer.syncedFolders(); len(got) != 0 {
+		t.Fatalf("synced %v, want nothing while the peer announces no folder", got)
+	}
+
+	// The peer adds the folder and says so on the live connection.
+	conn.SetFolders([]ports.FolderAdvert{{ID: "docs", Mode: folder.ModeSendReceive}})
+
+	waitFor(t, "the folder both sides now share to be synced", func() bool {
+		for _, id := range h.syncer.syncedFolders() {
+			if id == "docs" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// recordingControl is a ports.ControlClient that records the request and
+// answers with a fixed response.
+type recordingControl struct {
+	req  ports.ControlRequest
+	resp ports.ControlResponse
+	err  error
+}
+
+// Call records the request and returns the scripted answer.
+func (c *recordingControl) Call(_ context.Context, req ports.ControlRequest) (ports.ControlResponse, error) {
+	c.req = req
+	return c.resp, c.err
+}
+
+func TestClient_ReloadSendsTheReloadCommand(t *testing.T) {
+	rpc := &recordingControl{resp: ports.ControlResponse{OK: true}}
+
+	if err := daemon.NewClient(rpc).Reload(context.Background()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if rpc.req.Cmd != daemon.CmdReload || rpc.req.FolderID != "" {
+		t.Fatalf("request = %+v, want the reload command for every folder", rpc.req)
+	}
+}
+
+func TestClient_ReloadWithoutADaemon(t *testing.T) {
+	rpc := &recordingControl{err: ports.ErrDaemonUnavailable}
+
+	// The CLI tells the difference between "no daemon" and a refusal, so
+	// the sentinel has to survive the call.
+	if err := daemon.NewClient(rpc).Reload(context.Background()); !errors.Is(err, ports.ErrDaemonUnavailable) {
+		t.Fatalf("reload without a daemon = %v, want ErrDaemonUnavailable", err)
+	}
 }

@@ -94,7 +94,24 @@ func (l *Listener) Broadcast(id folder.ID, seq uint64) {
 		l.log.Error("encode folder change notification", "folder", id, "error", err)
 		return
 	}
+	l.send(frame)
+}
 
+// AnnounceFolders tells every connected peer which folders this device serves
+// now. It replaces the list they received in the Hello, so a folder added or
+// given another mode while the connection is up takes effect without a
+// reconnect.
+func (l *Listener) AnnounceFolders(adverts []ports.FolderAdvert) {
+	frame, err := frameOf(MsgFoldersChanged, foldersChangedHeader{Folders: toWireAdverts(adverts)}, nil)
+	if err != nil {
+		l.log.Error("encode folder announcement", "error", err)
+		return
+	}
+	l.send(frame)
+}
+
+// send writes one unsolicited frame to every connected peer.
+func (l *Listener) send(frame Frame) {
 	l.mu.Lock()
 	conns := make([]*serverConn, 0, len(l.conns))
 	for c := range l.conns {
@@ -104,7 +121,7 @@ func (l *Listener) Broadcast(id folder.ID, seq uint64) {
 
 	for _, c := range conns {
 		if err := c.write(frame); err != nil {
-			l.log.Debug("notify peer", "peer", c.remote.Short(), "error", err)
+			l.log.Debug("notify peer", "peer", c.remote.Short(), "type", frame.Type.String(), "error", err)
 		}
 	}
 }
@@ -212,6 +229,13 @@ func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 
 		var reply Frame
 		switch frame.Type {
+		case MsgFoldersChanged:
+			// The serving side answers requests about its own
+			// folders and keeps no view of the peer's, so the
+			// announcement is accepted and dropped rather than
+			// ending a connection the peer considers healthy.
+			c.log.Debug("peer announced its folders")
+			continue
 		case MsgPing:
 			reply, err = c.pong(frame)
 		case MsgManifestRequest:
