@@ -62,7 +62,7 @@ func (l *peerLoop) start(ctx context.Context) {
 func (l *peerLoop) stop() {
 	l.cancel()
 	<-l.done
-	l.daemon.setPeerState(l.peer.ID, nil)
+	l.daemon.forgetPeerState(l.peer.ID, l)
 }
 
 // run dials the peer, keeps the connection alive and retries with backoff.

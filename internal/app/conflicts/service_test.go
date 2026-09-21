@@ -483,3 +483,39 @@ func TestExport_KeepsTheModeOfEachVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestList_LeavesOutARecordWhoseFolderIsGone proves a listing never describes
+// files through an empty folder path: with the zero value every path in the
+// view would be resolved from the working directory instead.
+func TestList_LeavesOutARecordWhoseFolderIsGone(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	other := ports.ConflictRecord{
+		ID: "c2", FolderID: "photos", Path: "b.txt",
+		DetectedAt: f.record.DetectedAt, Reason: "both-modified",
+	}
+	err := f.store.SaveFolder(ctx, folder.Folder{
+		ID: "photos", Path: "/home/u/photos", Mode: folder.ModeSendReceive,
+	})
+	if err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	if err := f.store.SaveConflict(ctx, other); err != nil {
+		t.Fatalf("save conflict: %v", err)
+	}
+	if err := f.store.DeleteFolder(ctx, "docs"); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+
+	views, err := f.service.List(ctx, "", false)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(views) != 1 || views[0].ID != "c2" {
+		t.Fatalf("views = %+v, want only the conflict whose folder still exists", views)
+	}
+	if views[0].FolderPath != "/home/u/photos" {
+		t.Fatalf("folder path = %q", views[0].FolderPath)
+	}
+}

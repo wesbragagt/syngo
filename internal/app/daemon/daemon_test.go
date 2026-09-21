@@ -939,3 +939,104 @@ func TestReload_SyncsEveryConnectedPeerAtOnce(t *testing.T) {
 		return len(h.syncer.syncedFolders()) >= 2
 	})
 }
+
+// TestReload_WatchesTheNewPathOfAMovedFolder proves a folder whose path
+// changed is watched where it is now. The loop holds the configuration it
+// started with, so one that keeps running after a move watches a directory the
+// folder no longer has.
+func TestReload_WatchesTheNewPathOfAMovedFolder(t *testing.T) {
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+	waitFor(t, "the watch on the original path", func() bool {
+		for _, root := range h.watcher.Roots() {
+			if root == "/srv/docs" {
+				return true
+			}
+		}
+		return false
+	})
+
+	moved := testFolder("docs", false)
+	moved.Path = "/srv/elsewhere"
+	if err := h.store.SaveFolder(h.ctx, moved); err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	h.reload(t)
+
+	waitFor(t, "the watch on the new path", func() bool {
+		for _, root := range h.watcher.Roots() {
+			if root == "/srv/elsewhere" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// TestReload_KeepsTheLoopOfAnUnchangedFolder proves a reload does not restart
+// what it does not have to: a restart costs a full rescan of the folder.
+func TestReload_KeepsTheLoopOfAnUnchangedFolder(t *testing.T) {
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+
+	// The same folder with another label: nothing the loop reads at start.
+	relabelled := testFolder("docs", false)
+	relabelled.Label = "My documents"
+	if err := h.store.SaveFolder(h.ctx, relabelled); err != nil {
+		t.Fatalf("save folder: %v", err)
+	}
+	h.reload(t)
+
+	if got := len(h.scanner.snapshot()); got != 1 {
+		t.Fatalf("%d scans, want the loop left alone", got)
+	}
+	if got := len(h.watcher.Roots()); got != 1 {
+		t.Fatalf("%d watches, want the loop left alone", got)
+	}
+}
+
+// TestReload_PeerAddressChangeKeepsTheNewConnection proves the loop for a
+// peer's new address is not left stateless by the old loop stopping: the old
+// one only forgets what it reported if no other loop has taken the peer over.
+func TestReload_PeerAddressChangeKeepsTheNewConnection(t *testing.T) {
+	const peerID = device.ID("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD")
+	// An hour of everything: only the reload moves the peer, and only the
+	// new loop's first ping reports it, so a state wiped afterwards stays
+	// wiped.
+	cfg := daemon.Config{RescanInterval: time.Hour, PeerPingInterval: time.Hour, SyncInterval: time.Hour}
+	h := startDaemonWithPeers(t, cfg, []device.Device{testPeer(peerID, "nas:22000")})
+	for _, addr := range []string{"nas:22000", "nas:22001"} {
+		h.dialer.Set(addr, fakes.PeerScript{
+			Probe: ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+		})
+	}
+	waitFor(t, "the first connection", func() bool {
+		report, err := h.daemon.Status(h.ctx)
+		return err == nil && len(report.Peers) == 1 && report.Peers[0].Connected
+	})
+
+	if err := h.store.SaveDevice(h.ctx, testPeer(peerID, "nas:22001")); err != nil {
+		t.Fatalf("save device: %v", err)
+	}
+	h.reload(t)
+
+	waitFor(t, "the peer to be dialled at its new address", func() bool {
+		for _, addr := range h.dialer.Dialed() {
+			if addr == "nas:22001" {
+				return true
+			}
+		}
+		return false
+	})
+	// The state the new loop reported must survive the old loop stopping.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		report, err := h.daemon.Status(h.ctx)
+		if err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		if len(report.Peers) != 1 || !report.Peers[0].Connected {
+			t.Fatalf("peer = %+v, want it reported as connected at its new address", report.Peers)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

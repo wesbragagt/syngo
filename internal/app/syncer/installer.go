@@ -169,6 +169,28 @@ func (i *Installer) KeepLocalAs(_ context.Context, root, rel, conflictRel string
 	return i.described(kept, entry), nil
 }
 
+// RestoreKept undoes KeepLocalAs: it moves the copy back to the path it was
+// taken from, after the install that was to take its place failed. Without it
+// the local version would sit at a conflict name nothing recorded, and the
+// next scan would read the path as deleted and send the deletion to the peer.
+func (i *Installer) RestoreKept(_ context.Context, root, keptRel, rel string) error {
+	kept, err := i.safeJoin(root, keptRel)
+	if err != nil {
+		return err
+	}
+	full, err := i.safeJoin(root, rel)
+	if err != nil {
+		return err
+	}
+	if err := i.fs.Rename(kept, full); err != nil {
+		return fmt.Errorf("move %s back to %s: %w", kept, full, err)
+	}
+	if err := i.fs.SyncDir(path.Dir(full)); err != nil {
+		return fmt.Errorf("flush directory of %s: %w", full, err)
+	}
+	return nil
+}
+
 // freeName returns rel, or the first counted variant of it that no file holds.
 func (i *Installer) freeName(root, rel string) (string, error) {
 	candidate := rel

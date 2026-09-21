@@ -360,6 +360,12 @@ func (c *conn) request(ctx context.Context, frame Frame) (Frame, error) {
 	case <-c.done:
 		return Frame{}, c.err()
 	case <-ctx.Done():
+		// A reply that arrives after the caller gave up has nowhere to
+		// go: the frames carry no request id, so the read loop would
+		// hand it to whoever asks next, which is an answer to another
+		// question. The connection ends instead, and the caller's peer
+		// loop opens a new one.
+		c.fail(ctx.Err())
 		return Frame{}, ctx.Err()
 	}
 }

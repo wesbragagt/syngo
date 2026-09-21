@@ -126,6 +126,12 @@ func (l *lookups) ids() []device.ID {
 // startServer binds a listener on loopback and serves it until the test ends.
 func startServer(t *testing.T, srv identity, hello ports.HelloInfo, known ports.DeviceLookup, idle time.Duration) *tcpwire.Listener {
 	t.Helper()
+	return startServerWith(t, srv, handler{info: hello}, known, idle)
+}
+
+// startServerWith is startServer with a handler of the test's choosing.
+func startServerWith(t *testing.T, srv identity, h ports.PeerHandler, known ports.DeviceLookup, idle time.Duration) *tcpwire.Listener {
+	t.Helper()
 
 	ln, err := tcpwire.Listen(srv.cert, "127.0.0.1:0", nil)
 	if err != nil {
@@ -137,7 +143,7 @@ func startServer(t *testing.T, srv identity, hello ports.HelloInfo, known ports.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- ln.Serve(ctx, handler{info: hello}, known) }()
+	go func() { done <- ln.Serve(ctx, h, known) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -536,5 +542,52 @@ func TestFoldersChanged_FromTheClientIsAcceptedAndIgnored(t *testing.T) {
 	}
 	if !strings.Contains(string(frame.Header), "7") {
 		t.Fatalf("pong header = %s, want nonce 7", frame.Header)
+	}
+}
+
+// slowHandler answers manifest requests only after the test lets it, so a
+// caller's deadline passes while the reply is still on its way.
+type slowHandler struct {
+	handler
+	release chan struct{}
+}
+
+// Manifest waits for the test before answering.
+func (h slowHandler) Manifest(_ context.Context, _ device.ID, id folder.ID) (manifest.Manifest, error) {
+	<-h.release
+	m := manifest.New(id)
+	m.Add(manifest.Entry{Path: "late.txt", Kind: manifest.KindFile, Size: 1})
+	return m, nil
+}
+
+// TestRequest_TimeoutEndsTheConnection proves a reply the caller stopped
+// waiting for is never handed to the next request: the frames carry no request
+// id, so a late reply would answer the wrong question.
+func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
+	server, client := newIdentity(t, "server"), newIdentity(t, "client")
+	slow := slowHandler{handler: handler{info: server.hello()}, release: make(chan struct{})}
+	ln := startServerWith(t, server, slow, (&lookups{allow: true}).fn(), 0)
+
+	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := conn.RequestManifest(ctx, "docs"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RequestManifest = %v, want the deadline", err)
+	}
+	// The reply is written now, when nobody is waiting for it.
+	close(slow.release)
+
+	select {
+	case <-conn.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the connection stayed up after a request timed out")
+	}
+	if _, err := conn.Ping(context.Background()); err == nil {
+		t.Fatal("a request after the timeout was answered, so a late reply could have answered it")
 	}
 }

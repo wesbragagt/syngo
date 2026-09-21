@@ -167,7 +167,15 @@ func (s *Service) List(ctx context.Context, id folder.ID, includeResolved bool) 
 	out := make([]View, 0, len(records))
 	for _, rec := range records {
 		f, err := s.store.GetFolder(ctx, rec.FolderID)
-		if err != nil && !errors.Is(err, ports.ErrNotFound) {
+		if errors.Is(err, ports.ErrNotFound) {
+			// The folder the record belongs to is gone. Its path is
+			// what every path in the view is relative to, so with
+			// the zero value the listing would describe whatever
+			// sits at those paths from the working directory. The
+			// record is left out instead.
+			continue
+		}
+		if err != nil {
 			return nil, err
 		}
 		// A listing says whether a conflict went stale, which takes

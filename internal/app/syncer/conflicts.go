@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -50,6 +51,20 @@ func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
 	}
 	installed, err := p.installer.Install(ctx, f.Path, t, nil)
 	if err != nil {
+		// The path is empty now and the local version sits at a name
+		// nothing recorded, which the next scan would read as the path
+		// having been deleted. It goes back where it was.
+		if restoreErr := p.installer.RestoreKept(ctx, f.Path, kept.Path, item.Path); restoreErr != nil {
+			p.log.Error("local version left at its conflict name", "folder", f.ID,
+				"path", item.Path, "conflict_path", kept.Path, "error", restoreErr)
+			// It cannot go back, so the manifest is told where it
+			// is: an unrecorded file would be read as a deletion of
+			// the path and as an addition beside it.
+			if recordErr := p.record(ctx, f.ID, kept, peer); recordErr != nil {
+				return nil, errors.Join(err, restoreErr, recordErr)
+			}
+			return nil, errors.Join(err, restoreErr)
+		}
 		return nil, err
 	}
 	if err := p.recordConflict(ctx, f, peer, item, kept.Path); err != nil {

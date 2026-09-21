@@ -2,6 +2,7 @@ package syncer_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -261,5 +262,53 @@ func TestConflict_LocalFileChangedDuringTheDownloadIsNotMovedAside(t *testing.T)
 	}
 	if copies := conflictCopies(d, "a.txt"); len(copies) != 0 {
 		t.Fatalf("conflict copies = %v, want none", copies)
+	}
+}
+
+// TestConflict_FailedInstallPutsTheLocalVersionBack proves the keep-both path
+// leaves nothing in the air: the local file is moved aside before the peer's
+// version is installed, and an install that fails puts it back. Without that
+// the path would be empty and unrecorded, and the next scan would send the
+// peer a deletion of a file it just offered.
+func TestConflict_FailedInstallPutsTheLocalVersionBack(t *testing.T) {
+	ctx := context.Background()
+	hasher := fakes.NewHasher()
+	base := []byte("what both sides had")
+	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
+
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", remote)
+
+	d, conn := newDest(t, src.server)
+	before := d.record(t, "a.txt", local, hasher.SumBytes(base))
+	d.fs.FailNextRenameTo(d.folder.Path+"/a.txt", errors.New("no space left on device"))
+
+	if _, err := d.puller.SyncFolder(ctx, conn, d.folder); err == nil {
+		t.Fatal("sync succeeded although the install could not be completed")
+	}
+
+	if got := d.content(t, "a.txt"); string(got) != string(local) {
+		t.Fatalf("a.txt = %q, want the local version back in place", got)
+	}
+	if copies := conflictCopies(d, "a.txt"); len(copies) != 0 {
+		t.Fatalf("conflict copies left behind: %v", copies)
+	}
+	stored, err := d.store.GetFile(ctx, d.folder.ID, "a.txt")
+	if err != nil {
+		t.Fatalf("stored entry: %v", err)
+	}
+	if stored.Hash != before.Hash || stored.Deleted {
+		t.Fatalf("stored = %+v, want the local version still recorded", stored)
+	}
+
+	// The next cycle, with the filesystem working again, settles it.
+	if _, err := d.puller.SyncFolder(ctx, conn, d.folder); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if got := d.content(t, "a.txt"); string(got) != string(remote) {
+		t.Fatalf("a.txt = %q, want the peer's version", got)
+	}
+	if copies := conflictCopies(d, "a.txt"); len(copies) != 1 {
+		t.Fatalf("conflict copies = %v, want the local version kept beside it", copies)
 	}
 }

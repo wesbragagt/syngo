@@ -221,7 +221,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
-// refresh starts a loop for every folder that does not have one and stops the
+// refresh starts a loop for every folder that does not have one, restarts the
+// loop of a folder whose configuration moved out from under it, and stops the
 // loops of folders that disappeared from the configuration. It then does the
 // same for peers.
 func (d *Daemon) refresh(ctx context.Context) error {
@@ -230,24 +231,26 @@ func (d *Daemon) refresh(ctx context.Context) error {
 		return err
 	}
 
+	var (
+		stale   []*folderLoop
+		gone    []*folderLoop
+		started []*folderLoop
+	)
 	seen := make(map[folder.ID]struct{}, len(configured))
+	d.mu.Lock()
 	for _, f := range configured {
 		seen[f.ID] = struct{}{}
-		d.mu.Lock()
-		_, running := d.loops[f.ID]
-		if !running {
-			loop := newFolderLoop(d, f)
-			d.loops[f.ID] = loop
-			loop.start(ctx)
+		running, ok := d.loops[f.ID]
+		if ok {
+			if !loopSettingsChanged(running.folder, f) {
+				continue
+			}
+			stale = append(stale, running)
 		}
-		d.mu.Unlock()
-		if !running {
-			d.deps.Log.Info("watching folder", "folder", f.ID, "path", f.Path)
-		}
+		loop := newFolderLoop(d, f)
+		d.loops[f.ID] = loop
+		started = append(started, loop)
 	}
-
-	d.mu.Lock()
-	var gone []*folderLoop
 	for id, loop := range d.loops {
 		if _, ok := seen[id]; !ok {
 			gone = append(gone, loop)
@@ -257,11 +260,33 @@ func (d *Daemon) refresh(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
+	// The old loops stop before the new ones start: one still watching the
+	// previous path would keep reporting events for a directory the folder
+	// no longer has.
+	for _, loop := range stale {
+		loop.stop()
+		d.deps.Log.Info("folder configuration changed, watching it again",
+			"folder", loop.folder.ID, "path", loop.folder.Path)
+	}
 	for _, loop := range gone {
 		loop.stop()
 		d.deps.Log.Info("stopped watching folder", "folder", loop.folder.ID)
 	}
+	for _, loop := range started {
+		loop.start(ctx)
+		d.deps.Log.Info("watching folder", "folder", loop.folder.ID, "path", loop.folder.Path)
+	}
 	return d.reloadPeers(ctx)
+}
+
+// loopSettingsChanged reports whether a folder was reconfigured in a way its
+// loop cannot pick up on its own. The loop re-reads the folder before every
+// scan, so the mode, the policies and the ignore patterns need no restart; the
+// path it watches and the settings the watch itself is built from do.
+func loopSettingsChanged(running, stored folder.Folder) bool {
+	return running.Path != stored.Path ||
+		running.Symlinks != stored.Symlinks ||
+		running.IncludeHidden != stored.IncludeHidden
 }
 
 // reloadPeers starts a loop for every known peer that does not have one, stops
@@ -286,7 +311,10 @@ func (d *Daemon) reloadPeers(ctx context.Context) error {
 	}
 
 	seen := make(map[device.ID]struct{}, len(known))
-	var stale []*peerLoop
+	var (
+		stale   []*peerLoop
+		started []*peerLoop
+	)
 	d.mu.Lock()
 	for _, peer := range known {
 		seen[peer.ID] = struct{}{}
@@ -299,7 +327,7 @@ func (d *Daemon) reloadPeers(ctx context.Context) error {
 		}
 		loop := newPeerLoop(d, peer)
 		d.peers[peer.ID] = loop
-		loop.start(ctx)
+		started = append(started, loop)
 	}
 	for id, loop := range d.peers {
 		if _, ok := seen[id]; !ok {
@@ -309,8 +337,13 @@ func (d *Daemon) reloadPeers(ctx context.Context) error {
 	}
 	d.mu.Unlock()
 
+	// The stale loop goes first: stopping it clears the peer's reported
+	// state, which would otherwise wipe what the new loop just reported.
 	for _, loop := range stale {
 		loop.stop()
+	}
+	for _, loop := range started {
+		loop.start(ctx)
 	}
 	return nil
 }
@@ -368,16 +401,24 @@ func (d *Daemon) setState(id folder.ID, state string) {
 	d.states[id] = state
 }
 
-// setPeerState records what the peer loop knows about a peer. A nil state
-// forgets it.
+// setPeerState records what the peer loop knows about a peer.
 func (d *Daemon) setPeerState(id device.ID, state *status.PeerLive) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if state == nil {
-		delete(d.peerStates, id)
+	d.peerStates[id] = *state
+}
+
+// forgetPeerState drops what a stopping loop reported, unless another loop has
+// taken the peer over in the meantime. A peer whose address changed gets a new
+// loop while the old one is still stopping, and what the new one reports must
+// not be wiped by the old one's last act.
+func (d *Daemon) forgetPeerState(id device.ID, loop *peerLoop) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if current, ok := d.peers[id]; ok && current != loop {
 		return
 	}
-	d.peerStates[id] = *state
+	delete(d.peerStates, id)
 }
 
 // live returns what only a running daemon knows.

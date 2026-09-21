@@ -37,14 +37,18 @@ type FileSystem struct {
 	// syncedDirs records the directories SyncDir flushed.
 	syncedDirs []string
 	modTime    time.Time
+	// renameFailures are destinations the next Rename refuses, so a test
+	// can see what a caller does when an install cannot be completed.
+	renameFailures map[string]error
 }
 
 // NewFileSystem returns an empty filesystem containing only "/".
 func NewFileSystem() *FileSystem {
 	fsys := &FileSystem{
-		nodes:   make(map[string]*node),
-		nextIno: 1,
-		modTime: time.Date(2026, time.September, 20, 10, 0, 0, 0, time.UTC),
+		nodes:          make(map[string]*node),
+		nextIno:        1,
+		renameFailures: make(map[string]error),
+		modTime:        time.Date(2026, time.September, 20, 10, 0, 0, 0, time.UTC),
 	}
 	fsys.nodes["/"] = &node{mode: fs.ModeDir | 0o755, modTime: fsys.modTime, inode: fsys.newInode()}
 	return fsys
@@ -81,6 +85,15 @@ func (f *FileSystem) AddSymlink(p, target string) {
 	p = clean(p)
 	f.mkdirAll(path.Dir(p), 0o755)
 	f.nodes[p] = &node{mode: fs.ModeSymlink | 0o777, target: target, modTime: f.modTime, inode: f.newInode()}
+}
+
+// FailNextRenameTo makes the next Rename with p as its destination fail with
+// err. Later ones succeed, so a test can see both what a caller does when an
+// install cannot be completed and that it recovers.
+func (f *FileSystem) FailNextRenameTo(p string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renameFailures[clean(p)] = err
 }
 
 // Renames returns the (old, new) pairs passed to Rename, in order.
@@ -279,6 +292,10 @@ func (f *FileSystem) Rename(oldPath, newPath string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	oldPath, newPath = clean(oldPath), clean(newPath)
+	if err, ok := f.renameFailures[newPath]; ok {
+		delete(f.renameFailures, newPath)
+		return err
+	}
 	n, ok := f.nodes[oldPath]
 	if !ok {
 		return notExist("rename", oldPath)
