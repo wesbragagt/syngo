@@ -28,6 +28,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/app/syncer"
+	"github.com/wesbragagt/syncthis/internal/app/transfers"
 )
 
 // ErrNotInitialized is returned when the data directory holds no identity and
@@ -72,6 +73,9 @@ type App struct {
 
 	Folders *folders.Service
 	Status  *status.Service
+	// Transfers reads the transfer journal for `transfer list` and
+	// `transfer show`.
+	Transfers *transfers.Service
 	// Control talks to the daemon owning this data directory. Its calls
 	// fail with ports.ErrDaemonUnavailable when no daemon is running.
 	Control *daemon.Client
@@ -181,17 +185,18 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 	fs := localfs.New()
 	clock := sysclock.New()
 	app := &App{
-		DataDir:  dir,
-		Config:   cfg,
-		Store:    store,
-		FS:       fs,
-		Hasher:   blake3hash.New(),
-		Clock:    clock,
-		Identity: identity,
-		Events:   events,
-		Logger:   logger,
-		Folders:  folders.New(store, fs, clock),
-		Control:  daemon.NewClient(unixctl.NewClient(ControlSocketPath(dir))),
+		DataDir:   dir,
+		Config:    cfg,
+		Store:     store,
+		FS:        fs,
+		Hasher:    blake3hash.New(),
+		Clock:     clock,
+		Identity:  identity,
+		Events:    events,
+		Logger:    logger,
+		Folders:   folders.New(store, fs, clock),
+		Transfers: transfers.New(store),
+		Control:   daemon.NewClient(unixctl.NewClient(ControlSocketPath(dir))),
 	}
 	if identity != nil {
 		app.Status = status.New(store, identity, clock, dir)
