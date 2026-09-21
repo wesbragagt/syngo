@@ -123,10 +123,20 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 	if err != nil {
 		return summary, err
 	}
+	matcher, err := loadIgnore(ctx, p.fs, f)
+	if err != nil {
+		return summary, err
+	}
 
 	peer := conn.RemoteID()
+	items, ignored := dropIgnored(matcher, syncplan.Plan(local, remote, f))
+	summary.Skipped += len(ignored)
+	for _, path := range ignored {
+		p.log.Debug("plan item skipped", "folder", f.ID, "path", path, "reason", ReasonIgnored)
+	}
+
 	var pulls []syncplan.Item
-	for _, item := range syncplan.Plan(local, remote, f) {
+	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}

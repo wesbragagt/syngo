@@ -45,12 +45,15 @@ func (p PeerPlan) Changes() int {
 // itself, so it works whether or not a daemon runs.
 type Planner struct {
 	store  PlanStore
+	fs     ports.FileSystem
 	dialer ports.Dialer
 }
 
-// NewPlanner returns a planner dialing through dialer.
-func NewPlanner(store PlanStore, dialer ports.Dialer) *Planner {
-	return &Planner{store: store, dialer: dialer}
+// NewPlanner returns a planner dialing through dialer. The filesystem is read
+// for the folder's ignore file, so a dry run reports what a sync would do and
+// not what it would do without the ignore rules.
+func NewPlanner(store PlanStore, fsys ports.FileSystem, dialer ports.Dialer) *Planner {
+	return &Planner{store: store, fs: fsys, dialer: dialer}
 }
 
 // Plan asks one peer, or every known peer when peer is empty, for its
@@ -65,6 +68,10 @@ func (p *Planner) Plan(ctx context.Context, id folder.ID, peer device.ID) ([]Pee
 		return nil, err
 	}
 	local, err := p.store.LoadManifest(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	matcher, err := loadIgnore(ctx, p.fs, f)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +91,7 @@ func (p *Planner) Plan(ctx context.Context, id folder.ID, peer device.ID) ([]Pee
 		_ = conn.Close()
 		switch {
 		case err == nil:
-			plan.Items = syncplan.Plan(local, remote, f)
+			plan.Items, _ = dropIgnored(matcher, syncplan.Plan(local, remote, f))
 		case refusedFolder(err):
 			plan.Note = err.Error()
 		default:

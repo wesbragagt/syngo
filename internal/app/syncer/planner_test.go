@@ -39,7 +39,7 @@ func newPlanner(t *testing.T, d *dest, src *source) *syncer.Planner {
 	if err != nil {
 		t.Fatalf("save device: %v", err)
 	}
-	return syncer.NewPlanner(d.store, dialer)
+	return syncer.NewPlanner(d.store, d.fs, dialer)
 }
 
 func TestPlanner_ListsWhatWouldBePulled(t *testing.T) {
@@ -175,7 +175,7 @@ func TestPlanner_UnreachablePeerFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save device: %v", err)
 	}
-	planner := syncer.NewPlanner(d.store, fakes.NewDialer())
+	planner := syncer.NewPlanner(d.store, d.fs, fakes.NewDialer())
 
 	if _, err := planner.Plan(context.Background(), d.folder.ID, "GONE"); !errors.Is(err, ports.ErrPeerUnreachable) {
 		t.Fatalf("unreachable peer = %v, want ErrPeerUnreachable", err)

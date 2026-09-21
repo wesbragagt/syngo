@@ -230,7 +230,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.PeerHandler = handler
 		app.Dialer = dialer
 		app.Peers = peers.New(store, dialer, clock, identity, listenPort(cfg.Listen))
-		app.Planner = syncer.NewPlanner(store, dialer)
+		app.Planner = syncer.NewPlanner(store, fs, dialer)
 	}
 	return app, nil
 }
