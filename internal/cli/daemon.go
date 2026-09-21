@@ -28,8 +28,12 @@ func newDaemonCmd(deps *Deps) *cobra.Command {
 
 // newDaemonRunCmd builds the "daemon run" command.
 func newDaemonRunCmd(deps *Deps) *cobra.Command {
-	var listen string
-	var rescanInterval time.Duration
+	var (
+		listen         string
+		iface          string
+		allowPublic    bool
+		rescanInterval time.Duration
+	)
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -63,6 +67,8 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 
 			err = app.RunDaemon(ctx, compose.DaemonOptions{
 				Listen:         listen,
+				Interface:      iface,
+				AllowPublic:    allowPublic,
 				RescanInterval: rescanInterval,
 				Ready:          ready,
 			})
@@ -71,7 +77,10 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&listen, "listen", "", "address to report in status (default from config.json)")
+	cmd.Flags().StringVar(&listen, "listen", "", "address to accept peer connections on (default from config.json)")
+	cmd.Flags().StringVar(&iface, "interface", "", "bind to the first IPv4 address of this network interface")
+	cmd.Flags().BoolVar(&allowPublic, "allow-public", false,
+		"allow binding an address reachable outside this machine and its private network")
 	cmd.Flags().DurationVar(&rescanInterval, "rescan-interval", 0,
 		"how often every folder is fully rescanned (default from config.json)")
 	return cmd

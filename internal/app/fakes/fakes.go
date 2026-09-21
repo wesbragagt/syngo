@@ -11,4 +11,6 @@ var (
 	_ ports.Watcher       = (*Watcher)(nil)
 	_ ports.FileSystem    = (*FileSystem)(nil)
 	_ ports.MetadataStore = (*Store)(nil)
+	_ ports.Dialer        = (*Dialer)(nil)
+	_ ports.PeerConn      = (*PeerConn)(nil)
 )

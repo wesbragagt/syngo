@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,53 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
+
+// Transport errors. Adapters wrap these so callers can use errors.Is.
+var (
+	// ErrPeerUnreachable reports that a peer could not be contacted or
+	// refused the connection.
+	ErrPeerUnreachable = errors.New("peer unreachable")
+	// ErrDeviceMismatch reports that the device answering at an address is
+	// not the one the caller expected.
+	ErrDeviceMismatch = errors.New("device id does not match the expected one")
+)
+
+// Stages of a connection attempt, as reported by ConnectError.
+const (
+	StageDial      = "dial"
+	StageTLS       = "tls"
+	StageHandshake = "handshake"
+	StageTimeout   = "timeout"
+)
+
+// ConnectError reports how far a connection attempt got before it failed, so
+// callers can tell "nothing listening" from "wrong identity".
+type ConnectError struct {
+	Stage string
+	Err   error
+}
+
+// Error implements the error interface.
+func (e *ConnectError) Error() string { return fmt.Sprintf("%s: %v", e.Stage, e.Err) }
+
+// Unwrap returns the underlying failure.
+func (e *ConnectError) Unwrap() error { return e.Err }
+
+// Is reports that every connection failure is a peer that cannot be reached.
+func (e *ConnectError) Is(target error) bool { return target == ErrPeerUnreachable }
+
+// RejectedError reports that a peer refused the connection after the Hello
+// exchange. Reason is a protocol reason such as "unknown_device".
+type RejectedError struct {
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *RejectedError) Error() string { return "peer rejected the connection: " + e.Reason }
+
+// Is reports that a rejection is also a peer that cannot be reached, so
+// callers that only care about the outcome can test one sentinel.
+func (e *RejectedError) Is(target error) bool { return target == ErrPeerUnreachable }
 
 // FolderAdvert is one folder a peer announces in its Hello.
 type FolderAdvert struct {

@@ -14,6 +14,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/repair"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -114,6 +115,7 @@ type harness struct {
 	store   *fakes.Store
 	watcher *fakes.Watcher
 	scanner *recordingScanner
+	dialer  *fakes.Dialer
 	done    chan error
 	cancel  context.CancelFunc
 	ctx     context.Context
@@ -142,6 +144,13 @@ func (h *harness) wait(timeout time.Duration) error {
 // test ends.
 func startDaemon(t *testing.T, cfg daemon.Config, folders ...folder.Folder) *harness {
 	t.Helper()
+	return startDaemonWithPeers(t, cfg, nil, folders...)
+}
+
+// startDaemonWithPeers wires a daemon that also knows the given peers. Their
+// connections go through a fake dialer.
+func startDaemonWithPeers(t *testing.T, cfg daemon.Config, peers []device.Device, folders ...folder.Folder) *harness {
+	t.Helper()
 
 	store := fakes.NewStore()
 	for _, f := range folders {
@@ -149,6 +158,12 @@ func startDaemon(t *testing.T, cfg daemon.Config, folders ...folder.Folder) *har
 			t.Fatalf("save folder: %v", err)
 		}
 	}
+	for _, p := range peers {
+		if err := store.SaveDevice(context.Background(), p); err != nil {
+			t.Fatalf("save device: %v", err)
+		}
+	}
+	dialer := fakes.NewDialer()
 	clock := fakes.NewClock(time.Time{})
 	identity := fakes.NewIdentity("DEVICE", "test")
 	watcher := fakes.NewWatcher()
@@ -167,10 +182,11 @@ func startDaemon(t *testing.T, cfg daemon.Config, folders ...folder.Folder) *har
 		Scanner: scanner,
 		Repair:  nopRepairer{},
 		Status:  status.New(store, identity, clock, "/data"),
+		Dialer:  dialer,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &harness{daemon: d, store: store, watcher: watcher, scanner: scanner,
+	h := &harness{daemon: d, store: store, watcher: watcher, scanner: scanner, dialer: dialer,
 		done: make(chan error, 1), cancel: cancel, ctx: ctx, stopped: make(chan struct{})}
 	go func() { h.done <- d.Run(ctx) }()
 	t.Cleanup(func() {
@@ -480,4 +496,48 @@ func TestDaemon_ScanFailureLeavesFolderRecordToTheScanner(t *testing.T) {
 	if f.LastError != "" {
 		t.Fatalf("LastError = %q, want the loop to leave it to the scanner", f.LastError)
 	}
+}
+
+// testPeer returns a peer record pointing at the fake dialer's address.
+func testPeer(id device.ID, addr string) device.Device {
+	return device.Device{ID: id, Name: "nas", Address: addr, Verified: true, AddedAt: time.Unix(0, 0).UTC()}
+}
+
+func TestDaemon_ConnectedPeerAppearsInStatus(t *testing.T) {
+	const peerID = device.ID("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	// A short rescan interval makes the daemon re-read the peer table.
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: 50 * time.Millisecond}, nil)
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe: ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+	})
+
+	// The peer table is re-read on reload, like the folder table.
+	if err := h.store.SaveDevice(h.ctx, testPeer(peerID, "nas:22000")); err != nil {
+		t.Fatalf("save device: %v", err)
+	}
+
+	waitFor(t, "peer connection", func() bool {
+		report, err := h.daemon.Status(h.ctx)
+		if err != nil {
+			return false
+		}
+		return len(report.Peers) == 1 && report.Peers[0].Connected
+	})
+
+	if dialed := h.dialer.Dialed(); len(dialed) == 0 || dialed[0] != "nas:22000" {
+		t.Fatalf("dialed = %v, want the peer address", dialed)
+	}
+}
+
+func TestDaemon_UnreachablePeerReportsError(t *testing.T) {
+	const peerID = device.ID("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+	h := startDaemonWithPeers(t, daemon.Config{}, []device.Device{testPeer(peerID, "ghost:22000")})
+
+	waitFor(t, "peer failure", func() bool {
+		report, err := h.daemon.Status(h.ctx)
+		if err != nil || len(report.Peers) != 1 {
+			return false
+		}
+		return !report.Peers[0].Connected && report.Peers[0].Error != nil
+	})
 }

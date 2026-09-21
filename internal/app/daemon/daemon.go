@@ -12,6 +12,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/repair"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -40,9 +41,11 @@ type Config struct {
 	// Debounce is how long a burst of filesystem events is collected before
 	// the affected subtrees are scanned.
 	Debounce time.Duration
-	// Listen is the address the daemon reports in status; the network
-	// listener itself arrives with the sync transport.
+	// Listen is the address the daemon reports in status. The listener is
+	// bound by the composition root, which passes the bound address here.
 	Listen string
+	// PeerPingInterval is how often a connected peer is pinged.
+	PeerPingInterval time.Duration
 	// PID is the process id to report in status. The application layer has
 	// no access to the process itself, so the composition root fills it in.
 	PID int
@@ -54,6 +57,14 @@ func (c Config) rescanInterval() time.Duration {
 		return c.RescanInterval
 	}
 	return DefaultRescanInterval
+}
+
+// peerPingInterval returns the configured peer ping interval or the default.
+func (c Config) peerPingInterval() time.Duration {
+	if c.PeerPingInterval > 0 {
+		return c.PeerPingInterval
+	}
+	return DefaultPeerPingInterval
 }
 
 // debounce returns the configured debounce or the default.
@@ -74,7 +85,15 @@ type Deps struct {
 	Status  *status.Service
 	// Control serves the control socket. A nil server disables it.
 	Control ports.ControlServer
-	Log     *slog.Logger
+	// Listener accepts peer connections. A nil listener disables them.
+	Listener ports.Listener
+	// Peers answers what connected peers ask of this device. It is
+	// required when Listener is set.
+	Peers ports.PeerHandler
+	// Dialer connects to known peers. A nil dialer disables outgoing
+	// connections, so peers are reported as not connected.
+	Dialer ports.Dialer
+	Log    *slog.Logger
 }
 
 // Daemon owns one folder loop per configured folder and the control server.
@@ -86,10 +105,12 @@ type Daemon struct {
 	readyOnce sync.Once
 	startedAt time.Time
 
-	mu     sync.Mutex
-	loops  map[folder.ID]*folderLoop
-	states map[folder.ID]string
-	cancel context.CancelFunc
+	mu         sync.Mutex
+	loops      map[folder.ID]*folderLoop
+	states     map[folder.ID]string
+	peers      map[device.ID]*peerLoop
+	peerStates map[device.ID]status.PeerLive
+	cancel     context.CancelFunc
 }
 
 // New returns a daemon. Run starts it.
@@ -98,11 +119,13 @@ func New(cfg Config, d Deps) *Daemon {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
 	return &Daemon{
-		cfg:    cfg,
-		deps:   d,
-		ready:  make(chan struct{}),
-		loops:  make(map[folder.ID]*folderLoop),
-		states: make(map[folder.ID]string),
+		cfg:        cfg,
+		deps:       d,
+		ready:      make(chan struct{}),
+		loops:      make(map[folder.ID]*folderLoop),
+		states:     make(map[folder.ID]string),
+		peers:      make(map[device.ID]*peerLoop),
+		peerStates: make(map[device.ID]status.PeerLive),
 	}
 }
 
@@ -132,6 +155,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}()
 	}
 
+	var listener sync.WaitGroup
+	if d.deps.Listener != nil && d.deps.Peers != nil {
+		listener.Add(1)
+		go func() {
+			defer listener.Done()
+			if err := d.deps.Listener.Serve(ctx, d.deps.Peers, d.knownDevice); err != nil {
+				d.deps.Log.Error("peer listener stopped", "error", err)
+			}
+		}()
+	}
+
 	if err := d.reload(ctx); err != nil {
 		d.deps.Log.Error("load folders", "error", err)
 	}
@@ -150,6 +184,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				}
 			}
 			control.Wait()
+			listener.Wait()
 			d.deps.Log.Info("daemon stopped")
 			return nil
 		case <-ticker.C:
@@ -199,7 +234,57 @@ func (d *Daemon) reload(ctx context.Context) error {
 		loop.stop()
 		d.deps.Log.Info("stopped watching folder", "folder", loop.folder.ID)
 	}
+	return d.reloadPeers(ctx)
+}
+
+// reloadPeers starts a loop for every known peer that does not have one, and
+// stops the loops of peers that were removed. A peer whose address changed is
+// reconnected.
+func (d *Daemon) reloadPeers(ctx context.Context) error {
+	if d.deps.Dialer == nil {
+		return nil
+	}
+	known, err := d.deps.Store.ListDevices(ctx)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[device.ID]struct{}, len(known))
+	var stale []*peerLoop
+	d.mu.Lock()
+	for _, peer := range known {
+		seen[peer.ID] = struct{}{}
+		if running, ok := d.peers[peer.ID]; ok {
+			if running.peer.Address == peer.Address {
+				continue
+			}
+			stale = append(stale, running)
+			delete(d.peers, peer.ID)
+		}
+		loop := newPeerLoop(d, peer)
+		d.peers[peer.ID] = loop
+		loop.start(ctx)
+	}
+	for id, loop := range d.peers {
+		if _, ok := seen[id]; !ok {
+			stale = append(stale, loop)
+			delete(d.peers, id)
+		}
+	}
+	d.mu.Unlock()
+
+	for _, loop := range stale {
+		loop.stop()
+	}
 	return nil
+}
+
+// knownDevice reports whether a device may connect to us.
+func (d *Daemon) knownDevice(ctx context.Context, id device.ID) bool {
+	if _, err := d.deps.Store.GetDevice(ctx, id); err != nil {
+		return false
+	}
+	return true
 }
 
 // stop cancels every folder loop and waits for it to return.
@@ -212,7 +297,18 @@ func (d *Daemon) stop() {
 	}
 	d.mu.Unlock()
 
+	d.mu.Lock()
+	peers := make([]*peerLoop, 0, len(d.peers))
+	for id, loop := range d.peers {
+		peers = append(peers, loop)
+		delete(d.peers, id)
+	}
+	d.mu.Unlock()
+
 	for _, loop := range loops {
+		loop.stop()
+	}
+	for _, loop := range peers {
 		loop.stop()
 	}
 }
@@ -236,6 +332,18 @@ func (d *Daemon) setState(id folder.ID, state string) {
 	d.states[id] = state
 }
 
+// setPeerState records what the peer loop knows about a peer. A nil state
+// forgets it.
+func (d *Daemon) setPeerState(id device.ID, state *status.PeerLive) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if state == nil {
+		delete(d.peerStates, id)
+		return
+	}
+	d.peerStates[id] = *state
+}
+
 // live returns what only a running daemon knows.
 func (d *Daemon) live() *status.LiveInfo {
 	d.mu.Lock()
@@ -244,10 +352,15 @@ func (d *Daemon) live() *status.LiveInfo {
 	for id, state := range d.states {
 		states[string(id)] = state
 	}
+	peers := make(map[string]status.PeerLive, len(d.peerStates))
+	for id, state := range d.peerStates {
+		peers[string(id)] = state
+	}
 	return &status.LiveInfo{
 		PID:          d.cfg.PID,
 		Listen:       d.cfg.Listen,
 		StartedAt:    d.startedAt,
+		Peers:        peers,
 		FolderStates: states,
 	}
 }

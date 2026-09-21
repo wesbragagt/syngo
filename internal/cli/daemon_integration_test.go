@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,11 @@ func startDaemon(t *testing.T, e env, args ...string) *daemonProcess {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &daemonProcess{cancel: cancel}
 	full := append([]string{"--data-dir", e.dataDir, "daemon", "run"}, args...)
+	// Tests must not fight over the configured port, so a daemon that was
+	// not told where to listen gets one the operating system picks.
+	if !slices.Contains(args, "--listen") {
+		full = append(full, "--listen", "127.0.0.1:0")
+	}
 
 	p.wg.Add(1)
 	go func() {
@@ -174,14 +180,15 @@ func TestDaemonRun_TracksCreateModifyRenameDelete(t *testing.T) {
 func TestDaemonRun_StatusReportsTheDaemon(t *testing.T) {
 	e := newEnv(t)
 	setupFolder(t, e)
-	startDaemon(t, e, "--listen", "127.0.0.1:22001")
+	listen := closedPort(t)
+	startDaemon(t, e, "--listen", listen)
 	waitForDaemon(t, e)
 
 	report := status(t, e)
 	if report.Daemon.PID != os.Getpid() {
 		t.Fatalf("pid = %d, want %d", report.Daemon.PID, os.Getpid())
 	}
-	if report.Daemon.Listen != "127.0.0.1:22001" {
+	if report.Daemon.Listen != listen {
 		t.Fatalf("listen = %q, want the --listen value", report.Daemon.Listen)
 	}
 	if report.Daemon.StartedAt == nil {

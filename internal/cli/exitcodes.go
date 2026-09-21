@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
+	"github.com/wesbragagt/syncthis/internal/app/peers"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/compose"
 )
@@ -78,6 +79,13 @@ func codeOf(err error) int {
 		return ExitAlreadyExists
 	case errors.Is(err, ports.ErrDaemonUnavailable), errors.Is(err, compose.ErrDaemonRunning):
 		return ExitDaemonUnavailable
+	case errors.Is(err, ports.ErrPeerUnreachable), errors.Is(err, ports.ErrDeviceMismatch):
+		return ExitPeerUnreachable
+	case errors.Is(err, peers.ErrNotConfirmed):
+		return ExitConfirmationRequired
+	case errors.Is(err, compose.ErrPublicAddress):
+		// The refusal is about the flags the daemon was given.
+		return ExitUsage
 	}
 	return ExitError
 }

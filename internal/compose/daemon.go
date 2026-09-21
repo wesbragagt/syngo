@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/adapters/fsnotifywatch"
+	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 )
@@ -30,9 +31,15 @@ func PIDFilePath(dir string) string { return filepath.Join(dir, PIDFile) }
 
 // DaemonOptions overrides the persisted configuration for one daemon run.
 type DaemonOptions struct {
-	// Listen overrides the address reported in status; empty keeps the
+	// Listen overrides the address the peer listener binds; empty keeps the
 	// configured one.
 	Listen string
+	// Interface binds the listener to the first IPv4 address of a network
+	// interface; empty keeps the configured one.
+	Interface string
+	// AllowPublic permits binding an address reachable from outside this
+	// machine and its private network.
+	AllowPublic bool
 	// RescanInterval overrides how often folders are fully rescanned.
 	RescanInterval time.Duration
 	// Debounce overrides how long filesystem events are collected before a
@@ -65,15 +72,28 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 	}
 	defer release()
 
-	d := daemon.New(a.daemonConfig(o), daemon.Deps{
-		Store:   a.Store,
-		Clock:   a.Clock,
-		Watcher: fsnotifywatch.New(a.Logger),
-		Scanner: a.Scan,
-		Repair:  a.Repair,
-		Status:  a.Status,
-		Control: server,
-		Log:     a.Logger,
+	listener, err := a.listenPeers(o)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
+
+	cfg := a.daemonConfig(o)
+	cfg.Listen = listener.Addr()
+	a.Logger.Info("peer listener bound", "address", listener.Addr())
+
+	d := daemon.New(cfg, daemon.Deps{
+		Store:    a.Store,
+		Clock:    a.Clock,
+		Watcher:  fsnotifywatch.New(a.Logger),
+		Scanner:  a.Scan,
+		Repair:   a.Repair,
+		Status:   a.Status,
+		Control:  server,
+		Listener: listener,
+		Peers:    a.PeerHandler,
+		Dialer:   a.Dialer,
+		Log:      a.Logger,
 	})
 	if o.Ready != nil {
 		go func() {
@@ -85,6 +105,26 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 		}()
 	}
 	return d.Run(ctx)
+}
+
+// listenPeers binds the port peers connect to. The address comes from the run
+// options, else from the configuration; an interface name replaces its host
+// with the interface's first IPv4 address.
+func (a *App) listenPeers(o DaemonOptions) (*tcpwire.Listener, error) {
+	listen := a.Config.Listen
+	if o.Listen != "" {
+		listen = o.Listen
+	}
+	iface := a.Config.Interface
+	if o.Interface != "" {
+		iface = o.Interface
+	}
+
+	addr, err := tcpwire.ResolveListen(listen, iface, o.AllowPublic)
+	if err != nil {
+		return nil, err
+	}
+	return tcpwire.Listen(a.Identity.TLSCertificate(), addr, a.Logger)
 }
 
 // listenControl binds the control socket, replacing one left behind by a dead

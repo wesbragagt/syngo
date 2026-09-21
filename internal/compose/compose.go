@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
 	"github.com/wesbragagt/syncthis/internal/adapters/identityfile"
@@ -16,18 +18,25 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/localfs"
 	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
 	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
+	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
+	"github.com/wesbragagt/syncthis/internal/app/peers"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/repair"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/app/syncer"
 )
 
 // ErrNotInitialized is returned when the data directory holds no identity and
 // one is required. Commands map it to the "run syncthis init" exit code.
 var ErrNotInitialized = identityfile.ErrNotInitialized
+
+// ErrPublicAddress is returned when the daemon is asked to listen on an
+// address reachable from outside this machine without --allow-public.
+var ErrPublicAddress = tcpwire.ErrPublicAddress
 
 // DatabaseFile is the name of the SQLite database inside the data directory.
 const DatabaseFile = "state.db"
@@ -62,10 +71,15 @@ type App struct {
 	// Control talks to the daemon owning this data directory. Its calls
 	// fail with ports.ErrDaemonUnavailable when no daemon is running.
 	Control *daemon.Client
-	// Scan and Repair need a device identity to stamp the rows they write,
-	// so they are nil until the data directory has been initialized.
+	// Scan, Repair, Peers and the peer transport need a device identity, so
+	// they are nil until the data directory has been initialized.
 	Scan   *scan.Scanner
 	Repair *repair.Service
+	Peers  *peers.Service
+	// Dialer opens connections to peers with this device's certificate.
+	Dialer ports.Dialer
+	// PeerHandler answers what peers ask of this device.
+	PeerHandler ports.PeerHandler
 }
 
 // Build opens the data directory and wires the application. It does not create
@@ -177,6 +191,16 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.Status = status.New(store, identity, clock, dir)
 		app.Scan = scan.New(fs, app.Hasher, store, clock, identity, events, logger)
 		app.Repair = repair.New(fs, app.Hasher, store, clock, identity)
+
+		handler := syncer.New(store, identity, logger)
+		// The Hello is built per connection because the folder list
+		// changes while the process runs.
+		dialer := tcpwire.NewDialer(identity.TLSCertificate(), func() ports.HelloInfo {
+			return handler.Hello(context.Background())
+		}, logger)
+		app.PeerHandler = handler
+		app.Dialer = dialer
+		app.Peers = peers.New(store, dialer, clock, listenPort(cfg.Listen))
 	}
 	return app, nil
 }
@@ -187,6 +211,20 @@ func (a *App) Close() error {
 		return nil
 	}
 	return a.Store.Close()
+}
+
+// listenPort returns the port of a configured listen address, or the default
+// peer port when it has none.
+func listenPort(listen string) int {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return peers.DefaultPort
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number == 0 {
+		return peers.DefaultPort
+	}
+	return number
 }
 
 // discardEvents drops every event; used when no sink is configured.
