@@ -30,7 +30,7 @@ These tasks must land before most application work. They are not a phase on thei
 - [x] Define ports: filesystem, metadata store, content store, clock, peer discovery, transport, device identity, configuration, events, logging, UI.
 - [x] Define a composition root that wires adapters.
 - [x] Add interface tests in the domain package using fake adapters.
-- [ ] Document the domain language in a glossary.
+- [x] Document the domain language in a glossary.
 - [x] Decide the public protocol format and schema versioning rules.
 
 ## Phase 0: Baseline
