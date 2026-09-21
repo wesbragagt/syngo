@@ -62,8 +62,8 @@ func TestOpen_MigratesFreshDB(t *testing.T) {
 	if err := db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("schema version = %d, want 2", version)
+	if version != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, sqlitestore.SchemaVersion)
 	}
 
 	tables := []string{"folders", "folder_ignore_patterns", "files", "folder_sequence", "changes",

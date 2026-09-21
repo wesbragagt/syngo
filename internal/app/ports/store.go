@@ -69,6 +69,13 @@ type TransferFilter struct {
 
 // ConflictRecord is a detected divergence between the local and remote version
 // of a path.
+//
+// Path always names the file the folder knows by that name. ConflictPath names
+// the copy that holds the other version, and is empty when there is none,
+// which is the case when the peer deleted the path or replaced it by another
+// kind. LocalHash and RemoteHash say which content each side had; matching
+// them against what is on disk is how a resolution finds the version the user
+// asked to keep, whichever of the two files holds it.
 type ConflictRecord struct {
 	ID           string
 	FolderID     folder.ID
@@ -79,6 +86,9 @@ type ConflictRecord struct {
 	PeerID       device.ID
 	DetectedAt   time.Time
 	Resolved     bool
+	// Reason is the sync plan reason that produced the conflict, such as
+	// "both-modified". It is what the user is shown to explain it.
+	Reason string
 }
 
 // FolderStore persists folder configuration.
@@ -143,7 +153,12 @@ type TransferStore interface {
 // ConflictStore persists detected conflicts.
 type ConflictStore interface {
 	SaveConflict(ctx context.Context, c ConflictRecord) error
+	// GetConflict returns one conflict, or ErrNotFound.
+	GetConflict(ctx context.Context, id string) (ConflictRecord, error)
 	ListConflicts(ctx context.Context, id folder.ID, includeResolved bool) ([]ConflictRecord, error)
+	// SetConflictResolved marks a conflict as dealt with, or as open again.
+	// It returns ErrNotFound when no conflict has that id.
+	SetConflictResolved(ctx context.Context, id string, resolved bool) error
 }
 
 // MetadataStore is the full persistence port used by the daemon and the CLI.

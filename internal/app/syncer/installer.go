@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/conflict"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
@@ -17,6 +18,11 @@ import (
 // lives inside the folder so a finished download is renamed over its target
 // without crossing a filesystem boundary.
 const TempDirName = ".syncthis/tmp"
+
+// maxConflictNames is how many counted variants of a conflict name are tried
+// before the install gives up. A directory that holds them all has a problem
+// no further copy would solve.
+const maxConflictNames = 100
 
 // Default permissions used when a peer announces none.
 const (
@@ -59,6 +65,69 @@ func (i *Installer) TempDir(root string) string { return path.Join(root, TempDir
 // would otherwise be lost. It returns the entry that now describes the file.
 func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 	expectLocal *manifest.Entry) (manifest.Entry, error) {
+	return i.installAt(root, t.Path, t, expectLocal)
+}
+
+// KeepLocalAs moves the local file at rel aside to a conflict name, so the
+// peer's version can take its place without the local change being lost. The
+// local file must still be the version the plan was made against; one that
+// changed since is left alone. A conflict name that is taken gets a counter.
+// It returns the entry describing the copy, whose Path is the name it got.
+func (i *Installer) KeepLocalAs(_ context.Context, root, rel, conflictRel string,
+	local *manifest.Entry) (manifest.Entry, error) {
+	full := path.Join(root, rel)
+	info, err := i.fs.Lstat(full)
+	if err != nil {
+		return manifest.Entry{}, fmt.Errorf("stat %s: %w", full, err)
+	}
+	if local == nil || local.Kind != manifest.KindFile || info.IsDir() || info.IsSymlink() ||
+		info.Size != local.Size || info.ModTime.UnixNano() != local.ModTime.UnixNano() {
+		return manifest.Entry{}, fmt.Errorf("%s: %w", full, ErrChangedUnderneath)
+	}
+
+	free, err := i.freeName(root, conflictRel)
+	if err != nil {
+		return manifest.Entry{}, err
+	}
+	kept := path.Join(root, free)
+	if err := i.fs.MkdirAll(path.Dir(kept), defaultDirMode); err != nil {
+		return manifest.Entry{}, fmt.Errorf("create parent of %s: %w", kept, err)
+	}
+	// The rename is atomic, so the local version is either at its path or
+	// at the conflict name, never nowhere.
+	if err := i.fs.Rename(full, kept); err != nil {
+		return manifest.Entry{}, fmt.Errorf("keep %s as %s: %w", full, kept, err)
+	}
+	if err := i.fs.SyncDir(path.Dir(kept)); err != nil {
+		return manifest.Entry{}, fmt.Errorf("flush directory of %s: %w", kept, err)
+	}
+
+	entry := manifest.Entry{
+		Path: free, Kind: manifest.KindFile, Size: local.Size, ModTime: local.ModTime,
+		Mode: local.Mode, Hash: local.Hash, SyncedHash: local.Hash,
+	}
+	return i.described(kept, entry), nil
+}
+
+// freeName returns rel, or the first counted variant of it that no file holds.
+func (i *Installer) freeName(root, rel string) (string, error) {
+	candidate := rel
+	for n := 1; n <= maxConflictNames; n++ {
+		_, err := i.fs.Lstat(path.Join(root, candidate))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return candidate, nil
+		case err != nil:
+			return "", fmt.Errorf("stat %s: %w", path.Join(root, candidate), err)
+		}
+		candidate = conflict.WithCounter(rel, n)
+	}
+	return "", fmt.Errorf("%s: no free name left beside it: %w", rel, ErrChangedUnderneath)
+}
+
+// installAt verifies the finished partial file of t and moves it to rel.
+func (i *Installer) installAt(root, rel string, t transfer.Transfer,
+	expectLocal *manifest.Entry) (manifest.Entry, error) {
 	hash, err := i.hashFile(t.TempPath)
 	if err != nil {
 		return manifest.Entry{}, err
@@ -68,7 +137,7 @@ func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 			t.Path, hash, t.Hash, ErrIntegrity)
 	}
 
-	final := path.Join(root, t.Path)
+	final := path.Join(root, rel)
 	if err := i.checkTarget(final, expectLocal); err != nil {
 		return manifest.Entry{}, err
 	}
@@ -101,7 +170,7 @@ func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 	}
 
 	entry := manifest.Entry{
-		Path: t.Path, Kind: manifest.KindFile, Size: t.Size, ModTime: mtime,
+		Path: rel, Kind: manifest.KindFile, Size: t.Size, ModTime: mtime,
 		Mode: uint32(mode), Hash: t.Hash, SyncedHash: t.Hash,
 	}
 	return i.described(final, entry), nil

@@ -1,0 +1,114 @@
+package syncer
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/conflict"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+)
+
+// Conflicts are kept, never resolved by the puller: whatever it does, both
+// versions are still on disk afterwards.
+//
+// Both sides of a "both-modified" conflict see the same two hashes, and
+// conflict.KeepsPath turns them into the same answer about which version keeps
+// the path. The side whose version loses is the only one that acts: it renames
+// its file to a conflict name and installs the peer's version at the path.
+// The copy it wrote is an ordinary file from then on, so the peer pulls it in
+// the next cycle and both trees end up with the same two files. The side whose
+// version wins does nothing but say so; acting on both sides would make the
+// two devices swap versions forever instead of converging.
+
+// needsRemoteContent reports whether a conflict is settled by downloading the
+// peer's version, which makes it a member of the pull phase rather than of
+// apply. That is the case for exactly one conflict: both sides changed a file
+// and the local version is the one that gives up the path. A path the peer
+// deleted or turned into a directory has no content to fetch.
+func needsRemoteContent(item syncplan.Item) bool {
+	return item.Action == syncplan.ActionConflict && item.Reason == syncplan.ReasonBothModified &&
+		item.Local != nil && item.Remote != nil && item.Remote.Kind == manifest.KindFile &&
+		!conflict.KeepsPath(item.Local.Hash, item.Remote.Hash)
+}
+
+// keepBoth moves the local version aside and installs the peer's version in
+// its place, returning the entries that now describe the folder: the file at
+// the path, and the copy holding what this device had.
+func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item, t transfer.Transfer) ([]manifest.Entry, error) {
+	name := conflict.Name(item.Path, p.clock.Now(), peer)
+	// The local version moves aside first, so the path is free for the
+	// peer's version and the local bytes are never overwritten.
+	kept, err := p.installer.KeepLocalAs(ctx, f.Path, item.Path, name, item.Local)
+	if err != nil {
+		return nil, err
+	}
+	installed, err := p.installer.Install(ctx, f.Path, t, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.recordConflict(ctx, f, peer, item, kept.Path); err != nil {
+		return nil, err
+	}
+	return []manifest.Entry{installed, kept}, nil
+}
+
+// conflictKept reports a conflict that leaves the local side exactly as it is:
+// the peer deleted a file this device changed, the peer replaced it by another
+// kind, or the local version is the one that keeps the path. A conflict record
+// is written for the first two, because this device then holds a version the
+// peer does not have and the user has to say what should happen to it. The
+// third needs none: the peer keeps both versions and sends the copy here.
+func (p *Puller) conflictKept(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item) error {
+	p.log.Warn("conflict: both versions are kept", "folder", f.ID, "path", item.Path,
+		"reason", item.Reason)
+	if item.Reason == syncplan.ReasonBothModified {
+		p.publish("sync.conflict", map[string]any{
+			"folder_id": string(f.ID), "path": item.Path, "reason": item.Reason,
+			"peer_id": string(peer), "conflict_path": "",
+		})
+		return nil
+	}
+	return p.recordConflict(ctx, f, peer, item, "")
+}
+
+// recordConflict writes the conflict row behind `syncthis conflict list` and
+// publishes the event. The row is identified by what diverged, so a conflict
+// the sync plan reports once per cycle updates one row instead of adding one.
+func (p *Puller) recordConflict(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item, conflictPath string) error {
+	var local, remote manifest.Hash
+	if item.Local != nil {
+		local = item.Local.Hash
+	}
+	if item.Remote != nil {
+		remote = item.Remote.Hash
+	}
+	record := ports.ConflictRecord{
+		ID:           conflict.RecordID(f.ID, item.Path, local, remote, peer),
+		FolderID:     f.ID,
+		Path:         item.Path,
+		ConflictPath: conflictPath,
+		LocalHash:    local,
+		RemoteHash:   remote,
+		PeerID:       peer,
+		DetectedAt:   p.clock.Now(),
+		Reason:       item.Reason,
+	}
+	if err := p.store.SaveConflict(ctx, record); err != nil {
+		return fmt.Errorf("record conflict on %q: %w", item.Path, err)
+	}
+	p.log.Warn("conflict recorded", "folder", f.ID, "path", item.Path,
+		"reason", item.Reason, "conflict_path", conflictPath, "conflict", record.ID)
+	p.publish("sync.conflict", map[string]any{
+		"folder_id": string(f.ID), "path": item.Path, "reason": item.Reason,
+		"peer_id": string(peer), "conflict_id": record.ID, "conflict_path": conflictPath,
+	})
+	return nil
+}

@@ -20,6 +20,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
+	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
 	"github.com/wesbragagt/syncthis/internal/app/peers"
@@ -76,6 +77,8 @@ type App struct {
 	// Transfers reads the transfer journal for `transfer list` and
 	// `transfer show`.
 	Transfers *transfers.Service
+	// Conflicts reads and resolves what the puller recorded as diverged.
+	Conflicts *conflicts.Service
 	// Control talks to the daemon owning this data directory. Its calls
 	// fail with ports.ErrDaemonUnavailable when no daemon is running.
 	Control *daemon.Client
@@ -186,18 +189,20 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 
 	fs := localfs.New()
 	clock := sysclock.New()
+	hasher := blake3hash.New()
 	app := &App{
 		DataDir:   dir,
 		Config:    cfg,
 		Store:     store,
 		FS:        fs,
-		Hasher:    blake3hash.New(),
+		Hasher:    hasher,
 		Clock:     clock,
 		Identity:  identity,
 		Events:    events,
 		Logger:    logger,
 		Folders:   folders.New(store, fs, clock),
 		Transfers: transfers.New(store),
+		Conflicts: conflicts.New(store, fs, hasher),
 		Control:   daemon.NewClient(unixctl.NewClient(ControlSocketPath(dir))),
 	}
 	if identity != nil {

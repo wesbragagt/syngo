@@ -516,23 +516,45 @@ func TestSync_SetsSyncedHashWhenInSync(t *testing.T) {
 }
 
 func TestSync_LocalChangeIsNeverOverwritten(t *testing.T) {
-	src := newSource(t, folder.ModeSendReceive)
-	src.addFile(t, "a.txt", []byte("the peer's version"))
+	// Which version keeps the path depends on the content, so the local
+	// change is followed through both outcomes: it is either still at the
+	// path, or beside it under a conflict name. It is never gone.
+	for _, tc := range []struct {
+		name  string
+		local []byte
+	}{
+		{"the local version keeps the path", []byte("local version A")},
+		{"the local version is moved aside", []byte("local version B")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := newSource(t, folder.ModeSendReceive)
+			src.addFile(t, "a.txt", []byte("the peer's version"))
 
-	d, conn := newDest(t, src.server)
-	local := []byte("the version the user is editing")
-	d.record(t, "a.txt", local, d.hasher.SumBytes([]byte("the version both sides had")))
+			d, conn := newDest(t, src.server)
+			d.record(t, "a.txt", tc.local, d.hasher.SumBytes([]byte("the version both sides had")))
 
-	summary := d.sync(t, conn)
-	if summary.Conflicts != 1 || summary.Pulled != 0 {
-		t.Fatalf("summary = %+v, want one conflict and no pull", summary)
+			summary := d.sync(t, conn)
+			if summary.Conflicts != 1 || summary.Pulled != 0 {
+				t.Fatalf("summary = %+v, want one conflict and no plain pull", summary)
+			}
+			if !holdsContent(d, tc.local) {
+				t.Fatalf("the local version is gone from %v", d.fs.Paths())
+			}
+			if d.events.Count("sync.conflict") != 1 {
+				t.Fatal("no conflict event was published")
+			}
+		})
 	}
-	if got := d.content(t, "a.txt"); string(got) != string(local) {
-		t.Fatalf("local file = %q, want it untouched", got)
+}
+
+// holdsContent reports whether any file of the destination folder holds data.
+func holdsContent(d *dest, data []byte) bool {
+	for _, p := range d.fs.Paths() {
+		if got, ok := d.fs.Content(p); ok && string(got) == string(data) {
+			return true
+		}
 	}
-	if d.events.Count("sync.conflict") != 1 {
-		t.Fatal("no conflict event was published")
-	}
+	return false
 }
 
 func TestSync_DeleteIsPropagatedOnlyWhenTheLocalCopyIsUnchanged(t *testing.T) {

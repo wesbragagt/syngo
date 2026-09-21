@@ -40,6 +40,9 @@ func writeVersion1DB(t *testing.T) string {
 		 VALUES ('docs', '/srv/docs', '', 'sendreceive', 'propagate', 0, 'store', 1, 0, '', 1)`,
 		`INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, sequence, updated_at)
 		 VALUES ('docs', 'a.txt', 1, 5, 42, 420, '` + testHash + `', 1, 1)`,
+		`INSERT INTO conflicts (id, folder_id, rel_path, conflict_path, local_hash, remote_hash,
+			peer_id, detected_at, resolved)
+		 VALUES ('c1', 'docs', 'a.txt', 'a.copy.txt', '` + testHash + `', '', 'PEERID', 7, 0)`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("prepare version 1 database: %v", err)
@@ -76,6 +79,18 @@ func TestOpen_MigratesAVersion1DatabaseAndKeepsItsRows(t *testing.T) {
 	// The column migration 002 adds defaults to "no baseline".
 	if entry.SyncedMode != 0 {
 		t.Fatalf("synced_mode = %d, want 0 for a row that predates the column", entry.SyncedMode)
+	}
+
+	conflict, err := store.GetConflict(ctx, "c1")
+	if err != nil {
+		t.Fatalf("conflict after the migration: %v", err)
+	}
+	if conflict.Path != "a.txt" || conflict.ConflictPath != "a.copy.txt" || conflict.Resolved {
+		t.Fatalf("conflict = %+v, want the row written before the migration", conflict)
+	}
+	// The column migration 003 adds defaults to "not recorded".
+	if conflict.Reason != "" {
+		t.Fatalf("reason = %q, want it empty for a row that predates the column", conflict.Reason)
 	}
 
 	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {

@@ -50,7 +50,7 @@ type Summary struct {
 // time. It owns the transfer journal: every chunk it verifies is recorded, so
 // an interrupted download resumes instead of starting over.
 type Puller struct {
-	store     Store
+	store     PullStore
 	fs        ports.FileSystem
 	hasher    ports.Hasher
 	clock     ports.Clock
@@ -67,6 +67,13 @@ type Puller struct {
 	resumed map[transfer.ID]bool
 }
 
+// PullStore is the persistence a puller writes to: everything a server needs,
+// plus the conflicts it records when both sides changed a path.
+type PullStore interface {
+	Store
+	ports.ConflictStore
+}
+
 // PullerConfig tunes a puller. Zero fields take the defaults.
 type PullerConfig struct {
 	ChunkSize   int
@@ -74,7 +81,7 @@ type PullerConfig struct {
 }
 
 // NewPuller returns a puller writing through fsys.
-func NewPuller(store Store, fsys ports.FileSystem, hasher ports.Hasher, clock ports.Clock,
+func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, clock ports.Clock,
 	events ports.EventSink, cfg PullerConfig, log *slog.Logger) *Puller {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -123,10 +130,12 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		if item.Action == syncplan.ActionPull || isFileReplace(item) {
+		if item.Action == syncplan.ActionPull || isFileReplace(item) || needsRemoteContent(item) {
 			// A file that replaces a directory is downloaded like any
 			// other file, and the directory only goes once the plan
-			// emptied it, which is after this loop.
+			// emptied it, which is after this loop. A conflict whose
+			// keep-both outcome needs the peer's bytes is downloaded
+			// there too.
 			pulls = append(pulls, item)
 			continue
 		}
@@ -243,12 +252,7 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 
 	case syncplan.ActionConflict:
 		summary.Conflicts++
-		p.log.Warn("conflict left to the user", "folder", f.ID, "path", item.Path, "reason", item.Reason)
-		p.publish("sync.conflict", map[string]any{
-			"folder_id": string(f.ID), "path": item.Path, "reason": item.Reason,
-			"peer_id": string(peer),
-		})
-		return nil
+		return p.conflictKept(ctx, f, peer, item)
 
 	default:
 		summary.Skipped++
@@ -351,7 +355,11 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 			switch {
 			case err == nil:
 				mu.Lock()
-				summary.Pulled++
+				if item.Action == syncplan.ActionConflict {
+					summary.Conflicts++
+				} else {
+					summary.Pulled++
+				}
 				summary.Bytes += bytes
 				mu.Unlock()
 			case errors.Is(err, ports.ErrPaused):
@@ -417,22 +425,14 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		return 0, err
 	}
 
-	expect := item.Local
-	if item.Action == syncplan.ActionReplace {
-		// The directory the file takes the place of goes now, with the
-		// downloaded content ready, so the path is uncovered as briefly
-		// as possible.
-		if err := p.installer.RemoveReplaced(ctx, f.Path, item.Path, item.Local); err != nil {
-			return 0, p.stopped(ctx, t, err)
-		}
-		expect = nil
-	}
-	entry, err := p.installer.Install(ctx, f.Path, t, expect)
+	entries, err := p.install(ctx, f, conn.RemoteID(), item, t)
 	if err != nil {
 		return 0, p.stopped(ctx, t, err)
 	}
-	if err := p.record(ctx, f.ID, entry, conn.RemoteID()); err != nil {
-		return 0, err
+	for _, entry := range entries {
+		if err := p.record(ctx, f.ID, entry, conn.RemoteID()); err != nil {
+			return 0, err
+		}
 	}
 	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateDone, "", p.clock.Now()); err != nil {
 		return 0, err
@@ -448,6 +448,31 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		"transfer_id": string(t.ID), "folder_id": string(f.ID), "path": t.Path, "size": t.Size,
 	})
 	return t.Size, nil
+}
+
+// install puts a finished download in its place and returns the entries that
+// now describe the folder. A conflict keeps the local version as well, so it
+// is the only case that returns two.
+func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item, t transfer.Transfer) ([]manifest.Entry, error) {
+	if item.Action == syncplan.ActionConflict {
+		return p.keepBoth(ctx, f, peer, item, t)
+	}
+	expect := item.Local
+	if item.Action == syncplan.ActionReplace {
+		// The directory the file takes the place of goes now, with the
+		// downloaded content ready, so the path is uncovered as briefly
+		// as possible.
+		if err := p.installer.RemoveReplaced(ctx, f.Path, item.Path, item.Local); err != nil {
+			return nil, err
+		}
+		expect = nil
+	}
+	entry, err := p.installer.Install(ctx, f.Path, t, expect)
+	if err != nil {
+		return nil, err
+	}
+	return []manifest.Entry{entry}, nil
 }
 
 // transferFor returns the journal entry to continue, or starts a new one. A

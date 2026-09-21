@@ -90,3 +90,51 @@ func TestConflicts_SaveAndList(t *testing.T) {
 		t.Fatalf("all = %+v, want one resolved conflict", all)
 	}
 }
+
+func TestConflicts_GetAndResolve(t *testing.T) {
+	ctx := context.Background()
+	store := storeWithFolder(t)
+
+	rec := ports.ConflictRecord{
+		ID: "c1", FolderID: "docs", Path: "a.txt",
+		ConflictPath: "a.sync-conflict-20260921-153000-ABCDEFG.txt",
+		LocalHash:    hashOf(1), RemoteHash: hashOf(2), PeerID: "PEERID", DetectedAt: testTime,
+		Reason: "both-modified",
+	}
+	if err := store.SaveConflict(ctx, rec); err != nil {
+		t.Fatalf("SaveConflict error: %v", err)
+	}
+
+	got, err := store.GetConflict(ctx, "c1")
+	if err != nil {
+		t.Fatalf("GetConflict error: %v", err)
+	}
+	if got != rec {
+		t.Fatalf("conflict = %+v, want %+v", got, rec)
+	}
+
+	if err := store.SetConflictResolved(ctx, "c1", true); err != nil {
+		t.Fatalf("SetConflictResolved error: %v", err)
+	}
+	got, err = store.GetConflict(ctx, "c1")
+	if err != nil {
+		t.Fatalf("GetConflict error: %v", err)
+	}
+	if !got.Resolved || got.Reason != "both-modified" {
+		t.Fatalf("conflict = %+v, want it resolved and its reason kept", got)
+	}
+	// Resolving is reversible, so a mistake can be taken back.
+	if err := store.SetConflictResolved(ctx, "c1", false); err != nil {
+		t.Fatalf("SetConflictResolved error: %v", err)
+	}
+	if got, err = store.GetConflict(ctx, "c1"); err != nil || got.Resolved {
+		t.Fatalf("conflict = %+v (%v), want it open again", got, err)
+	}
+
+	if _, err := store.GetConflict(ctx, "nope"); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("GetConflict of an unknown id = %v, want ErrNotFound", err)
+	}
+	if err := store.SetConflictResolved(ctx, "nope", true); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("SetConflictResolved of an unknown id = %v, want ErrNotFound", err)
+	}
+}

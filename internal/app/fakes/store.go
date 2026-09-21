@@ -503,6 +503,31 @@ func (s *Store) SaveConflict(_ context.Context, c ports.ConflictRecord) error {
 	return nil
 }
 
+// GetConflict returns one conflict, or ports.ErrNotFound.
+func (s *Store) GetConflict(_ context.Context, id string) (ports.ConflictRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.conflicts {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return ports.ConflictRecord{}, fmt.Errorf("conflict %q: %w", id, ports.ErrNotFound)
+}
+
+// SetConflictResolved marks a conflict as dealt with, or as open again.
+func (s *Store) SetConflictResolved(_ context.Context, id string, resolved bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, c := range s.conflicts {
+		if c.ID == id {
+			s.conflicts[i].Resolved = resolved
+			return nil
+		}
+	}
+	return fmt.Errorf("conflict %q: %w", id, ports.ErrNotFound)
+}
+
 // ListConflicts returns conflicts for a folder, or for all folders when id is empty.
 func (s *Store) ListConflicts(_ context.Context, id folder.ID, includeResolved bool) ([]ports.ConflictRecord, error) {
 	s.mu.Lock()
