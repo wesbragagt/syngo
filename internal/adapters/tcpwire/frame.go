@@ -65,6 +65,12 @@ func (t MsgType) String() string {
 // length prefix itself.
 const MaxFrame = 64 << 20
 
+// MaxHelloFrame is the largest frame accepted before the Hello exchange has
+// finished. Anyone who can complete a TLS handshake can send frames, so what a
+// peer may make this device allocate before it has proved who it is stays
+// small; a Hello is a few hundred bytes.
+const MaxHelloFrame = 64 << 10
+
 // frameOverhead is the type byte plus the header length field.
 const frameOverhead = 1 + 4
 
@@ -107,14 +113,17 @@ func WriteFrame(w io.Writer, f Frame) error {
 // ReadFrame reads one frame. A frame larger than MaxFrame fails with
 // ErrFrameTooLarge without reading its body; a truncated frame fails with
 // io.ErrUnexpectedEOF. A clean close before any byte yields io.EOF.
-func ReadFrame(r io.Reader) (Frame, error) {
+func ReadFrame(r io.Reader) (Frame, error) { return readFrameLimit(r, MaxFrame) }
+
+// readFrameLimit reads one frame no larger than limit.
+func readFrameLimit(r io.Reader, limit uint32) (Frame, error) {
 	var prefix [4]byte
 	if _, err := io.ReadFull(r, prefix[:]); err != nil {
 		return Frame{}, err
 	}
 	body := binary.BigEndian.Uint32(prefix[:])
 	switch {
-	case body > MaxFrame:
+	case body > limit:
 		return Frame{}, fmt.Errorf("%w: %d bytes", ErrFrameTooLarge, body)
 	case body < frameOverhead:
 		return Frame{}, fmt.Errorf("%w: body of %d bytes", ErrMalformedFrame, body)

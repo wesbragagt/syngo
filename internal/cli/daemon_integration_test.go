@@ -366,9 +366,16 @@ func TestPauseResume_ViaCLIReflectedInStatus(t *testing.T) {
 		t.Fatalf("state = %q, want paused", report.Folders[0].State)
 	}
 
-	// A paused folder is not scanned, so the file stays invisible.
+	// A paused folder is not scanned, so the file stays invisible. Two
+	// rescan requests are what gives the daemon its chance: each is a
+	// round trip to the control socket, and the folder loop takes the
+	// queued request and skips it because the folder is paused.
 	write(t, e, "hidden.txt", "x")
-	time.Sleep(700 * time.Millisecond)
+	for range 2 {
+		if code, _, stderr := e.run("", "rescan", "docs"); code != cli.ExitOK {
+			t.Fatalf("rescan exit = %d (stderr %q)", code, stderr)
+		}
+	}
 	if files := status(t, e).Folders[0].Files; files != 0 {
 		t.Fatalf("files = %d while paused, want 0", files)
 	}

@@ -297,3 +297,45 @@ func TestOpen_UpgradesAnOlderDatabase(t *testing.T) {
 		t.Fatalf("synced mode = %o, want 644 after the upgrade", got)
 	}
 }
+
+// TestOpen_PathWithURICharacters proves a data directory whose name holds a
+// "?" or a "#" gets the database it asked for, with the pragmas applied. The
+// path is part of a file: URI, so an unescaped separator ended it and SQLite
+// opened another database entirely, with none of the settings.
+func TestOpen_PathWithURICharacters(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "we?ird #data%dir")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	dbPath := filepath.Join(dir, "state.db")
+
+	store, err := sqlitestore.Open(ctx, dbPath, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("the database is not at %s: %v", dbPath, err)
+	}
+	mode, err := store.Pragma(ctx, "journal_mode")
+	if err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Fatalf("journal_mode = %q, want wal: the pragmas in the DSN were lost", mode)
+	}
+	timeout, err := store.Pragma(ctx, "busy_timeout")
+	if err != nil {
+		t.Fatalf("read busy_timeout: %v", err)
+	}
+	if timeout != "5000" {
+		t.Fatalf("busy_timeout = %q, want 5000", timeout)
+	}
+
+	// The store still works, which a half-opened database would not.
+	if err := store.SaveFolder(ctx, testFolder("docs", "/home/u/docs")); err != nil {
+		t.Fatalf("SaveFolder error: %v", err)
+	}
+}

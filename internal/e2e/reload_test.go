@@ -1,9 +1,11 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -102,7 +104,17 @@ func TestReload_PeerRemovedWhileTheDaemonsRunIsDisconnected(t *testing.T) {
 	// Nothing written on b after the removal may reach a.
 	writeFile(t, b, "after.txt", payload(1500, 6))
 	waitScanned(t, b, folderID, 2)
-	time.Sleep(10 * testSyncInterval * timeoutScale)
+
+	// a keeps dialling b, and b refuses it now. Waiting for a refusal
+	// reported after the file exists is what says a had its chance: a peer
+	// that was still served would have pulled the file in the same cycle.
+	waitFor(t, "a to be refused by the peer that removed it", convergeTimeout, func() bool {
+		report := a.Status()
+		if len(report.Peers) != 1 || report.Peers[0].Connected || report.Peers[0].Error == nil {
+			return false
+		}
+		return strings.Contains(*report.Peers[0].Error, tcpwire.ReasonUnknownDevice)
+	})
 	if exists(t, a, "after.txt") {
 		t.Fatal("a pulled a file from the peer that removed it")
 	}

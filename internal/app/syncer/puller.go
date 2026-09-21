@@ -65,6 +65,12 @@ type Puller struct {
 	// once per sync cycle.
 	mu      sync.Mutex
 	resumed map[transfer.ID]bool
+	// gates serializes the sync cycles of one folder. Two peers that share
+	// a folder each run their own cycle, and only one transfer per path
+	// may be live: without this the second cycle gives up the first one's
+	// transfer as "the peer now offers another version" and the two undo
+	// each other's work.
+	gates map[folder.ID]chan struct{}
 }
 
 // PullStore is the persistence a puller writes to: everything a server needs,
@@ -97,6 +103,7 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 		installer: NewInstaller(fsys, hasher),
 		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, log: log,
 		resumed: make(map[transfer.ID]bool),
+		gates:   make(map[folder.ID]chan struct{}),
 	}
 }
 
@@ -108,6 +115,12 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 	if !f.CanReceive() || f.Paused {
 		return summary, nil
 	}
+	release, err := p.lockFolder(ctx, f.ID)
+	if err != nil {
+		return summary, err
+	}
+	defer release()
+
 	// A folder whose root is gone must not be recreated by a sync: doing so
 	// would install files into a directory the user removed.
 	if !p.rootUsable(f) {
@@ -164,6 +177,25 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		"pulled", summary.Pulled, "deleted", summary.Deleted, "modes", summary.Modes,
 		"conflicts", summary.Conflicts, "failed", summary.Failed, "bytes", summary.Bytes)
 	return summary, nil
+}
+
+// lockFolder waits until no other cycle is syncing the folder and returns the
+// function that lets the next one in.
+func (p *Puller) lockFolder(ctx context.Context, id folder.ID) (func(), error) {
+	p.mu.Lock()
+	gate, ok := p.gates[id]
+	if !ok {
+		gate = make(chan struct{}, 1)
+		p.gates[id] = gate
+	}
+	p.mu.Unlock()
+
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // pausedNow re-reads the paused flag of a folder, so a pause that arrives
@@ -680,7 +712,12 @@ func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Tran
 // the next cycle continues where this one stopped.
 func (p *Puller) stopped(ctx context.Context, t transfer.Transfer, cause error) error {
 	if ctx.Err() != nil {
-		// A cancelled transfer keeps its journal and its partial file.
+		// A cancelled transfer keeps its journal and its partial file,
+		// but not the note that this process already re-verified it:
+		// the cancellation may have stopped a write halfway, and a
+		// transfer nothing picks up again would leave the note behind
+		// for as long as the process runs.
+		p.forget(t.ID)
 		return ctx.Err()
 	}
 	if isPerFile(cause) {

@@ -591,3 +591,38 @@ func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
 		t.Fatal("a request after the timeout was answered, so a late reply could have answered it")
 	}
 }
+
+// TestServe_BoundsConcurrentHandshakes proves a flood of connections that
+// never finish their TLS handshake cannot make the listener work on all of
+// them at once: everything before the Hello is work anyone who reaches the
+// port can ask for.
+func TestServe_BoundsConcurrentHandshakes(t *testing.T) {
+	server := newIdentity(t, "server")
+	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln.SetTimeouts(5*time.Second, 5*time.Second)
+
+	const attempts = tcpwire.MaxConcurrentHandshakes + 8
+	for range attempts {
+		conn, err := net.Dial("tcp", ln.Addr())
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		// Nothing is written: every connection stalls in the TLS
+		// handshake, holding a slot until it times out.
+		t.Cleanup(func() { _ = conn.Close() })
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := ln.HandshakesInFlight()
+		switch {
+		case got > tcpwire.MaxConcurrentHandshakes:
+			t.Fatalf("%d handshakes in flight, want at most %d", got, tcpwire.MaxConcurrentHandshakes)
+		case got == tcpwire.MaxConcurrentHandshakes:
+			return
+		case time.Now().After(deadline):
+			t.Fatalf("%d handshakes in flight, want the limit to be reached", got)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}

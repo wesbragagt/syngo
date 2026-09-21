@@ -30,3 +30,11 @@ func (s *Store) DropChunkRowsFrom(ctx context.Context, id transfer.ID, idx int) 
 		`DELETE FROM transfer_chunks WHERE transfer_id = ? AND idx >= ?`, string(id), idx)
 	return err
 }
+
+// Pragma returns the value of a pragma on the connection the store uses, so a
+// test can check that the settings in the DSN reached the database.
+func (s *Store) Pragma(ctx context.Context, name string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `PRAGMA `+name).Scan(&value)
+	return value, err
+}

@@ -17,6 +17,12 @@ import (
 
 var _ ports.Listener = (*Listener)(nil)
 
+// MaxConcurrentHandshakes is how many connections may be in their TLS
+// handshake or Hello exchange at once. Everything before the Hello is work
+// anyone who reaches the port can ask for, so the number of connections doing
+// it is bounded; the rest wait their turn and time out if they have to.
+const MaxConcurrentHandshakes = 32
+
 // Listener accepts peer connections on a bound TCP port.
 type Listener struct {
 	cert tls.Certificate
@@ -25,6 +31,8 @@ type Listener struct {
 
 	handshakeTimeout time.Duration
 	idleTimeout      time.Duration
+	// handshakes holds one token per connection that is handshaking.
+	handshakes chan struct{}
 
 	mu    sync.Mutex
 	conns map[*serverConn]struct{}
@@ -46,6 +54,7 @@ func Listen(cert tls.Certificate, addr string, log *slog.Logger) (*Listener, err
 		ln:               ln,
 		handshakeTimeout: DefaultDialTimeout,
 		idleTimeout:      DefaultIdleTimeout,
+		handshakes:       make(chan struct{}, MaxConcurrentHandshakes),
 		conns:            make(map[*serverConn]struct{}),
 	}, nil
 }
@@ -169,6 +178,18 @@ func (l *Listener) handle(ctx context.Context, raw net.Conn, h ports.PeerHandler
 
 	hsCtx, cancel := context.WithTimeout(ctx, l.handshakeTimeout)
 	defer cancel()
+
+	// The slot is held for the handshake and the Hello only, so a peer
+	// that is connected does not keep one.
+	select {
+	case l.handshakes <- struct{}{}:
+	case <-hsCtx.Done():
+		l.log.Debug("no handshake slot in time", "remote", raw.RemoteAddr().String())
+		return
+	}
+	release := sync.OnceFunc(func() { <-l.handshakes })
+	defer release()
+
 	if err := conn.HandshakeContext(hsCtx); err != nil {
 		l.log.Debug("tls handshake failed", "remote", raw.RemoteAddr().String(), "error", err)
 		return
@@ -187,6 +208,7 @@ func (l *Listener) handle(ctx context.Context, raw net.Conn, h ports.PeerHandler
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
+	release()
 
 	// The Hello is answered before the device is checked on purpose: an
 	// unpaired peer running `peer add` against us learns our identity from

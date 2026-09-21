@@ -36,7 +36,9 @@ func exchangeHello(conn net.Conn, local ports.HelloInfo, peerID device.ID) (port
 		return ports.HelloInfo{}, err
 	}
 
-	received, err := ReadFrame(conn)
+	// The peer has not proved who it is yet, so what it may make this side
+	// allocate is bounded well below the frame size of a live connection.
+	received, err := readFrameLimit(conn, MaxHelloFrame)
 	if err != nil {
 		return ports.HelloInfo{}, fmt.Errorf("read hello: %w", err)
 	}

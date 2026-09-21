@@ -73,7 +73,21 @@ func dsn(path string) string {
 	// upgrades from read to write fails immediately with SQLITE_BUSY instead
 	// of waiting for busy_timeout.
 	q.Set("_txlock", "immediate")
-	return "file:" + path + "?" + q.Encode()
+	// The path is part of a URI, so a "?" or a "#" in a directory name
+	// would otherwise end it: the database would be opened somewhere else
+	// and none of the pragmas above would reach it. The separators stay as
+	// they are, everything else is escaped.
+	return "file:" + escapePath(path) + "?" + q.Encode()
+}
+
+// escapePath percent-encodes a filesystem path for use in a file: URI,
+// leaving the path separators alone.
+func escapePath(path string) string {
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 // Close releases the database handles.
