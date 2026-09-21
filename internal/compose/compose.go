@@ -132,6 +132,11 @@ func Init(ctx context.Context, o Options, settings InitSettings) (*App, bool, er
 	if err != nil {
 		return nil, false, err
 	}
+	if settings.Listen != "" {
+		if err := tcpwire.ValidateListen(settings.Listen); err != nil {
+			return nil, false, err
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, false, fmt.Errorf("create data dir %s: %w", dir, err)
 	}
@@ -145,12 +150,15 @@ func Init(ctx context.Context, o Options, settings InitSettings) (*App, bool, er
 	if err != nil {
 		return nil, false, err
 	}
-	updated := cfg
-	updated.DeviceName = identity.Name()
-	if settings.Listen != "" {
-		updated.Listen = settings.Listen
-	}
-	if created || updated != cfg {
+	// The settings only describe a device being created. An initialized
+	// data directory keeps the configuration it has, so running init again
+	// reports the identity and changes nothing.
+	if created {
+		updated := cfg
+		updated.DeviceName = identity.Name()
+		if settings.Listen != "" {
+			updated.Listen = settings.Listen
+		}
 		if err := jsonconfig.Save(dir, updated); err != nil {
 			return nil, false, err
 		}

@@ -128,6 +128,64 @@ func TestInit_IsIdempotent(t *testing.T) {
 	}
 }
 
+// TestInit_RejectsAListenAddressWithoutAPort covers both directories a user
+// may run it in: the address is checked before anything is written, so the
+// mistake is reported as a usage error rather than by the daemon much later.
+func TestInit_RejectsAListenAddressWithoutAPort(t *testing.T) {
+	fresh := newEnv(t)
+	if code, _, _ := fresh.run("", "init", "--listen", "nonsense"); code != cli.ExitUsage {
+		t.Fatalf("init on a fresh directory exit = %d, want %d", code, cli.ExitUsage)
+	}
+	if _, err := os.Stat(filepath.Join(fresh.dataDir, "identity.key")); !os.IsNotExist(err) {
+		t.Fatalf("the refused init left an identity behind: %v", err)
+	}
+
+	initialized := newEnv(t)
+	initialized.init(t)
+	if code, _, _ := initialized.run("", "init", "--listen", "nonsense"); code != cli.ExitUsage {
+		t.Fatalf("init on an initialized directory exit = %d, want %d", code, cli.ExitUsage)
+	}
+}
+
+// TestInit_OnAnInitializedDirectoryChangesNothing checks what the docs
+// promise: a second init reports the identity and leaves the configuration,
+// including the listen address, exactly as it was.
+func TestInit_OnAnInitializedDirectoryChangesNothing(t *testing.T) {
+	e := newEnv(t)
+	if code, _, stderr := e.run("", "init", "--name", "first", "--listen", "127.0.0.1:23001"); code != cli.ExitOK {
+		t.Fatalf("init exit = %d (stderr: %s)", code, stderr)
+	}
+	config := filepath.Join(e.dataDir, "config.json")
+	before, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+
+	code, stdout, stderr := e.run("", "init", "--name", "second", "--listen", "127.0.0.1:23002", "--json")
+	if code != cli.ExitOK {
+		t.Fatalf("second init exit = %d (stderr: %s)", code, stderr)
+	}
+	var result struct {
+		Name    string `json:"name"`
+		Listen  string `json:"listen"`
+		Created bool   `json:"created"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("init output is not json: %v\n%s", err, stdout)
+	}
+	if result.Created || result.Name != "first" || result.Listen != "127.0.0.1:23001" {
+		t.Fatalf("second init reported %+v, want the first name and listen address with created:false", result)
+	}
+
+	after, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatalf("read config.json again: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("config.json changed:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
 func TestFolderAddListRemove_Text(t *testing.T) {
 	e := newEnv(t)
 	e.init(t)

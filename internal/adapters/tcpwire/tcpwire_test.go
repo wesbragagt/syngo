@@ -366,6 +366,19 @@ func TestResolveListen_RejectsPublicWithoutFlag(t *testing.T) {
 	}
 }
 
+func TestValidateListen_RequiresHostAndPort(t *testing.T) {
+	for _, addr := range []string{"nonsense", "127.0.0.1", ""} {
+		if err := tcpwire.ValidateListen(addr); !errors.Is(err, tcpwire.ErrListenAddress) {
+			t.Fatalf("ValidateListen(%q) = %v, want ErrListenAddress", addr, err)
+		}
+	}
+	for _, addr := range []string{"127.0.0.1:22000", ":22000", "[::1]:0"} {
+		if err := tcpwire.ValidateListen(addr); err != nil {
+			t.Fatalf("ValidateListen(%q) = %v, want nil", addr, err)
+		}
+	}
+}
+
 func TestResolveListen_LoopbackInterface(t *testing.T) {
 	if _, err := net.InterfaceByName("lo"); err != nil {
 		t.Skipf("no lo interface: %v", err)

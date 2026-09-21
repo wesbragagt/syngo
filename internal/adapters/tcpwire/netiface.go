@@ -18,21 +18,32 @@ var ErrListenAddress = errors.New("invalid listen address")
 // treated as private: reaching them already requires being on the tailnet.
 var tailscaleRange = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
+// ValidateListen reports whether addr has the host:port shape a listener can
+// be bound to. It says nothing about whether the address exists or is public;
+// only ResolveListen answers that, and only when the daemon starts.
+func ValidateListen(addr string) error {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("%w: %q must be host:port: %v", ErrListenAddress, addr, err)
+	}
+	return nil
+}
+
 // ResolveListen turns the configured listen address and interface name into
 // the address to bind. A non-empty iface replaces the host with the first IPv4
 // address of that interface. Unless allowPublic is set, the result must be a
 // loopback, private or Tailscale address; a wildcard bind counts as public.
 func ResolveListen(listen, iface string, allowPublic bool) (string, error) {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return "", fmt.Errorf("%w: %q must be host:port: %v", ErrListenAddress, listen, err)
+	if err := ValidateListen(listen); err != nil {
+		return "", err
 	}
+	host, port, _ := net.SplitHostPort(listen)
 
 	if iface != "" {
-		host, err = firstIPv4(iface)
+		resolved, err := firstIPv4(iface)
 		if err != nil {
 			return "", err
 		}
+		host = resolved
 	}
 	if allowPublic {
 		return net.JoinHostPort(host, port), nil
