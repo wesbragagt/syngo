@@ -915,3 +915,27 @@ func peerConnected(t *testing.T, h *harness) bool {
 	}
 	return report.Peers[0].Connected
 }
+
+func TestReload_SyncsEveryConnectedPeerAtOnce(t *testing.T) {
+	const peerID = device.ID("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+	// An hour of sync interval: only the reload can make the next cycle
+	// happen, which is what a local `folder set` needs.
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: time.Hour, SyncInterval: time.Hour},
+		[]device.Device{testPeer(peerID, "nas:22000")}, testFolder("docs", false))
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe:   ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+		Handler: folderAnnouncer{store: h.store},
+	})
+
+	// The cycle that runs on connect is the one to wait for; the reload
+	// has to add another.
+	waitFor(t, "the sync cycle that follows the connection", func() bool {
+		return len(h.syncer.syncedFolders()) == 1
+	})
+
+	h.reload(t)
+
+	waitFor(t, "a sync cycle triggered by the reload", func() bool {
+		return len(h.syncer.syncedFolders()) >= 2
+	})
+}

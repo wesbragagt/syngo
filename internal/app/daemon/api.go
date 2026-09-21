@@ -144,7 +144,9 @@ func (d *Daemon) Repair(ctx context.Context, id folder.ID, dryRun bool) (repair.
 
 // Reload re-reads the folder and device tables: it starts and stops folder
 // loops, dials peers that were added, drops peers that were removed, and tells
-// the peers that are connected which folders this device serves now. It is
+// the peers that are connected which folders this device serves now. It ends
+// with a sync cycle against every connected peer, so a folder that was just
+// given another mode is acted on now rather than at the next sync tick. It is
 // what the CLI calls after it has changed one of those tables, so a running
 // daemon does not have to wait for its next rescan tick.
 func (d *Daemon) Reload(ctx context.Context) error {
@@ -152,6 +154,9 @@ func (d *Daemon) Reload(ctx context.Context) error {
 		return err
 	}
 	d.announceFolders(ctx)
+	for _, loop := range d.peersSnapshot() {
+		loop.requestSync()
+	}
 	return nil
 }
 

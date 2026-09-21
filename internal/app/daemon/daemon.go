@@ -401,6 +401,17 @@ func (d *Daemon) live() *status.LiveInfo {
 	}
 }
 
+// peersSnapshot returns every running peer loop.
+func (d *Daemon) peersSnapshot() []*peerLoop {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]*peerLoop, 0, len(d.peers))
+	for _, loop := range d.peers {
+		out = append(out, loop)
+	}
+	return out
+}
+
 // loop returns the running loop of a folder.
 func (d *Daemon) loop(id folder.ID) (*folderLoop, bool) {
 	d.mu.Lock()

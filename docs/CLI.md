@@ -119,8 +119,9 @@ With `--json` it prints an array of the object `folder add` returns.
 
 Changes the mode or the delete policy of a configured folder and prints the
 folder in the shape `folder add` uses. At least one of the two flags is
-required, otherwise the command exits 2. A running daemon picks the new setting
-up at its next scan and sync cycle.
+required, otherwise the command exits 2. A running daemon is asked to reload,
+so it applies the new setting to its connected peers right away; see
+[Lifecycle](#lifecycle).
 
 ```console
 $ syncthis folder set docs --mode sendonly
@@ -296,8 +297,9 @@ The folder and device tables are read when the daemon starts and again at every
 rescan interval. `folder add`, `folder set`, `folder remove`, `peer add` and
 `peer remove` do not wait for that tick: each asks the running daemon to reload
 over the control socket, which starts and stops folder loops, dials peers that
-were added, drops peers that were removed, and announces the new folder list to
-the peers that are already connected. Without a daemon the commands say nothing
+were added, drops peers that were removed together with the connections those
+peers had opened, announces the new folder list to the peers that are already
+connected, and runs a sync cycle against each of them. Without a daemon the commands say nothing
 and only write the database. The daemon never has to be restarted for a
 configuration change.
 

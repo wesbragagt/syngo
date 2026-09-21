@@ -27,11 +27,24 @@ type peerLoop struct {
 	peer   device.Device
 	cancel context.CancelFunc
 	done   chan struct{}
+	// syncs carries "run a cycle now" requests, which a reload makes after
+	// a local change. It is buffered so a request never blocks the caller;
+	// a second one while a request is queued is redundant and dropped.
+	syncs chan struct{}
 }
 
 // newPeerLoop returns a loop for a peer. Call start to run it.
 func newPeerLoop(d *Daemon, peer device.Device) *peerLoop {
-	return &peerLoop{daemon: d, peer: peer, done: make(chan struct{})}
+	return &peerLoop{daemon: d, peer: peer, done: make(chan struct{}), syncs: make(chan struct{}, 1)}
+}
+
+// requestSync asks for a sync cycle as soon as the peer is connected, instead
+// of at the next tick. It never blocks.
+func (l *peerLoop) requestSync() {
+	select {
+	case l.syncs <- struct{}{}:
+	default:
+	}
 }
 
 // start runs the loop in its own goroutine.
@@ -112,6 +125,10 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 			return
 		case id := <-conn.Notifications():
 			if !l.syncCheck(ctx, conn, id, log) {
+				return
+			}
+		case <-l.syncs:
+			if !l.syncCheck(ctx, conn, "", log) {
 				return
 			}
 		case <-syncs.C:
