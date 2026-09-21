@@ -82,9 +82,14 @@ func codeOf(err error) int {
 		return ExitDaemonUnavailable
 	case errors.Is(err, ports.ErrPeerUnreachable), errors.Is(err, ports.ErrDeviceMismatch):
 		return ExitPeerUnreachable
-	case errors.Is(err, conflicts.ErrVersionGone):
-		// Neither file holds the version the user asked to keep any more.
+	case errors.Is(err, conflicts.ErrVersionGone), errors.Is(err, conflicts.ErrChanged):
+		// Neither file holds the version the user asked to keep any
+		// more, or a file the resolution would have deleted holds
+		// content neither side had.
 		return ExitIntegrity
+	case errors.Is(err, conflicts.ErrAlreadyResolved):
+		// There is no open conflict under that id any more.
+		return ExitNotFound
 	case errors.Is(err, peers.ErrNotConfirmed):
 		return ExitConfirmationRequired
 	case errors.Is(err, peers.ErrInvalidAddress), errors.Is(err, peers.ErrSelf):

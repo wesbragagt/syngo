@@ -30,6 +30,9 @@ type conflictView struct {
 	PeerID       string  `json:"peer_id"`
 	DetectedAt   *string `json:"detected_at"`
 	Resolved     bool    `json:"resolved"`
+	// Stale reports that neither recorded version is on disk in a state
+	// that could be kept, so only --keep both can close the conflict.
+	Stale bool `json:"stale"`
 	// File describes what is at path and Copy what is at conflict_path,
 	// each saying which of the two versions it holds.
 	File *conflictFile `json:"file,omitempty"`
@@ -73,7 +76,7 @@ func conflictViewOf(v conflicts.View) conflictView {
 		ID: v.ID, FolderID: string(v.FolderID), Path: v.Path, ConflictPath: v.ConflictPath,
 		Reason: v.Reason, LocalHash: v.LocalHash.String(), RemoteHash: v.RemoteHash.String(),
 		PeerID: string(v.PeerID), DetectedAt: timestamp(v.DetectedAt), Resolved: v.Resolved,
-		File: conflictFileOf(v, v.File), Copy: conflictFileOf(v, v.Copy),
+		Stale: v.Stale, File: conflictFileOf(v, v.File), Copy: conflictFileOf(v, v.Copy),
 	}
 }
 
@@ -158,11 +161,12 @@ func newConflictListCmd(deps *Deps) *cobra.Command {
 				rows = append(rows, []string{
 					v.ID, string(v.FolderID), v.Path, v.Reason, conflictCopy(v),
 					v.PeerID.Short(), v.DetectedAt.UTC().Format(time.RFC3339),
-					boolWord(v.Resolved),
+					boolWord(v.Resolved), boolWord(v.Stale),
 				})
 			}
 			return deps.printer().Table(
-				[]string{"ID", "FOLDER", "PATH", "REASON", "COPY", "PEER", "DETECTED", "RESOLVED"}, rows)
+				[]string{"ID", "FOLDER", "PATH", "REASON", "COPY", "PEER", "DETECTED",
+					"RESOLVED", "STALE"}, rows)
 		},
 	}
 
@@ -326,6 +330,7 @@ func printConflict(deps *Deps, v conflicts.View) error {
 	_, _ = fmt.Fprintf(out, "peer:     %s\n", v.PeerID)
 	_, _ = fmt.Fprintf(out, "detected: %s\n", v.DetectedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(out, "resolved: %s\n", boolWord(v.Resolved))
+	_, _ = fmt.Fprintf(out, "stale:    %s\n", boolWord(v.Stale))
 	printVersion(deps, "local", v.LocalHash, v)
 	printVersion(deps, "remote", v.RemoteHash, v)
 	return nil

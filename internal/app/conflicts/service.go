@@ -32,6 +32,15 @@ var (
 	ErrVersionGone = errors.New("the version asked for is no longer on disk")
 	// ErrUnknownKeep reports a --keep value that is not local, remote or both.
 	ErrUnknownKeep = errors.New("unknown version to keep")
+	// ErrChanged reports that a file a resolution would delete or
+	// overwrite no longer holds either of the two versions the conflict
+	// recorded, so carrying the resolution out would throw away content
+	// nobody decided about. Nothing is touched.
+	ErrChanged = errors.New("has changed since the conflict was recorded")
+	// ErrAlreadyResolved reports a conflict that was already decided. It
+	// is not reopened: resolving it again would act on files a later
+	// conflict may own.
+	ErrAlreadyResolved = errors.New("is already resolved")
 )
 
 // Keep names the version a resolution keeps.
@@ -70,6 +79,8 @@ type File struct {
 	Path    string
 	Size    int64
 	ModTime time.Time
+	// Mode is the permission bits the file has, which an export keeps.
+	Mode fs.FileMode
 	// Hash is what the file holds now, which may differ from the hash the
 	// conflict recorded if it was edited since.
 	Hash manifest.Hash
@@ -77,7 +88,8 @@ type File struct {
 
 // View is one conflict as reported to the user. File and Copy are filled in by
 // Show, by Resolve and by Export; a listing leaves them out, because it would
-// have to hash every file to fill them.
+// be a table of hashes nobody asked for, but it does hash both files to say
+// whether the conflict has gone stale.
 type View struct {
 	ID           string
 	FolderID     folder.ID
@@ -96,6 +108,10 @@ type View struct {
 	// resolution goes by content, not by position.
 	File *File
 	Copy *File
+	// Stale reports that neither version can be kept any more, because
+	// what is on disk moved on since the conflict was recorded. Such a
+	// conflict is closed with --keep both, after looking at the files.
+	Stale bool
 }
 
 // Resolution is what a resolve did.
@@ -154,7 +170,12 @@ func (s *Service) List(ctx context.Context, id folder.ID, includeResolved bool) 
 		if err != nil && !errors.Is(err, ports.ErrNotFound) {
 			return nil, err
 		}
-		out = append(out, viewOf(rec, f.Path))
+		// A listing says whether a conflict went stale, which takes
+		// hashing both files, but it does not report the files
+		// themselves: that is what show is for.
+		view := s.described(viewOf(rec, f.Path))
+		view.File, view.Copy = nil, nil
+		out = append(out, view)
 	}
 	return out, nil
 }
@@ -176,6 +197,9 @@ func (s *Service) Resolve(ctx context.Context, id string, keep Keep) (Resolution
 	view, err := s.load(ctx, id)
 	if err != nil {
 		return Resolution{}, err
+	}
+	if view.Resolved {
+		return Resolution{}, fmt.Errorf("conflict %q %w", id, ErrAlreadyResolved)
 	}
 	view = s.described(view)
 	result := Resolution{View: view, Kept: keep}
@@ -207,24 +231,23 @@ func (s *Service) keepOne(view View, keep Keep) (Resolution, error) {
 	if keep == KeepRemote {
 		want = view.RemoteHash
 	}
+	// Nothing is touched before it is clear that every file this would
+	// delete or overwrite still holds a version the conflict recorded.
+	if err := view.check(want); err != nil {
+		return Resolution{}, err
+	}
 
+	switch {
 	// The peer deleted the path: keeping its version means removing the
 	// local file, and there is no copy to put anywhere.
-	if want.IsZero() {
+	case want.IsZero():
 		if view.File == nil {
 			return result, nil
-		}
-		if view.File.Hash != view.LocalHash {
-			return Resolution{}, fmt.Errorf("%s: %w", view.Path, ErrVersionGone)
 		}
 		if err := s.remove(view.FolderPath, view.Path); err != nil {
 			return Resolution{}, err
 		}
 		result.RemovedPath = view.Path
-		return result, nil
-	}
-
-	switch {
 	case view.File != nil && view.File.Hash == want:
 		result.KeptPath = view.Path
 		if view.Copy != nil {
@@ -233,19 +256,62 @@ func (s *Service) keepOne(view View, keep Keep) (Resolution, error) {
 			}
 			result.RemovedPath = view.Copy.Path
 		}
-	case view.Copy != nil && view.Copy.Hash == want:
-		// The rename replaces the other version in one step, so the path
-		// never holds a half-written file.
+	default:
+		// The copy holds the version that wins. The rename replaces the
+		// other version in one step, so the path never holds a
+		// half-written file.
 		if err := s.rename(view.FolderPath, view.Copy.Path, view.Path); err != nil {
 			return Resolution{}, err
 		}
 		result.KeptPath = view.Path
 		result.MovedFrom = view.Copy.Path
 		result.RemovedPath = view.Copy.Path
-	default:
-		return Resolution{}, fmt.Errorf("%s: %w", view.Path, ErrVersionGone)
 	}
 	return result, nil
+}
+
+// check reports whether keeping the version hashing to want can be carried
+// out. It answers no when no file holds that version any more, and when a file
+// the resolution would delete or overwrite holds something neither side had
+// when the conflict was recorded: that content was never decided about, so it
+// is not thrown away.
+func (v View) check(want manifest.Hash) error {
+	switch {
+	case want.IsZero():
+		// Following the peer's deletion removes whatever is at the path.
+		if v.File != nil && !v.recorded(v.File) {
+			return changedError(v.Path)
+		}
+		return nil
+	case v.File != nil && v.File.Hash == want:
+		// The copy is the file that goes.
+		if v.Copy != nil && !v.recorded(v.Copy) {
+			return changedError(v.Copy.Path)
+		}
+		return nil
+	case v.Copy != nil && v.Copy.Hash == want:
+		// The copy is renamed onto the path, over whatever is there.
+		if v.File != nil && !v.recorded(v.File) {
+			return changedError(v.Path)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s: %w", v.Path, ErrVersionGone)
+	}
+}
+
+// recorded reports whether a file still holds one of the two versions the
+// conflict recorded, which is what makes it safe to delete or overwrite.
+func (v View) recorded(f *File) bool {
+	return (!v.LocalHash.IsZero() && f.Hash == v.LocalHash) ||
+		(!v.RemoteHash.IsZero() && f.Hash == v.RemoteHash)
+}
+
+// changedError reports a file that moved on since the conflict was recorded
+// and says what can still be done about it.
+func changedError(rel string) error {
+	return fmt.Errorf("%s %w: keep both versions with --keep both, or resolve again after looking at the file",
+		rel, ErrChanged)
 }
 
 // Export copies both versions of a conflict into dir, together with a JSON
@@ -258,7 +324,7 @@ func (s *Service) Export(ctx context.Context, id, dir string) (Export, error) {
 	}
 	view = s.described(view)
 	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
-		return Export{}, fmt.Errorf("create %s: %w", dir, err)
+		return Export{}, exportError(dir, fmt.Errorf("create %s: %w", dir, err))
 	}
 
 	out := Export{View: view, Dir: dir, Sidecar: view.ID + ".json"}
@@ -271,8 +337,11 @@ func (s *Service) Export(ctx context.Context, id, dir string) (Export, error) {
 			continue
 		}
 		name := version.side + "-" + path.Base(version.file.Path)
-		if err := s.copy(path.Join(view.FolderPath, version.file.Path), path.Join(dir, name)); err != nil {
-			return Export{}, err
+		// The copy keeps the permission bits of the file it came from,
+		// so an exported script stays runnable and a private file stays
+		// private.
+		if err := s.copy(path.Join(view.FolderPath, version.file.Path), path.Join(dir, name), version.file.Mode); err != nil {
+			return Export{}, exportError(dir, err)
 		}
 		out.Files = append(out.Files, name)
 		sidecar.Files = append(sidecar.Files, exportedFile{
@@ -285,8 +354,8 @@ func (s *Service) Export(ctx context.Context, id, dir string) (Export, error) {
 	if err != nil {
 		return Export{}, fmt.Errorf("describe conflict %q: %w", id, err)
 	}
-	if err := s.write(path.Join(dir, out.Sidecar), data); err != nil {
-		return Export{}, err
+	if err := s.write(path.Join(dir, out.Sidecar), data, 0o644); err != nil {
+		return Export{}, exportError(dir, err)
 	}
 	return out, nil
 }
@@ -304,12 +373,14 @@ func (s *Service) load(ctx context.Context, id string) (View, error) {
 	return viewOf(rec, f.Path), nil
 }
 
-// described fills in what the two files hold now.
+// described fills in what the two files hold now, and whether the conflict
+// went stale because neither version can be kept any more.
 func (s *Service) described(view View) View {
 	view.File = s.describe(view.FolderPath, view.Path)
 	if view.ConflictPath != "" {
 		view.Copy = s.describe(view.FolderPath, view.ConflictPath)
 	}
+	view.Stale = view.check(view.LocalHash) != nil && view.check(view.RemoteHash) != nil
 	return view
 }
 
@@ -334,7 +405,7 @@ func (s *Service) describe(root, rel string) *File {
 	if err != nil || info.IsDir() || info.IsSymlink() {
 		return nil
 	}
-	file := &File{Path: rel, Size: info.Size, ModTime: info.ModTime}
+	file := &File{Path: rel, Size: info.Size, ModTime: info.ModTime, Mode: info.Mode.Perm()}
 	rc, err := s.fs.Open(full)
 	if err != nil {
 		return file
@@ -367,8 +438,9 @@ func (s *Service) rename(root, from, to string) error {
 	return nil
 }
 
-// copy writes the contents of one file to another path.
-func (s *Service) copy(from, to string) error {
+// copy writes the contents of one file to another path, with the permission
+// bits mode.
+func (s *Service) copy(from, to string, mode fs.FileMode) error {
 	rc, err := s.fs.Open(from)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", from, err)
@@ -379,13 +451,14 @@ func (s *Service) copy(from, to string) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", from, err)
 	}
-	return s.write(to, data)
+	return s.write(to, data, mode)
 }
 
-// write creates a file holding data, replacing anything at that path. The
-// bytes reach a temporary file first, so a failure never leaves half a file
-// behind under the final name.
-func (s *Service) write(to string, data []byte) error {
+// write creates a file holding data with the permission bits mode, replacing
+// anything at that path. The bytes reach a temporary file first, so a failure
+// never leaves half a file behind under the final name; the temporary file is
+// created private, so the bits are set before it is visible under its name.
+func (s *Service) write(to string, data []byte, mode fs.FileMode) error {
 	temp, err := s.fs.CreateTemp(path.Dir(to), path.Base(to)+".*")
 	if err != nil {
 		return fmt.Errorf("create %s: %w", to, err)
@@ -402,10 +475,22 @@ func (s *Service) write(to string, data []byte) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", name, err)
 	}
+	if err := s.fs.Chmod(name, mode); err != nil {
+		return fmt.Errorf("set the mode of %s: %w", name, err)
+	}
 	if err := s.fs.Rename(name, to); err != nil {
 		return fmt.Errorf("write %s: %w", to, err)
 	}
 	return nil
+}
+
+// exportError says what to do about an export the filesystem refused, which is
+// most often a directory the user cannot write into.
+func exportError(dir string, err error) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("%w: check that %s can be written to", err, dir)
+	}
+	return err
 }
 
 // sidecar is the JSON document an export writes beside the two copies.

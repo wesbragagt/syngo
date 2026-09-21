@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"path"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,5 +322,164 @@ func TestExport_WritesBothVersionsAndADescription(t *testing.T) {
 	list, err := f.service.List(context.Background(), "docs", false)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list = %+v (%v), want the conflict still open", list, err)
+	}
+}
+
+func TestResolve_KeepLocalRefusesToOverwriteAChangedPath(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	// The path moved on: a later round of edits put content there that
+	// neither side had when this conflict was recorded. Renaming the copy
+	// over it would throw that content away.
+	f.fs.AddFile(root+"/notes/a.txt", []byte("a later round wrote this"), 0o644)
+
+	_, err := f.service.Resolve(ctx, "c1", conflicts.KeepLocal)
+	if !errors.Is(err, conflicts.ErrChanged) {
+		t.Fatalf("resolve = %v, want ErrChanged", err)
+	}
+	if !strings.Contains(err.Error(), "notes/a.txt") {
+		t.Fatalf("error = %q, want it to name the file that changed", err)
+	}
+	if got := f.content(t, "notes/a.txt"); got != "a later round wrote this" {
+		t.Fatalf("notes/a.txt = %q, want it untouched by the refusal", got)
+	}
+	if got := f.content(t, f.record.ConflictPath); got != string(f.local) {
+		t.Fatalf("the copy = %q, want it untouched by the refusal", got)
+	}
+	if len(f.fs.Removes()) != 0 || len(f.fs.Renames()) != 0 {
+		t.Fatalf("removes = %v, renames = %v, want none", f.fs.Removes(), f.fs.Renames())
+	}
+	list, err := f.service.List(ctx, "docs", false)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v (%v), want the conflict still open", list, err)
+	}
+}
+
+func TestResolve_KeepRemoteRefusesToDeleteAChangedCopy(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	// The copy was edited by hand, so it holds neither version. Removing
+	// it would be the only copy of that content gone.
+	f.fs.AddFile(root+"/"+f.record.ConflictPath, []byte("merged by hand"), 0o644)
+
+	_, err := f.service.Resolve(ctx, "c1", conflicts.KeepRemote)
+	if !errors.Is(err, conflicts.ErrChanged) {
+		t.Fatalf("resolve = %v, want ErrChanged", err)
+	}
+	if !strings.Contains(err.Error(), f.record.ConflictPath) {
+		t.Fatalf("error = %q, want it to name the copy that changed", err)
+	}
+	if got := f.content(t, f.record.ConflictPath); got != "merged by hand" {
+		t.Fatalf("the copy = %q, want it untouched by the refusal", got)
+	}
+	if got := f.content(t, "notes/a.txt"); got != string(f.remote) {
+		t.Fatalf("notes/a.txt = %q, want it untouched by the refusal", got)
+	}
+	if len(f.fs.Removes()) != 0 || len(f.fs.Renames()) != 0 {
+		t.Fatalf("removes = %v, renames = %v, want none", f.fs.Removes(), f.fs.Renames())
+	}
+}
+
+func TestResolve_FollowingADeletionRefusesAChangedFile(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	record := f.record
+	record.ID = "c2"
+	record.Path = "notes/deleted.txt"
+	record.ConflictPath = ""
+	record.RemoteHash = manifest.Hash{}
+	record.LocalHash = fakes.NewHasher().SumBytes([]byte("kept here"))
+	record.Reason = "delete-vs-modify"
+	f.fs.AddFile(root+"/notes/deleted.txt", []byte("edited again since"), 0o644)
+	if err := f.store.SaveConflict(ctx, record); err != nil {
+		t.Fatalf("save conflict: %v", err)
+	}
+
+	_, err := f.service.Resolve(ctx, "c2", conflicts.KeepRemote)
+	if !errors.Is(err, conflicts.ErrChanged) {
+		t.Fatalf("resolve = %v, want ErrChanged", err)
+	}
+	if got := f.content(t, "notes/deleted.txt"); got != "edited again since" {
+		t.Fatalf("notes/deleted.txt = %q, want it untouched by the refusal", got)
+	}
+}
+
+func TestResolve_AnAlreadyResolvedConflictIsRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	if _, err := f.service.Resolve(ctx, "c1", conflicts.KeepLocal); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// The copy is gone and the path holds the local version. Resolving
+	// again must not act on whatever sits there now.
+	_, err := f.service.Resolve(ctx, "c1", conflicts.KeepRemote)
+	if !errors.Is(err, conflicts.ErrAlreadyResolved) {
+		t.Fatalf("resolving twice = %v, want ErrAlreadyResolved", err)
+	}
+	if !strings.Contains(err.Error(), `"c1"`) {
+		t.Fatalf("error = %q, want it to name the conflict", err)
+	}
+	if got := f.content(t, "notes/a.txt"); got != string(f.local) {
+		t.Fatalf("notes/a.txt = %q, want the first resolution left alone", got)
+	}
+}
+
+func TestListAndShow_MarkAConflictNothingCanDecideAsStale(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+
+	list, err := f.service.List(ctx, "docs", false)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v (%v), want the open conflict", list, err)
+	}
+	if list[0].Stale {
+		t.Fatal("a conflict whose two versions are both on disk is reported stale")
+	}
+	if list[0].File != nil || list[0].Copy != nil {
+		t.Fatalf("list = %+v, want the files left to show", list[0])
+	}
+
+	// A later round of edits puts content at the path that neither side
+	// had, so neither version can be kept any more.
+	f.fs.AddFile(root+"/notes/a.txt", []byte("a later round wrote this"), 0o644)
+	if list, err = f.service.List(ctx, "docs", false); err != nil || len(list) != 1 || !list[0].Stale {
+		t.Fatalf("list = %+v (%v), want the conflict marked stale", list, err)
+	}
+	view, err := f.service.Show(ctx, "c1")
+	if err != nil || !view.Stale {
+		t.Fatalf("show = %+v (%v), want the conflict marked stale", view, err)
+	}
+
+	// Keeping both is what closes it, and it touches no file.
+	if _, err := f.service.Resolve(ctx, "c1", conflicts.KeepBoth); err != nil {
+		t.Fatalf("resolve --keep both: %v", err)
+	}
+	if got := f.content(t, "notes/a.txt"); got != "a later round wrote this" {
+		t.Fatalf("notes/a.txt = %q, want it untouched", got)
+	}
+	if list, err = f.service.List(ctx, "docs", false); err != nil || len(list) != 0 {
+		t.Fatalf("list = %+v (%v), want the conflict closed", list, err)
+	}
+}
+
+func TestExport_KeepsTheModeOfEachVersion(t *testing.T) {
+	f := newFixture(t)
+	f.fs.AddFile(root+"/notes/a.txt", f.remote, 0o755)
+	f.fs.AddFile(root+"/"+f.record.ConflictPath, f.local, 0o640)
+
+	result, err := f.service.Export(context.Background(), "c1", "/tmp/review")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	want := map[string]fs.FileMode{"path-a.txt": 0o755}
+	want["conflict-"+path.Base(f.record.ConflictPath)] = 0o640
+	for _, name := range result.Files {
+		info, err := f.fs.Lstat("/tmp/review/" + name)
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if info.Mode.Perm() != want[name] {
+			t.Fatalf("%s has mode %o, want %o", name, info.Mode.Perm(), want[name])
+		}
 	}
 }
