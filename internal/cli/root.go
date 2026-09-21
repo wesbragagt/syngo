@@ -26,7 +26,11 @@ type Deps struct {
 // requireIdentity makes the call fail with ExitNotInitialized when the data
 // directory has not been initialized yet.
 func (d *Deps) app(ctx context.Context, requireIdentity bool) (*compose.App, error) {
-	return compose.Build(ctx, compose.Options{DataDir: d.Global.DataDir, RequireIdentity: requireIdentity})
+	return compose.Build(ctx, compose.Options{
+		DataDir:         d.Global.DataDir,
+		Logger:          d.logger(),
+		RequireIdentity: requireIdentity,
+	})
 }
 
 // confirm asks the user to confirm a destructive action. --yes skips the
@@ -101,6 +105,9 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 		newScanCmd(deps),
 		newRescanCmd(deps),
 		newRepairCmd(deps),
+		newDaemonCmd(deps),
+		newPauseCmd(deps),
+		newResumeCmd(deps),
 	)
 	return root
 }
@@ -108,11 +115,17 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 // Execute runs the CLI with the given arguments and streams, and returns the
 // process exit code.
 func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return ExecuteContext(context.Background(), args, stdin, stdout, stderr)
+}
+
+// ExecuteContext runs the CLI with a context commands inherit. Cancelling it
+// stops long-running commands such as `daemon run`.
+func ExecuteContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	deps := &Deps{Stdin: stdin, Stdout: stdout, Stderr: stderr, Global: defaultGlobalOpts()}
 	root := NewRootCmd(deps)
 	root.SetArgs(args)
 
-	err := root.Execute()
+	err := root.ExecuteContext(ctx)
 	if err == nil {
 		return ExitOK
 	}

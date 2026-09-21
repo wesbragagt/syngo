@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/compose"
 )
@@ -62,6 +63,12 @@ func codeOf(err error) int {
 	if errors.As(err, &exitErr) {
 		return exitErr.Code
 	}
+	// A failure reported by the daemon already carries the exit code the
+	// command would have produced had it done the work itself.
+	var remote *daemon.RemoteError
+	if errors.As(err, &remote) {
+		return remote.Code
+	}
 	switch {
 	case errors.Is(err, compose.ErrNotInitialized):
 		return ExitNotInitialized
@@ -69,6 +76,8 @@ func codeOf(err error) int {
 		return ExitNotFound
 	case errors.Is(err, ports.ErrAlreadyExists):
 		return ExitAlreadyExists
+	case errors.Is(err, ports.ErrDaemonUnavailable), errors.Is(err, compose.ErrDaemonRunning):
+		return ExitDaemonUnavailable
 	}
 	return ExitError
 }

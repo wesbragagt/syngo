@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/compose"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
@@ -27,6 +29,16 @@ func newRescanCmd(deps *Deps) *cobra.Command {
 			targets, err := scanTargets(cmd.Context(), app, args)
 			if err != nil {
 				return err
+			}
+
+			// A running daemon owns the folders; it queues the scan so
+			// two processes never write the same folder at once.
+			queued, err := queueRescan(cmd.Context(), app, args, targets)
+			if err != nil {
+				return err
+			}
+			if queued != nil {
+				return printQueued(deps, queued)
 			}
 
 			views := make([]scanView, 0, len(targets))
@@ -53,6 +65,50 @@ func newRescanCmd(deps *Deps) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// queuedView is the JSON shape rescan prints when a daemon does the work.
+type queuedView struct {
+	Queued []string `json:"queued"`
+}
+
+// queueRescan asks a running daemon to rescan the targets. It returns nil
+// when no daemon is running and the caller has to scan by itself.
+func queueRescan(ctx context.Context, app *compose.App, args []string, targets []folder.Folder) ([]string, error) {
+	var id folder.ID
+	if len(args) == 1 {
+		id = folder.ID(args[0])
+	}
+	err := app.Control.Rescan(ctx, id)
+	switch {
+	case errors.Is(err, ports.ErrDaemonUnavailable):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+
+	queued := make([]string, 0, len(targets))
+	for _, f := range targets {
+		queued = append(queued, string(f.ID))
+	}
+	return queued, nil
+}
+
+// printQueued reports the folders whose rescan the daemon accepted.
+func printQueued(deps *Deps, queued []string) error {
+	if deps.Global.JSON {
+		return deps.printer().PrintJSON(queuedView{Queued: queued})
+	}
+	if len(queued) == 0 {
+		_, err := fmt.Fprintln(deps.Stdout, "no folders to scan")
+		return err
+	}
+	for _, id := range queued {
+		if _, err := fmt.Fprintf(deps.Stdout, "%s: rescan queued\n", id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // scanTargets resolves the folders a rescan or repair run applies to. Without

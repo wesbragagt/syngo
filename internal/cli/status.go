@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 )
 
@@ -22,9 +24,12 @@ func newStatusCmd(deps *Deps) *cobra.Command {
 			}
 			defer func() { _ = app.Close() }()
 
-			// The daemon is not reachable yet; live information arrives with
-			// the control socket.
-			report, err := app.Status.Report(cmd.Context(), nil)
+			// A running daemon knows what the database cannot say:
+			// which folders are scanning, and its own pid and uptime.
+			report, err := app.Control.Status(cmd.Context())
+			if errors.Is(err, ports.ErrDaemonUnavailable) {
+				report, err = app.Status.Report(cmd.Context(), nil)
+			}
 			if err != nil {
 				return err
 			}

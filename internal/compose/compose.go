@@ -16,6 +16,8 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/localfs"
 	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
 	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
+	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
+	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/repair"
@@ -57,6 +59,9 @@ type App struct {
 
 	Folders *folders.Service
 	Status  *status.Service
+	// Control talks to the daemon owning this data directory. Its calls
+	// fail with ports.ErrDaemonUnavailable when no daemon is running.
+	Control *daemon.Client
 	// Scan and Repair need a device identity to stamp the rows they write,
 	// so they are nil until the data directory has been initialized.
 	Scan   *scan.Scanner
@@ -166,6 +171,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		Events:   events,
 		Logger:   logger,
 		Folders:  folders.New(store, fs, clock),
+		Control:  daemon.NewClient(unixctl.NewClient(ControlSocketPath(dir))),
 	}
 	if identity != nil {
 		app.Status = status.New(store, identity, clock, dir)

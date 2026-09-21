@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/repair"
+	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
 // findingView is the JSON shape of a problem repair could not fix.
@@ -75,7 +80,7 @@ func newRepairCmd(deps *Deps) *cobra.Command {
 			views := make([]repairView, 0, len(targets))
 			changed, unrecoverable := false, 0
 			for _, f := range targets {
-				report, err := app.Repair.Run(cmd.Context(), f.ID, dryRun)
+				report, err := runRepair(cmd.Context(), app, f.ID, dryRun)
 				if err != nil {
 					return err
 				}
@@ -98,6 +103,16 @@ func newRepairCmd(deps *Deps) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be repaired without changing anything")
 	return cmd
+}
+
+// runRepair repairs one folder inside a running daemon, or directly when none
+// is running.
+func runRepair(ctx context.Context, app *compose.App, id folder.ID, dryRun bool) (repair.Report, error) {
+	report, err := app.Control.Repair(ctx, id, dryRun)
+	if !errors.Is(err, ports.ErrDaemonUnavailable) {
+		return report, err
+	}
+	return app.Repair.Run(ctx, id, dryRun)
 }
 
 // printRepair writes one summary line per folder.
