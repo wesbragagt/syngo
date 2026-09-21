@@ -140,6 +140,18 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 	return summary, nil
 }
 
+// pausedNow re-reads the paused flag of a folder, so a pause that arrives
+// while a transfer runs is noticed without waiting for the next cycle. A
+// folder that cannot be read counts as paused: stopping leaves the transfer
+// resumable, while going on would write into a folder that may be gone.
+func (p *Puller) pausedNow(ctx context.Context, id folder.ID) bool {
+	f, err := p.store.GetFolder(ctx, id)
+	if err != nil {
+		return ctx.Err() == nil
+	}
+	return f.Paused
+}
+
 // rootUsable reports whether the folder root is still a directory.
 func (p *Puller) rootUsable(f folder.Folder) bool {
 	info, err := p.fs.Lstat(f.Path)
@@ -255,6 +267,13 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 				summary.Pulled++
 				summary.Bytes += bytes
 				mu.Unlock()
+			case errors.Is(err, ports.ErrPaused):
+				// Every worker notices the pause on its own and
+				// leaves its transfer resumable, so the cycle
+				// ends without a failure.
+				mu.Lock()
+				summary.Skipped++
+				mu.Unlock()
 			case isPerFile(err):
 				mu.Lock()
 				summary.Failed++
@@ -281,6 +300,11 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 // pull downloads one file and installs it, returning how many bytes arrived.
 func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 	item syncplan.Item) (int64, error) {
+	// A folder paused while the cycle was planning gets no new transfer
+	// journal at all; the file is picked up again when it resumes.
+	if p.pausedNow(ctx, f.ID) {
+		return 0, fmt.Errorf("folder %q: %w", f.ID, ports.ErrPaused)
+	}
 	t, err := p.transferFor(ctx, f, item, conn.RemoteID())
 	if err != nil {
 		return 0, err
@@ -431,6 +455,12 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// The check sits before the request, so a pause takes effect
+		// within one chunk: the chunk being fetched is finished and
+		// recorded, and nothing more is asked for.
+		if p.pausedNow(ctx, t.FolderID) {
+			return fmt.Errorf("folder %q: %w", t.FolderID, ports.ErrPaused)
+		}
 		chunk := t.Chunks[idx]
 		data, err := p.chunk(ctx, conn, *t, chunk)
 		if err != nil {
@@ -509,6 +539,15 @@ func (p *Puller) stopped(ctx context.Context, t transfer.Transfer, cause error) 
 	}
 	if isPerFile(cause) {
 		return p.failed(ctx, t, cause)
+	}
+	if errors.Is(cause, ports.ErrPaused) {
+		p.forget(t.ID)
+		if err := p.store.SetTransferState(ctx, t.ID, transfer.StatePaused, "", p.clock.Now()); err != nil {
+			p.log.Warn("transfer state not recorded", "transfer", t.ID, "error", err)
+		}
+		p.log.Debug("transfer paused", "folder", t.FolderID, "path", t.Path,
+			"chunks_done", len(t.Chunks)-len(t.MissingChunks()))
+		return cause
 	}
 
 	p.forget(t.ID)
