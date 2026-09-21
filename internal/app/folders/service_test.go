@@ -1,0 +1,162 @@
+package folders_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/wesbragagt/syncthis/internal/app/fakes"
+	"github.com/wesbragagt/syncthis/internal/app/folders"
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/folder"
+)
+
+// newService returns a service backed by fakes, with /docs and /music present
+// on the fake filesystem.
+func newService(t *testing.T) (*folders.Service, *fakes.Store, *fakes.Clock) {
+	t.Helper()
+	fs := fakes.NewFileSystem()
+	fs.AddDir("/docs", 0o755)
+	fs.AddDir("/music", 0o755)
+	fs.AddFile("/notes.txt", []byte("hi"), 0o644)
+	store := fakes.NewStore()
+	clock := fakes.NewClock(time.Time{})
+	return folders.New(store, fs, clock), store, clock
+}
+
+// docsFolder returns a valid folder definition.
+func docsFolder(id folder.ID, path string) folder.Folder {
+	return folder.Folder{
+		ID: id, Path: path, Mode: folder.ModeSendReceive, DeletePolicy: folder.DeletePropagate,
+		Symlinks: folder.SymlinkSkip, KeepEmptyDirs: true,
+	}
+}
+
+func TestAdd_StoresWithCreationTime(t *testing.T) {
+	svc, store, clock := newService(t)
+	ctx := context.Background()
+
+	got, err := svc.Add(ctx, docsFolder("docs", "/docs"))
+	if err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if !got.CreatedAt.Equal(clock.Now()) {
+		t.Fatalf("CreatedAt = %v, want %v", got.CreatedAt, clock.Now())
+	}
+
+	saved, err := store.GetFolder(ctx, "docs")
+	if err != nil {
+		t.Fatalf("GetFolder error: %v", err)
+	}
+	if saved.Path != "/docs" {
+		t.Fatalf("saved folder = %+v", saved)
+	}
+}
+
+func TestAdd_RejectsDuplicateID(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	if _, err := svc.Add(ctx, docsFolder("docs", "/docs")); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+
+	_, err := svc.Add(ctx, docsFolder("docs", "/music"))
+	if !errors.Is(err, ports.ErrAlreadyExists) {
+		t.Fatalf("Add error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestAdd_RejectsDuplicatePath(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	if _, err := svc.Add(ctx, docsFolder("docs", "/docs")); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+
+	_, err := svc.Add(ctx, docsFolder("other", "/docs"))
+	if !errors.Is(err, ports.ErrAlreadyExists) {
+		t.Fatalf("Add error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestAdd_RequiresExistingDir(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"missing", "/nope"},
+		{"not a directory", "/notes.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := svc.Add(ctx, docsFolder("docs", tt.path)); err == nil {
+				t.Fatal("Add error = nil, want a failure")
+			}
+		})
+	}
+}
+
+func TestAdd_RejectsInvalidFolder(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	bad := docsFolder("Docs", "/docs")
+	if _, err := svc.Add(ctx, bad); !errors.Is(err, folder.ErrInvalidID) {
+		t.Fatalf("Add error = %v, want ErrInvalidID", err)
+	}
+}
+
+func TestRemove_NotFound(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	if err := svc.Remove(ctx, "docs"); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("Remove error = %v, want ErrNotFound", err)
+	}
+
+	if _, err := svc.Add(ctx, docsFolder("docs", "/docs")); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if err := svc.Remove(ctx, "docs"); err != nil {
+		t.Fatalf("Remove error: %v", err)
+	}
+	if _, err := svc.Get(ctx, "docs"); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("Get after remove = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListAndSetPaused(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	for _, f := range []folder.Folder{docsFolder("music", "/music"), docsFolder("docs", "/docs")} {
+		if _, err := svc.Add(ctx, f); err != nil {
+			t.Fatalf("Add error: %v", err)
+		}
+	}
+
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != "docs" || list[1].ID != "music" {
+		t.Fatalf("List = %+v, want docs then music", list)
+	}
+
+	if err := svc.SetPaused(ctx, "docs", true); err != nil {
+		t.Fatalf("SetPaused error: %v", err)
+	}
+	got, err := svc.Get(ctx, "docs")
+	if err != nil {
+		t.Fatalf("Get error: %v", err)
+	}
+	if !got.Paused {
+		t.Fatal("folder is not paused")
+	}
+	if err := svc.SetPaused(ctx, "nope", true); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("SetPaused on unknown folder = %v, want ErrNotFound", err)
+	}
+}

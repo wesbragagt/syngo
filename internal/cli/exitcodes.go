@@ -4,6 +4,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/compose"
 )
 
 // Process exit codes. They are part of the CLI contract; see docs/CLI.md.
@@ -53,6 +56,14 @@ func codeOf(err error) int {
 	var exitErr *ExitCodeError
 	if errors.As(err, &exitErr) {
 		return exitErr.Code
+	}
+	switch {
+	case errors.Is(err, compose.ErrNotInitialized):
+		return ExitNotInitialized
+	case errors.Is(err, ports.ErrNotFound):
+		return ExitNotFound
+	case errors.Is(err, ports.ErrAlreadyExists):
+		return ExitAlreadyExists
 	}
 	return ExitError
 }

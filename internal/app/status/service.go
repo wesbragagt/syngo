@@ -1,0 +1,164 @@
+package status
+
+import (
+	"context"
+
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+)
+
+// Service builds status reports from the database and, when a daemon is
+// running, from its live state.
+type Service struct {
+	store    ports.MetadataStore
+	identity ports.Identity
+	clock    ports.Clock
+	dataDir  string
+}
+
+// New returns a status service reading from store.
+func New(store ports.MetadataStore, identity ports.Identity, clock ports.Clock, dataDir string) *Service {
+	return &Service{store: store, identity: identity, clock: clock, dataDir: dataDir}
+}
+
+// Report assembles the status document. live is nil when no daemon is running.
+func (s *Service) Report(ctx context.Context, live *LiveInfo) (Report, error) {
+	report := Report{
+		SchemaVersion: SchemaVersion,
+		Device: Device{
+			ID:      string(s.identity.DeviceID()),
+			Name:    s.identity.Name(),
+			DataDir: s.dataDir,
+		},
+		Daemon:  daemonSection(live),
+		Folders: []Folder{},
+		Peers:   []Peer{},
+	}
+
+	folders, err := s.store.ListFolders(ctx)
+	if err != nil {
+		return Report{}, err
+	}
+	for _, f := range folders {
+		stats, err := s.store.FolderStats(ctx, f.ID)
+		if err != nil {
+			return Report{}, err
+		}
+		report.Folders = append(report.Folders, Folder{
+			ID:           string(f.ID),
+			Path:         f.Path,
+			Label:        f.Label,
+			Mode:         string(f.Mode),
+			DeletePolicy: string(f.DeletePolicy),
+			Paused:       f.Paused,
+			State:        folderState(f.Paused, f.LastError, live, string(f.ID)),
+			Files:        stats.Files,
+			Dirs:         stats.Dirs,
+			Symlinks:     stats.Symlinks,
+			Bytes:        stats.Bytes,
+			LastScanAt:   rfc3339(f.LastScanAt),
+			Error:        nonEmpty(f.LastError),
+		})
+	}
+
+	devices, err := s.store.ListDevices(ctx)
+	if err != nil {
+		return Report{}, err
+	}
+	for _, d := range devices {
+		peer := Peer{
+			ID:         string(d.ID),
+			Name:       d.Name,
+			Address:    d.Address,
+			Verified:   d.Verified,
+			LastSeenAt: rfc3339(d.LastSeenAt),
+		}
+		if live != nil {
+			if state, ok := live.Peers[string(d.ID)]; ok {
+				peer.Connected = state.Connected
+				peer.LatencyMS = float64(state.Latency.Microseconds()) / 1000
+				peer.Error = nonEmpty(state.Error)
+			}
+		}
+		report.Peers = append(report.Peers, peer)
+	}
+
+	transfers, err := s.store.ListTransfers(ctx, ports.TransferFilter{})
+	if err != nil {
+		return Report{}, err
+	}
+	report.Transfers = transfersSection(transfers)
+
+	conflicts, err := s.store.ListConflicts(ctx, "", false)
+	if err != nil {
+		return Report{}, err
+	}
+	report.Conflicts = Conflicts{Unresolved: len(conflicts)}
+
+	return report, nil
+}
+
+// daemonSection reports what is known about the daemon.
+func daemonSection(live *LiveInfo) Daemon {
+	if live == nil {
+		return Daemon{}
+	}
+	return Daemon{
+		Running:   true,
+		PID:       live.PID,
+		Listen:    live.Listen,
+		StartedAt: rfc3339(live.StartedAt),
+	}
+}
+
+// folderState derives the reported state of a folder. A running daemon may
+// override it while scanning or syncing.
+func folderState(paused bool, lastError string, live *LiveInfo, id string) string {
+	if live != nil {
+		if state, ok := live.FolderStates[id]; ok && state != "" {
+			return state
+		}
+	}
+	switch {
+	case paused:
+		return StatePaused
+	case lastError != "":
+		return StateError
+	default:
+		return StateIdle
+	}
+}
+
+// transfersSection counts transfers by state and lists them.
+func transfersSection(list []transfer.Transfer) Transfers {
+	out := Transfers{Items: []Transfer{}}
+	for _, t := range list {
+		switch t.State {
+		case transfer.StateActive, transfer.StateVerifying:
+			out.Active++
+		case transfer.StatePending:
+			out.Pending++
+		case transfer.StatePaused:
+			out.Paused++
+		case transfer.StateFailed:
+			out.Failed++
+		}
+		done := len(t.Chunks) - len(t.MissingChunks())
+		out.Items = append(out.Items, Transfer{
+			ID:          string(t.ID),
+			FolderID:    string(t.FolderID),
+			Path:        t.Path,
+			PeerID:      string(t.PeerID),
+			Direction:   "in",
+			State:       string(t.State),
+			Size:        t.Size,
+			ChunkSize:   t.ChunkSize,
+			ChunksTotal: len(t.Chunks),
+			ChunksDone:  done,
+			BytesDone:   t.BytesDone(),
+			UpdatedAt:   rfc3339(t.UpdatedAt),
+			Error:       nonEmpty(t.Error),
+		})
+	}
+	return out
+}

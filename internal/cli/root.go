@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"bufio"
+	"context"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/wesbragagt/syncthis/internal/compose"
 )
 
 // Deps are the streams and options a command tree needs. Later milestones add
@@ -13,6 +19,36 @@ type Deps struct {
 	Stdout io.Writer
 	Stderr io.Writer
 	Global GlobalOpts
+}
+
+// app wires the adapters and services for the current data directory.
+// requireIdentity makes the call fail with ExitNotInitialized when the data
+// directory has not been initialized yet.
+func (d *Deps) app(ctx context.Context, requireIdentity bool) (*compose.App, error) {
+	return compose.Build(ctx, compose.Options{DataDir: d.Global.DataDir, RequireIdentity: requireIdentity})
+}
+
+// confirm asks the user to confirm a destructive action. --yes skips the
+// question; --no-input without --yes fails with ExitConfirmationRequired.
+func (d *Deps) confirm(prompt string) error {
+	if d.Global.Yes {
+		return nil
+	}
+	if d.Global.NoInput || d.Global.JSON {
+		return Errorf(ExitConfirmationRequired, "%s: pass --yes to confirm", prompt)
+	}
+
+	_, _ = fmt.Fprintf(d.Stdout, "%s [y/N]: ", prompt)
+	line, err := bufio.NewReader(d.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return Errorf(ExitConfirmationRequired, "%s: no answer given", prompt)
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return nil
+	default:
+		return Errorf(ExitConfirmationRequired, "%s: cancelled", prompt)
+	}
 }
 
 // printer returns a Printer honouring the --json flag.
@@ -55,7 +91,13 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 	})
 
 	deps.Global.register(root)
-	root.AddCommand(newVersionCmd(deps), newCompletionCmd(deps))
+	root.AddCommand(
+		newVersionCmd(deps),
+		newCompletionCmd(deps),
+		newInitCmd(deps),
+		newFolderCmd(deps),
+		newStatusCmd(deps),
+	)
 	return root
 }
 
