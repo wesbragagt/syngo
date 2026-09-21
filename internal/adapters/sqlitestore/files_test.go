@@ -105,6 +105,7 @@ func TestLoadManifest_RoundTripsAllFields(t *testing.T) {
 		{
 			Path: "dir/a.txt", Kind: manifest.KindFile, Size: 42, ModTime: mtime, Mode: 0o640,
 			Hash: hashOf(7), Inode: 99, ModifiedBy: "DEVICEID", SyncedHash: hashOf(8),
+			SyncedMode: 0o600,
 		},
 		{Path: "dir", Kind: manifest.KindDir, ModTime: mtime, Mode: 0o755},
 		{Path: "link", Kind: manifest.KindSymlink, ModTime: mtime, LinkTarget: "dir/a.txt"},
@@ -145,6 +146,20 @@ func TestLoadManifest_RoundTripsAllFields(t *testing.T) {
 	}
 	if err := store.SetSyncedHash(ctx, "docs", "missing.txt", hashOf(9)); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("SetSyncedHash on unknown path = %v, want ErrNotFound", err)
+	}
+
+	if err := store.SetSyncedMode(ctx, "docs", "dir/a.txt", 0o700); err != nil {
+		t.Fatalf("SetSyncedMode error: %v", err)
+	}
+	m, err = store.LoadManifest(ctx, "docs")
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if got := m.Entries["dir/a.txt"].SyncedMode; got != 0o700 {
+		t.Fatalf("synced mode = %o, want 700", got)
+	}
+	if err := store.SetSyncedMode(ctx, "docs", "missing.txt", 0o700); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("SetSyncedMode on unknown path = %v, want ErrNotFound", err)
 	}
 }
 

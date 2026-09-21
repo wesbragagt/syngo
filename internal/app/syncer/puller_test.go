@@ -3,6 +3,7 @@ package syncer_test
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
@@ -87,12 +88,24 @@ func (d *dest) record(t *testing.T, rel string, data []byte, synced manifest.Has
 	}
 	e := manifest.Entry{
 		Path: rel, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime, Mode: 0o644,
-		Hash: d.hasher.SumBytes(data), SyncedHash: synced, Inode: info.Inode,
+		Hash: d.hasher.SumBytes(data), SyncedHash: synced, SyncedMode: 0o644, Inode: info.Inode,
 	}
 	if err := d.store.UpsertEntries(context.Background(), d.folder.ID, []manifest.Entry{e}); err != nil {
 		t.Fatalf("record %s: %v", rel, err)
 	}
 	return e
+}
+
+// recordDir creates a directory in the destination and records it the way a
+// scan would.
+func (d *dest) recordDir(t *testing.T, rel string) {
+	t.Helper()
+	full := d.folder.Path + "/" + rel
+	d.fs.AddDir(full, 0o755)
+	e := manifest.Entry{Path: rel, Kind: manifest.KindDir, Mode: 0o755}
+	if err := d.store.UpsertEntries(context.Background(), d.folder.ID, []manifest.Entry{e}); err != nil {
+		t.Fatalf("record %s: %v", rel, err)
+	}
 }
 
 // liveTransfer returns the unfinished transfer of a path.
@@ -698,5 +711,253 @@ func TestSync_MissingFolderRootPullsNothing(t *testing.T) {
 	}
 	if got := d.fs.Paths(); len(got) != len(before) {
 		t.Fatalf("filesystem = %v, want it untouched (%v)", got, before)
+	}
+}
+
+// addDir creates a directory on the source and records it the way a scan
+// would.
+func (s *source) addDir(t *testing.T, rel string) {
+	t.Helper()
+	full := s.folder.Path + "/" + rel
+	s.fs.AddDir(full, 0o755)
+	e := manifest.Entry{Path: rel, Kind: manifest.KindDir, Mode: 0o755}
+	if err := s.store.UpsertEntries(context.Background(), s.folder.ID, []manifest.Entry{e}); err != nil {
+		t.Fatalf("record %s: %v", rel, err)
+	}
+}
+
+// chmod changes the mode of a file on the source, on disk and in its manifest.
+func (s *source) chmod(t *testing.T, rel string, mode fs.FileMode) {
+	t.Helper()
+	full := s.folder.Path + "/" + rel
+	if err := s.fs.Chmod(full, mode); err != nil {
+		t.Fatalf("chmod %s: %v", rel, err)
+	}
+	e, err := s.store.GetFile(context.Background(), s.folder.ID, rel)
+	if err != nil {
+		t.Fatalf("stored %s: %v", rel, err)
+	}
+	e.Mode = uint32(mode)
+	if err := s.store.UpsertEntries(context.Background(), s.folder.ID, []manifest.Entry{e}); err != nil {
+		t.Fatalf("record %s: %v", rel, err)
+	}
+}
+
+func TestSync_FileTurnedIntoADirectoryIsReplaced(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addDir(t, "f")
+	inner := src.addFile(t, "f/inner.txt", []byte("what is inside now"))
+
+	d, conn := newDest(t, src.server)
+	old := []byte("what used to be there")
+	local := d.record(t, "f", old, d.hasher.SumBytes(old))
+
+	summary := d.sync(t, conn)
+	if summary.Failed != 0 || summary.Conflicts != 0 {
+		t.Fatalf("summary = %+v, want no failure and no conflict", summary)
+	}
+	if summary.Dirs != 1 || summary.Pulled != 1 {
+		t.Fatalf("summary = %+v, want one directory and one pulled file", summary)
+	}
+
+	info, err := d.fs.Lstat(d.folder.Path + "/f")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("f is %v, want a directory", info.Mode)
+	}
+	if got := d.content(t, "f/inner.txt"); string(got) != "what is inside now" {
+		t.Fatalf("f/inner.txt = %q, want the peer's content", got)
+	}
+
+	stored, err := d.store.GetFile(context.Background(), d.folder.ID, "f")
+	if err != nil {
+		t.Fatalf("stored entry: %v", err)
+	}
+	if stored.Kind != manifest.KindDir || stored.Deleted {
+		t.Fatalf("stored = %+v, want a live directory", stored)
+	}
+	if local.Kind != manifest.KindFile || inner.Hash.IsZero() {
+		t.Fatalf("fixture = %+v/%+v, want a file replaced by a directory", local, inner)
+	}
+}
+
+func TestSync_LocallyModifiedFileIsNotReplacedByADirectory(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addDir(t, "f")
+
+	d, conn := newDest(t, src.server)
+	mine := []byte("the version the user is editing")
+	// The local file moved on since the last agreement with the peer.
+	d.record(t, "f", mine, d.hasher.SumBytes([]byte("what both sides had")))
+
+	summary := d.sync(t, conn)
+	if summary.Conflicts != 1 || summary.Dirs != 0 {
+		t.Fatalf("summary = %+v, want one conflict and no directory", summary)
+	}
+	if got := d.content(t, "f"); string(got) != string(mine) {
+		t.Fatalf("f = %q, want the local version untouched", got)
+	}
+}
+
+func TestSync_DirectoryTurnedIntoAFileIsReplaced(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	data := []byte("a file where the directory was")
+	src.addFile(t, "sub", data)
+	// The peer deleted the children before it created the file.
+	src.addFile(t, "sub/inner.txt", []byte("gone upstream"))
+	if err := src.store.MarkDeleted(ctx, src.folder.ID, []string{"sub/inner.txt"}, "SOURCE", time.Now()); err != nil {
+		t.Fatalf("mark deleted: %v", err)
+	}
+
+	d, conn := newDest(t, src.server)
+	d.recordDir(t, "sub")
+	d.record(t, "sub/inner.txt", []byte("gone upstream"), d.hasher.SumBytes([]byte("gone upstream")))
+
+	summary := d.sync(t, conn)
+	if summary.Failed != 0 {
+		t.Fatalf("summary = %+v, want no failure", summary)
+	}
+	if summary.Deleted != 1 || summary.Pulled != 1 {
+		t.Fatalf("summary = %+v, want the child deleted and the file pulled", summary)
+	}
+	if got := d.content(t, "sub"); string(got) != string(data) {
+		t.Fatalf("sub = %q, want the peer's file", got)
+	}
+	info, err := d.fs.Lstat(d.folder.Path + "/sub")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.IsDir() {
+		t.Fatal("sub is still a directory")
+	}
+}
+
+func TestSync_DirectoryHoldingLocalOnlyFilesIsKept(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "sub", []byte("a file where the directory was"))
+
+	d, conn := newDest(t, src.server)
+	d.recordDir(t, "sub")
+	mine := []byte("only this side has it")
+	d.record(t, "sub/mine.txt", mine, d.hasher.SumBytes(mine))
+
+	summary := d.sync(t, conn)
+	if summary.Failed != 1 || summary.Pulled != 0 {
+		t.Fatalf("summary = %+v, want the replacement to fail and nothing to be pulled", summary)
+	}
+	if got := d.content(t, "sub/mine.txt"); string(got) != string(mine) {
+		t.Fatalf("sub/mine.txt = %q, want it untouched", got)
+	}
+	// Nothing was downloaded for a replacement that cannot happen.
+	list, err := d.store.ListTransfers(context.Background(), ports.TransferFilter{})
+	if err != nil {
+		t.Fatalf("list transfers: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("transfers = %+v, want none", list)
+	}
+}
+
+func TestSync_ModeChangeIsAppliedWithoutATransfer(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	data := []byte("identical on both sides")
+	entry := src.addFile(t, "a.txt", data)
+	src.chmod(t, "a.txt", 0o700)
+
+	d, conn := newDest(t, src.server)
+	d.record(t, "a.txt", data, entry.Hash)
+
+	summary := d.sync(t, conn)
+	if summary.Modes != 1 || summary.Pulled != 0 || summary.Bytes != 0 {
+		t.Fatalf("summary = %+v, want one mode change and no transfer", summary)
+	}
+
+	info, err := d.fs.Lstat(d.folder.Path + "/a.txt")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode.Perm() != 0o700 {
+		t.Fatalf("mode = %v, want 0700", info.Mode.Perm())
+	}
+	if got := d.content(t, "a.txt"); string(got) != string(data) {
+		t.Fatalf("a.txt = %q, want the content untouched", got)
+	}
+
+	stored, err := d.store.GetFile(context.Background(), d.folder.ID, "a.txt")
+	if err != nil {
+		t.Fatalf("stored entry: %v", err)
+	}
+	if stored.Mode != 0o700 || stored.SyncedMode != 0o700 {
+		t.Fatalf("stored = %+v, want mode 0700 recorded as agreed", stored)
+	}
+
+	// A second cycle has nothing left to do.
+	if second := d.sync(t, conn); second.Modes != 0 {
+		t.Fatalf("second cycle = %+v, want the mode change applied once", second)
+	}
+}
+
+func TestSync_ModeChangeIsNotAppliedToALocallyModifiedFile(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	shared := []byte("what both sides had")
+	entry := src.addFile(t, "a.txt", shared)
+	src.chmod(t, "a.txt", 0o700)
+
+	d, conn := newDest(t, src.server)
+	mine := []byte("the version the user is editing")
+	d.record(t, "a.txt", mine, entry.Hash)
+
+	summary := d.sync(t, conn)
+	if summary.Modes != 0 || summary.Pulled != 0 {
+		t.Fatalf("summary = %+v, want nothing applied", summary)
+	}
+	info, err := d.fs.Lstat(d.folder.Path + "/a.txt")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode.Perm() != 0o644 {
+		t.Fatalf("mode = %v, want the local 0644 kept", info.Mode.Perm())
+	}
+	if got := d.content(t, "a.txt"); string(got) != string(mine) {
+		t.Fatalf("a.txt = %q, want the local version untouched", got)
+	}
+}
+
+func TestSync_OneItemThatCannotBeAppliedDoesNotStopTheCycle(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	src.addDir(t, "gone")
+	src.addFile(t, "arrives.txt", []byte("this one still lands"))
+	if err := src.store.MarkDeleted(ctx, src.folder.ID, []string{"gone"}, "SOURCE", time.Now()); err != nil {
+		t.Fatalf("mark deleted: %v", err)
+	}
+
+	d, conn := newDest(t, src.server)
+	d.recordDir(t, "gone")
+	// A file only this side knows about keeps the directory from going.
+	mine := []byte("only this side has it")
+	d.record(t, "gone/mine.txt", mine, d.hasher.SumBytes(mine))
+
+	summary := d.sync(t, conn)
+	if summary.Failed != 1 {
+		t.Fatalf("summary = %+v, want exactly one failed item", summary)
+	}
+	if summary.Deleted != 0 {
+		t.Fatalf("summary = %+v, want the directory kept", summary)
+	}
+	if summary.Pulled != 1 {
+		t.Fatalf("summary = %+v, want the rest of the plan applied", summary)
+	}
+	if got := d.content(t, "arrives.txt"); string(got) != "this one still lands" {
+		t.Fatalf("arrives.txt = %q, want it pulled after the failure", got)
+	}
+	if got := d.content(t, "gone/mine.txt"); string(got) != string(mine) {
+		t.Fatalf("gone/mine.txt = %q, want it untouched", got)
+	}
+	if got := d.events.Count("sync.item_failed"); got != 1 {
+		t.Fatalf("sync.item_failed events = %d, want 1", got)
 	}
 }

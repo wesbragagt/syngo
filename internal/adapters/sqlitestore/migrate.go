@@ -8,10 +8,14 @@ import (
 )
 
 // schemaVersion is the version every migration set adds up to.
-const schemaVersion = 1
+const schemaVersion = 2
 
 //go:embed migrations/*.sql
 var migrations embed.FS
+
+// migrationFiles are the migration scripts in the order they apply. The index
+// of a script is the version it brings the database to.
+var migrationFiles = []string{"migrations/001_init.sql", "migrations/002_synced_mode.sql"}
 
 // migrate brings a database up to schemaVersion. It is a no-op when the
 // database is already current.
@@ -27,19 +31,24 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", current, schemaVersion)
 	}
 
-	stmts, err := migrations.ReadFile("migrations/001_init.sql")
-	if err != nil {
-		return fmt.Errorf("read migration 001_init.sql: %w", err)
-	}
-
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin migration: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, string(stmts)); err != nil {
-		return fmt.Errorf("apply migration 001_init.sql: %w", err)
+	for version := current + 1; version <= schemaVersion; version++ {
+		name := migrationFiles[version-1]
+		stmts, err := migrations.ReadFile(name)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", name, err)
+		}
+		if _, err := tx.ExecContext(ctx, string(stmts)); err != nil {
+			return fmt.Errorf("apply migration %s: %w", name, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_version (version) VALUES (?)`, schemaVersion); err != nil {
 		return fmt.Errorf("record schema version: %w", err)

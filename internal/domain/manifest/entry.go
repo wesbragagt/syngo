@@ -45,4 +45,8 @@ type Entry struct {
 	ModifiedBy device.ID
 	Sequence   uint64
 	SyncedHash Hash
+	// SyncedMode is the permission bits the local and the remote side last
+	// agreed on. It is local bookkeeping, never sent to a peer: a local mode
+	// that differs from it is a local change, which the peer must not undo.
+	SyncedMode uint32
 }

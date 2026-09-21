@@ -153,9 +153,11 @@ func (l *peerLoop) sync(ctx context.Context, conn ports.PeerConn, id folder.ID) 
 			}
 			continue
 		}
-		if summary.Pulled > 0 || summary.Deleted > 0 || summary.Dirs > 0 || summary.Symlinks > 0 {
+		if summary.Pulled > 0 || summary.Deleted > 0 || summary.Dirs > 0 ||
+			summary.Symlinks > 0 || summary.Modes > 0 || summary.Failed > 0 {
 			l.daemon.deps.Log.Info("folder synced", "folder", f.ID, "peer", l.peer.ID.Short(),
-				"pulled", summary.Pulled, "deleted", summary.Deleted, "bytes", summary.Bytes)
+				"pulled", summary.Pulled, "deleted", summary.Deleted, "modes", summary.Modes,
+				"failed", summary.Failed, "bytes", summary.Bytes)
 		}
 	}
 	return ok

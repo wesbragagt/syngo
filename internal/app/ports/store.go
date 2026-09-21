@@ -101,6 +101,8 @@ type FileStore interface {
 	UpsertEntries(ctx context.Context, id folder.ID, entries []manifest.Entry) error
 	MarkDeleted(ctx context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error
 	SetSyncedHash(ctx context.Context, id folder.ID, path string, h manifest.Hash) error
+	// SetSyncedMode records the permission bits last known to match the peer.
+	SetSyncedMode(ctx context.Context, id folder.ID, path string, mode uint32) error
 	FolderStats(ctx context.Context, id folder.ID) (FolderStats, error)
 	AppendChanges(ctx context.Context, id folder.ID, changes []manifest.Change, now time.Time) error
 	// ApplyScan writes the result of one scan atomically. It returns

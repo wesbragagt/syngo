@@ -32,7 +32,9 @@ claims.
 
 ## Database
 
-`sqlitestore.Open` applies migration `001_init.sql` and sets
+`sqlitestore.Open` applies the migrations `001_init.sql` and
+`002_synced_mode.sql` in order, up to the schema version the binary knows, and
+sets
 `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000` and
 `foreign_keys=ON`. The daemon opens the database with one connection, so writes
 serialize in Go rather than in SQLite. Every multi-row write is a transaction
@@ -61,6 +63,12 @@ last agreed on. A local file whose `hash` still equals its `synced_hash` has
 not been touched since the last sync, so the peer's newer version may replace
 it. A file whose `hash` moved away from `synced_hash` is a local change, and a
 peer's different version is a conflict, never an overwrite.
+
+`synced_mode` is the same idea for the permission bits: the mode both sides
+last agreed on. A file whose `mode` still equals its `synced_mode` takes the
+peer's mode; one that moved away from it was chmodded locally, and the peer
+follows instead. A `synced_mode` of 0 means no agreement was ever recorded, in
+which case neither side changes anything until the two modes match once.
 
 `modified_by` names the device that produced the version. The puller writes the
 peer's id there, together with the size, modification time and inode the file

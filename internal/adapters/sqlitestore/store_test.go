@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -61,8 +62,8 @@ func TestOpen_MigratesFreshDB(t *testing.T) {
 	if err := db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("schema version = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2", version)
 	}
 
 	tables := []string{"folders", "folder_ignore_patterns", "files", "folder_sequence", "changes",
@@ -249,5 +250,50 @@ func TestConcurrentWritersDoNotBusyError(t *testing.T) {
 	}
 	if len(m.Entries) != 20 {
 		t.Fatalf("stored %d entries, want 20", len(m.Entries))
+	}
+}
+
+func TestOpen_UpgradesAnOlderDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	// A database as the first schema version left it: no synced_mode column.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	stmts, err := os.ReadFile(filepath.Join("migrations", "001_init.sql"))
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if _, err := raw.ExecContext(ctx, string(stmts)); err != nil {
+		t.Fatalf("apply migration 001: %v", err)
+	}
+	if _, err := raw.ExecContext(ctx, `INSERT INTO schema_version (version) VALUES (1)`); err != nil {
+		t.Fatalf("record schema version: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if err := store.SaveFolder(ctx, testFolder("docs", "/home/u/docs")); err != nil {
+		t.Fatalf("SaveFolder error: %v", err)
+	}
+	entry := manifest.Entry{Path: "a.txt", Kind: manifest.KindFile, Mode: 0o644, SyncedMode: 0o644}
+	if err := store.UpsertEntries(ctx, "docs", []manifest.Entry{entry}); err != nil {
+		t.Fatalf("UpsertEntries error: %v", err)
+	}
+	m, err := store.LoadManifest(ctx, "docs")
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if got := m.Entries["a.txt"].SyncedMode; got != 0o644 {
+		t.Fatalf("synced mode = %o, want 644 after the upgrade", got)
 	}
 }

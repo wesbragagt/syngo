@@ -213,3 +213,138 @@ func TestMkDirAndSymlinkAndDelete(t *testing.T) {
 		t.Fatalf("delete of a missing path: %v", err)
 	}
 }
+
+func TestRemoveReplaced_FileMakesWayForADirectory(t *testing.T) {
+	ctx := context.Background()
+	fsys := fakes.NewFileSystem()
+	installer := syncer.NewInstaller(fsys, fakes.NewHasher())
+	fsys.AddDir(root, 0o755)
+	fsys.AddFile(root+"/f", []byte("the old file"), 0o644)
+
+	info, err := fsys.Lstat(root + "/f")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	local := manifest.Entry{Path: "f", Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime}
+
+	if err := installer.RemoveReplaced(ctx, root, "f", &local); err != nil {
+		t.Fatalf("remove replaced: %v", err)
+	}
+	if _, ok := fsys.Content(root + "/f"); ok {
+		t.Fatal("the file is still there, the directory cannot be created")
+	}
+	if _, err := installer.MkDir(ctx, root, manifest.Entry{Path: "f", Kind: manifest.KindDir, Mode: 0o755}); err != nil {
+		t.Fatalf("mkdir over the removed file: %v", err)
+	}
+}
+
+func TestRemoveReplaced_KeepsALocallyChangedFile(t *testing.T) {
+	fsys := fakes.NewFileSystem()
+	installer := syncer.NewInstaller(fsys, fakes.NewHasher())
+	fsys.AddDir(root, 0o755)
+	fsys.AddFile(root+"/f", []byte("what the user wrote"), 0o644)
+
+	info, err := fsys.Lstat(root + "/f")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	// The plan was made against a shorter version of the file.
+	local := manifest.Entry{Path: "f", Kind: manifest.KindFile, Size: info.Size - 1, ModTime: info.ModTime}
+
+	err = installer.RemoveReplaced(context.Background(), root, "f", &local)
+	if !errors.Is(err, syncer.ErrChangedUnderneath) {
+		t.Fatalf("error = %v, want ErrChangedUnderneath", err)
+	}
+	if _, ok := fsys.Content(root + "/f"); !ok {
+		t.Fatal("a file that changed since the plan was removed")
+	}
+}
+
+func TestRemoveReplaced_Directories(t *testing.T) {
+	ctx := context.Background()
+	fsys := fakes.NewFileSystem()
+	installer := syncer.NewInstaller(fsys, fakes.NewHasher())
+	fsys.AddDir(root, 0o755)
+	fsys.AddDir(root+"/empty", 0o755)
+	fsys.AddDir(root+"/full", 0o755)
+	fsys.AddFile(root+"/full/keep.txt", []byte("only here"), 0o644)
+	local := manifest.Entry{Kind: manifest.KindDir}
+
+	if err := installer.RemoveReplaced(ctx, root, "empty", &local); err != nil {
+		t.Fatalf("remove an empty directory: %v", err)
+	}
+	if _, err := fsys.Lstat(root + "/empty"); err == nil {
+		t.Fatal("the empty directory is still there")
+	}
+
+	err := installer.RemoveReplaced(ctx, root, "full", &local)
+	if !errors.Is(err, syncer.ErrDirNotEmpty) {
+		t.Fatalf("error = %v, want ErrDirNotEmpty", err)
+	}
+	if _, ok := fsys.Content(root + "/full/keep.txt"); !ok {
+		t.Fatal("a file only this side has was removed with its directory")
+	}
+	// The read-only check answers the same thing without touching anything.
+	if err := installer.CheckReplaceable(ctx, root, "full", &local); !errors.Is(err, syncer.ErrDirNotEmpty) {
+		t.Fatalf("check = %v, want ErrDirNotEmpty", err)
+	}
+	if _, err := fsys.Lstat(root + "/full"); err != nil {
+		t.Fatalf("the directory was removed by a check: %v", err)
+	}
+}
+
+func TestRemoveReplaced_MissingPathIsNotAFailure(t *testing.T) {
+	fsys := fakes.NewFileSystem()
+	installer := syncer.NewInstaller(fsys, fakes.NewHasher())
+	fsys.AddDir(root, 0o755)
+
+	if err := installer.RemoveReplaced(context.Background(), root, "gone", nil); err != nil {
+		t.Fatalf("remove a path that is already gone: %v", err)
+	}
+}
+
+func TestChmod_SetsThePeersModeWithoutTouchingContent(t *testing.T) {
+	fsys := fakes.NewFileSystem()
+	hasher := fakes.NewHasher()
+	installer := syncer.NewInstaller(fsys, hasher)
+	data := []byte("unchanged content")
+	fsys.AddDir(root, 0o755)
+	fsys.AddFile(root+"/a.txt", data, 0o644)
+
+	remote := manifest.Entry{
+		Path: "a.txt", Kind: manifest.KindFile, Mode: 0o700, Hash: hasher.SumBytes(data),
+	}
+	entry, err := installer.Chmod(context.Background(), root, remote)
+	if err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	info, err := fsys.Lstat(root + "/a.txt")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode.Perm() != 0o700 {
+		t.Fatalf("mode = %v, want 0700", info.Mode.Perm())
+	}
+	if got, _ := fsys.Content(root + "/a.txt"); string(got) != string(data) {
+		t.Fatalf("content = %q, want it untouched", got)
+	}
+	if entry.Mode != 0o700 || entry.Hash != remote.Hash || entry.SyncedHash != remote.Hash {
+		t.Fatalf("entry = %+v, want the new mode and the agreed hash", entry)
+	}
+	if len(fsys.Renames()) != 0 {
+		t.Fatalf("renames = %v, want a mode change to move nothing", fsys.Renames())
+	}
+}
+
+func TestChmod_RefusesWhenThePathIsNoLongerAFile(t *testing.T) {
+	fsys := fakes.NewFileSystem()
+	installer := syncer.NewInstaller(fsys, fakes.NewHasher())
+	fsys.AddDir(root, 0o755)
+	fsys.AddDir(root+"/a.txt", 0o755)
+
+	_, err := installer.Chmod(context.Background(), root, manifest.Entry{Path: "a.txt", Mode: 0o700})
+	if !errors.Is(err, syncer.ErrChangedUnderneath) {
+		t.Fatalf("error = %v, want ErrChangedUnderneath", err)
+	}
+}

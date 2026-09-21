@@ -33,6 +33,10 @@ var (
 	// being downloaded. The download is discarded rather than the local
 	// change.
 	ErrChangedUnderneath = errors.New("local file changed during the transfer")
+	// ErrDirNotEmpty reports a directory the peer replaced by something else
+	// that still holds entries the peer does not know about. It is kept, and
+	// only that one path is skipped.
+	ErrDirNotEmpty = errors.New("directory is not empty")
 )
 
 // Installer applies finished downloads and plan decisions to the filesystem.
@@ -111,6 +115,102 @@ func (i *Installer) MkDir(_ context.Context, root string, e manifest.Entry) (man
 	entry := manifest.Entry{Path: e.Path, Kind: manifest.KindDir, Mode: uint32(mode), ModTime: e.ModTime}
 	return i.described(full, entry), nil
 }
+
+// RemoveReplaced deletes the local entry of a path whose kind changed on the
+// peer, so the new kind can be created in its place. It is deliberately
+// careful:
+//
+//   - a file is only removed when it still is the version the plan was made
+//     against, so a change made since then is never lost;
+//   - a directory is only removed when it is empty, which it is once the
+//     deletions of the same plan have been applied to its children. One that
+//     still holds entries the peer does not know about is kept.
+//
+// A path that is already gone is not an error.
+func (i *Installer) RemoveReplaced(ctx context.Context, root, rel string, local *manifest.Entry) error {
+	if err := i.CheckReplaceable(ctx, root, rel, local); err != nil {
+		return err
+	}
+	full := path.Join(root, rel)
+	if err := i.fs.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("replace %s: %w", full, err)
+	}
+	return nil
+}
+
+// CheckReplaceable is the read-only half of RemoveReplaced: it reports whether
+// the local entry may give way, without touching anything. A file that must be
+// downloaded first asks before the download rather than after it.
+func (i *Installer) CheckReplaceable(ctx context.Context, root, rel string, local *manifest.Entry) error {
+	full := path.Join(root, rel)
+	info, err := i.fs.Lstat(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", full, err)
+	}
+
+	switch {
+	case info.IsDir():
+		empty, err := i.dirEmpty(ctx, full)
+		if err != nil {
+			return err
+		}
+		if !empty {
+			return fmt.Errorf("%s: %w", full, ErrDirNotEmpty)
+		}
+	case !info.IsSymlink():
+		if local == nil || local.Kind != manifest.KindFile ||
+			info.Size != local.Size || info.ModTime.UnixNano() != local.ModTime.UnixNano() {
+			return fmt.Errorf("%s: %w", full, ErrChangedUnderneath)
+		}
+	}
+	return nil
+}
+
+// Chmod sets the permission bits a peer announced on a local file whose
+// content already matches. It returns the entry that now describes the file.
+func (i *Installer) Chmod(_ context.Context, root string, e manifest.Entry) (manifest.Entry, error) {
+	full := path.Join(root, e.Path)
+	info, err := i.fs.Lstat(full)
+	if err != nil {
+		return manifest.Entry{}, fmt.Errorf("stat %s: %w", full, err)
+	}
+	if info.IsDir() || info.IsSymlink() {
+		return manifest.Entry{}, fmt.Errorf("%s is no longer a file: %w", full, ErrChangedUnderneath)
+	}
+
+	mode := fs.FileMode(e.Mode).Perm()
+	if err := i.fs.Chmod(full, mode); err != nil {
+		return manifest.Entry{}, fmt.Errorf("set mode of %s: %w", full, err)
+	}
+
+	entry := manifest.Entry{
+		Path: e.Path, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime,
+		Mode: uint32(mode), Hash: e.Hash, SyncedHash: e.Hash,
+	}
+	return i.described(full, entry), nil
+}
+
+// dirEmpty reports whether a directory holds no entries at all.
+func (i *Installer) dirEmpty(ctx context.Context, full string) (bool, error) {
+	empty := true
+	err := i.fs.Walk(ctx, full, func(rel string, _ ports.FileInfo) error {
+		if rel == "" || rel == "." {
+			return nil
+		}
+		empty = false
+		return errStopWalk
+	})
+	if err != nil && !errors.Is(err, errStopWalk) {
+		return false, fmt.Errorf("read %s: %w", full, err)
+	}
+	return empty, nil
+}
+
+// errStopWalk ends a walk that has seen enough.
+var errStopWalk = errors.New("stop walk")
 
 // Symlink creates a symbolic link described by a peer's entry, replacing a
 // link that points somewhere else.

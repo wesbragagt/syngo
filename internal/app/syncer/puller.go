@@ -39,6 +39,7 @@ type Summary struct {
 	Deleted   int
 	Dirs      int
 	Symlinks  int
+	Modes     int
 	Skipped   int
 	Conflicts int
 	Failed    int
@@ -122,12 +123,18 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		if item.Action == syncplan.ActionPull {
+		if item.Action == syncplan.ActionPull || isFileReplace(item) {
+			// A file that replaces a directory is downloaded like any
+			// other file, and the directory only goes once the plan
+			// emptied it, which is after this loop.
 			pulls = append(pulls, item)
 			continue
 		}
 		if err := p.apply(ctx, f, peer, item, &summary); err != nil {
-			return summary, err
+			// One path that cannot be applied must not cost the folder
+			// the rest of the cycle: the failure is reported and the
+			// plan goes on.
+			p.itemFailed(f, peer, item, err, &summary)
 		}
 	}
 	if err := p.pullAll(ctx, conn, f, pulls, &summary); err != nil {
@@ -135,8 +142,8 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 	}
 
 	p.log.Debug("folder sync finished", "folder", f.ID, "peer", peer.Short(),
-		"pulled", summary.Pulled, "deleted", summary.Deleted, "conflicts", summary.Conflicts,
-		"failed", summary.Failed, "bytes", summary.Bytes)
+		"pulled", summary.Pulled, "deleted", summary.Deleted, "modes", summary.Modes,
+		"conflicts", summary.Conflicts, "failed", summary.Failed, "bytes", summary.Bytes)
 	return summary, nil
 }
 
@@ -193,21 +200,28 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 		summary.Dirs++
 		return p.record(ctx, f.ID, entry, peer)
 
+	case syncplan.ActionReplace:
+		return p.replace(ctx, f, peer, item, summary)
+
+	case syncplan.ActionChmod:
+		entry, err := p.installer.Chmod(ctx, f.Path, *item.Remote)
+		if err != nil {
+			return err
+		}
+		summary.Modes++
+		return p.record(ctx, f.ID, entry, peer)
+
 	case syncplan.ActionSymlink:
 		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
 		if err != nil {
-			p.log.Warn("symlink not created", "folder", f.ID, "path", item.Path, "error", err)
-			summary.Failed++
-			return nil
+			return err
 		}
 		summary.Symlinks++
 		return p.record(ctx, f.ID, entry, peer)
 
 	case syncplan.ActionDelete:
 		if err := p.installer.Delete(ctx, f.Path, item.Path); err != nil {
-			p.log.Warn("delete not applied", "folder", f.ID, "path", item.Path, "error", err)
-			summary.Failed++
-			return nil
+			return err
 		}
 		summary.Deleted++
 		return p.store.MarkDeleted(ctx, f.ID, []string{item.Path}, peer, p.clock.Now())
@@ -223,11 +237,69 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 
 	default:
 		summary.Skipped++
-		if item.Reason == syncplan.ReasonInSync && item.Local != nil && item.Local.SyncedHash != item.Remote.Hash {
-			return p.store.SetSyncedHash(ctx, f.ID, item.Path, item.Remote.Hash)
+		if item.Reason == syncplan.ReasonInSync {
+			return p.recordAgreement(ctx, f.ID, item)
 		}
 		return nil
 	}
+}
+
+// replace applies a path whose kind changed on the peer: the local entry goes
+// first, then the new kind is created in its place. Only directories and
+// symlinks land here; a file that replaces another kind is downloaded first
+// and installed by pull.
+func (p *Puller) replace(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item, summary *Summary) error {
+	if err := p.installer.RemoveReplaced(ctx, f.Path, item.Path, item.Local); err != nil {
+		return err
+	}
+	switch item.Remote.Kind {
+	case manifest.KindDir:
+		entry, err := p.installer.MkDir(ctx, f.Path, *item.Remote)
+		if err != nil {
+			return err
+		}
+		summary.Dirs++
+		return p.record(ctx, f.ID, entry, peer)
+	default:
+		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
+		if err != nil {
+			return err
+		}
+		summary.Symlinks++
+		return p.record(ctx, f.ID, entry, peer)
+	}
+}
+
+// recordAgreement stores what both sides now agree on for a path that needs no
+// change: the hash and the permission bits. They are the baseline the plan
+// compares against, so a later change is attributed to the side that made it.
+func (p *Puller) recordAgreement(ctx context.Context, id folder.ID, item syncplan.Item) error {
+	if item.Local == nil || item.Remote == nil {
+		return nil
+	}
+	if item.Local.SyncedHash != item.Remote.Hash {
+		if err := p.store.SetSyncedHash(ctx, id, item.Path, item.Remote.Hash); err != nil {
+			return err
+		}
+	}
+	if item.Local.Kind != manifest.KindFile || item.Local.SyncedMode == item.Local.Mode {
+		return nil
+	}
+	return p.store.SetSyncedMode(ctx, id, item.Path, item.Local.Mode)
+}
+
+// itemFailed reports one plan item that could not be applied, leaving the rest
+// of the cycle to run. The count ends up in the summary the daemon logs.
+func (p *Puller) itemFailed(f folder.Folder, peer device.ID, item syncplan.Item,
+	cause error, summary *Summary) {
+	summary.Failed++
+	p.log.Warn("plan item not applied", "folder", f.ID, "path", item.Path,
+		"action", item.Action.String(), "error", cause)
+	p.publish("sync.item_failed", map[string]any{
+		"folder_id": string(f.ID), "path": item.Path, "action": item.Action.String(),
+		"peer_id": string(peer), "error": cause.Error(),
+	})
 }
 
 // pullAll downloads the files of a plan, at most Concurrency at a time. A
@@ -305,6 +377,13 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 	if p.pausedNow(ctx, f.ID) {
 		return 0, fmt.Errorf("folder %q: %w", f.ID, ports.ErrPaused)
 	}
+	if item.Action == syncplan.ActionReplace {
+		// Asking before the download means a directory that must stay
+		// does not cost a transfer every cycle.
+		if err := p.installer.CheckReplaceable(ctx, f.Path, item.Path, item.Local); err != nil {
+			return 0, err
+		}
+	}
 	t, err := p.transferFor(ctx, f, item, conn.RemoteID())
 	if err != nil {
 		return 0, err
@@ -323,7 +402,17 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		return 0, err
 	}
 
-	entry, err := p.installer.Install(ctx, f.Path, t, item.Local)
+	expect := item.Local
+	if item.Action == syncplan.ActionReplace {
+		// The directory the file takes the place of goes now, with the
+		// downloaded content ready, so the path is uncovered as briefly
+		// as possible.
+		if err := p.installer.RemoveReplaced(ctx, f.Path, item.Path, item.Local); err != nil {
+			return 0, p.stopped(ctx, t, err)
+		}
+		expect = nil
+	}
+	entry, err := p.installer.Install(ctx, f.Path, t, expect)
 	if err != nil {
 		return 0, p.stopped(ctx, t, err)
 	}
@@ -585,6 +674,7 @@ func (p *Puller) record(ctx context.Context, id folder.ID, e manifest.Entry, pee
 	if e.Kind == manifest.KindFile {
 		e.SyncedHash = e.Hash
 	}
+	e.SyncedMode = e.Mode
 	return p.store.UpsertEntries(ctx, id, []manifest.Entry{e})
 }
 
@@ -637,7 +727,15 @@ func isPerFile(err error) bool {
 	if errors.As(err, &refused) {
 		return refused.Reason == ports.ChunkHashChanged || refused.Reason == ports.ChunkNotFound
 	}
-	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath)
+	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath) ||
+		errors.Is(err, ErrDirNotEmpty)
+}
+
+// isFileReplace reports whether an item replaces another kind with a file,
+// which is applied by the pull phase rather than by apply.
+func isFileReplace(item syncplan.Item) bool {
+	return item.Action == syncplan.ActionReplace && item.Remote != nil &&
+		item.Remote.Kind == manifest.KindFile
 }
 
 // newTransferID returns a random 32 character hexadecimal transfer id.

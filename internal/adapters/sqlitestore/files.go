@@ -19,7 +19,7 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
-		       modified_by, sequence, synced_hash
+		       modified_by, sequence, synced_hash, synced_mode
 		FROM files WHERE folder_id = ? ORDER BY rel_path`, string(id))
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("load manifest of folder %q: %w", id, err)
@@ -50,7 +50,7 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 func (s *Store) GetFile(ctx context.Context, id folder.ID, path string) (manifest.Entry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
-		       modified_by, sequence, synced_hash
+		       modified_by, sequence, synced_hash, synced_mode
 		FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path)
 	e, err := scanEntry(row)
 	if err != nil {
@@ -100,6 +100,17 @@ func (s *Store) SetSyncedHash(ctx context.Context, id folder.ID, path string, h 
 		h.String(), string(id), path)
 	if err != nil {
 		return fmt.Errorf("set synced hash of %q in folder %q: %w", path, id, err)
+	}
+	return requireRow(res, fmt.Sprintf("file %q in folder %q", path, id))
+}
+
+// SetSyncedMode records the permission bits last known to match the peer.
+func (s *Store) SetSyncedMode(ctx context.Context, id folder.ID, path string, mode uint32) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE files SET synced_mode = ? WHERE folder_id = ? AND rel_path = ?`,
+		int64(mode), string(id), path)
+	if err != nil {
+		return fmt.Errorf("set synced mode of %q in folder %q: %w", path, id, err)
 	}
 	return requireRow(res, fmt.Sprintf("file %q in folder %q", path, id))
 }
@@ -203,17 +214,19 @@ func upsertEntries(ctx context.Context, tx *sql.Tx, id folder.ID, entries []mani
 	for i, e := range entries {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, link_target,
-			                   inode, deleted, modified_by, sequence, synced_hash, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			                   inode, deleted, modified_by, sequence, synced_hash, synced_mode,
+			                   updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(folder_id, rel_path) DO UPDATE SET
 				kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
 				mode = excluded.mode, hash = excluded.hash, link_target = excluded.link_target,
 				inode = excluded.inode, deleted = excluded.deleted, modified_by = excluded.modified_by,
 				sequence = excluded.sequence, synced_hash = excluded.synced_hash,
-				updated_at = excluded.updated_at`,
+				synced_mode = excluded.synced_mode, updated_at = excluded.updated_at`,
 			string(id), e.Path, int(e.Kind), e.Size, e.ModTime.UnixNano(), int64(e.Mode),
 			e.Hash.String(), e.LinkTarget, int64(e.Inode), boolToInt(e.Deleted),
-			string(e.ModifiedBy), int64(next+uint64(i)), e.SyncedHash.String(), updatedAt); err != nil {
+			string(e.ModifiedBy), int64(next+uint64(i)), e.SyncedHash.String(),
+			int64(e.SyncedMode), updatedAt); err != nil {
 			return fmt.Errorf("upsert file %q in folder %q: %w", e.Path, id, err)
 		}
 	}
@@ -374,10 +387,10 @@ func scanEntry(row scanner) (manifest.Entry, error) {
 		hashHex, syncedHex   string
 		deleted              int
 		modifiedBy, linkDest string
-		sequence             int64
+		sequence, syncedMode int64
 	)
 	if err := row.Scan(&e.Path, &kind, &e.Size, &mtimeNS, &mode, &hashHex, &linkDest,
-		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex); err != nil {
+		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex, &syncedMode); err != nil {
 		return manifest.Entry{}, err
 	}
 	hash, err := manifest.ParseHash(hashHex)
@@ -393,6 +406,7 @@ func scanEntry(row scanner) (manifest.Entry, error) {
 	e.Mode = uint32(mode)
 	e.Hash = hash
 	e.SyncedHash = synced
+	e.SyncedMode = uint32(syncedMode)
 	e.LinkTarget = linkDest
 	e.Deleted = deleted != 0
 	e.ModifiedBy = device.ID(modifiedBy)

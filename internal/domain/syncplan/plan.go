@@ -30,6 +30,12 @@ const (
 	ActionMkDir
 	// ActionSymlink means the symbolic link must be created locally.
 	ActionSymlink
+	// ActionReplace means the local entry is of another kind than the
+	// remote one and must be removed before the remote kind is created.
+	ActionReplace
+	// ActionChmod means only the permission bits differ and must be set to
+	// the remote ones; no content is transferred.
+	ActionChmod
 )
 
 // String returns the lowercase name of the action.
@@ -47,6 +53,10 @@ func (a Action) String() string {
 		return "mkdir"
 	case ActionSymlink:
 		return "symlink"
+	case ActionReplace:
+		return "replace"
+	case ActionChmod:
+		return "chmod"
 	default:
 		return "unknown"
 	}
@@ -64,6 +74,10 @@ const (
 	ReasonDeletePolicyNever = "delete-policy-never"
 	ReasonSymlinkPolicy     = "symlink-policy-skip"
 	ReasonRemoteDeleted     = "remote-deleted"
+	ReasonKindChanged       = "kind-changed"
+	ReasonReplaceVsModify   = "replace-vs-modify"
+	ReasonModeChanged       = "mode-changed"
+	ReasonModeUnknown       = "mode-baseline-unknown"
 )
 
 // Item is one decision in a plan, describing what to do with Path.
@@ -81,8 +95,10 @@ type Item struct {
 // pulls them itself.
 //
 // Items that create content come first, directories before files and both in
-// path order, so parents exist before their children. Deletions come last,
-// deepest path first, so a directory is removed after its contents.
+// path order, so parents exist before their children. Deletions follow,
+// deepest path first, so a directory is removed after its contents. Replacing
+// a directory with a file or a symlink comes last of all, because the
+// directory can only go once the deletions emptied it.
 //
 // A folder that does not receive produces no items at all.
 func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
@@ -90,7 +106,7 @@ func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
 		return nil
 	}
 
-	var creates, deletes []Item
+	var creates, deletes, replaces []Item
 	for _, r := range remote.Sorted() {
 		entry := r
 		var localEntry *manifest.Entry
@@ -100,14 +116,15 @@ func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
 		}
 
 		item := decide(localEntry, &entry, f)
-		if item.Action == ActionDelete {
+		switch {
+		case item.Action == ActionDelete:
 			deletes = append(deletes, item)
-			continue
+		case item.Action == ActionReplace && item.Remote.Kind != manifest.KindDir:
+			replaces = append(replaces, item)
+		case item.Action == ActionNone && item.Reason == "":
+		default:
+			creates = append(creates, item)
 		}
-		if item.Action == ActionNone && item.Reason == "" {
-			continue
-		}
-		creates = append(creates, item)
 	}
 
 	sort.SliceStable(creates, func(i, j int) bool {
@@ -118,7 +135,9 @@ func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
 		return a.Path < b.Path
 	})
 	sort.SliceStable(deletes, func(i, j int) bool { return deletes[i].Path > deletes[j].Path })
-	return append(creates, deletes...)
+	sort.SliceStable(replaces, func(i, j int) bool { return replaces[i].Path < replaces[j].Path })
+	out := append(creates, deletes...)
+	return append(out, replaces...)
 }
 
 // decide applies the comparison rules to one path. An item with ActionNone and
@@ -128,6 +147,12 @@ func decide(local, remote *manifest.Entry, f folder.Folder) Item {
 
 	if remote.Deleted {
 		return remoteDeleted(item, local, f)
+	}
+	if local != nil && !local.Deleted && local.Kind != remote.Kind {
+		if remote.Kind == manifest.KindSymlink && f.Symlinks != folder.SymlinkStore {
+			return with(item, ActionNone, ReasonSymlinkPolicy)
+		}
+		return kindChanged(item, local)
 	}
 	switch remote.Kind {
 	case manifest.KindDir:
@@ -155,7 +180,7 @@ func remoteFile(item Item, local, remote *manifest.Entry) Item {
 	case local == nil || local.Deleted:
 		return with(item, ActionPull, ReasonMissing)
 	case local.Kind == manifest.KindFile && local.Hash == remote.Hash:
-		return with(item, ActionNone, ReasonInSync)
+		return sameContent(item, local, remote)
 	case local.Kind == manifest.KindFile && local.Hash == local.SyncedHash:
 		// The local copy is still the one both sides agreed on, so the
 		// remote version is the newer one.
@@ -167,6 +192,47 @@ func remoteFile(item Item, local, remote *manifest.Entry) Item {
 		return with(item, ActionConflict, ReasonBothModified)
 	}
 }
+
+// sameContent decides what to do with a file whose content both sides agree
+// on. Only the permission bits can still differ, and they are followed just
+// like content is: the side that did not change them takes the other side's.
+func sameContent(item Item, local, remote *manifest.Entry) Item {
+	localMode, remoteMode := perm(local.Mode), perm(remote.Mode)
+	switch {
+	case remoteMode == 0 || localMode == remoteMode:
+		// In sync. The caller records the hash and the mode both sides
+		// now agree on, which is the baseline the rules below use.
+		return with(item, ActionNone, ReasonInSync)
+	case local.Hash != local.SyncedHash:
+		// The content agreement is not recorded yet. Recording it comes
+		// first; the mode is decided once there is a baseline to judge
+		// it against.
+		return with(item, ActionNone, ReasonInSync)
+	case local.SyncedMode == 0:
+		// No baseline: the entry predates mode tracking, so which side
+		// changed cannot be told. Waiting is the only safe answer.
+		return with(item, ActionNone, ReasonModeUnknown)
+	case localMode != perm(local.SyncedMode):
+		// Only the local side changed the mode; the peer will follow it.
+		return with(item, ActionNone, ReasonLocalNewer)
+	default:
+		return with(item, ActionChmod, ReasonModeChanged)
+	}
+}
+
+// kindChanged decides what to do with a path that is a file on one side and a
+// directory or a symlink on the other. The local entry is only replaced when
+// it holds nothing the peer does not have: a locally modified file is a
+// conflict, because replacing it would lose the change.
+func kindChanged(item Item, local *manifest.Entry) Item {
+	if local.Kind == manifest.KindFile && local.Hash != local.SyncedHash {
+		return with(item, ActionConflict, ReasonReplaceVsModify)
+	}
+	return with(item, ActionReplace, ReasonKindChanged)
+}
+
+// perm returns the permission bits of a stored mode.
+func perm(mode uint32) uint32 { return mode & 0o7777 }
 
 // remoteDeleted decides what to do with a path the peer deleted.
 func remoteDeleted(item Item, local *manifest.Entry, f folder.Folder) Item {

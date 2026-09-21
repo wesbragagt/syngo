@@ -214,6 +214,19 @@ func (s *Store) SetSyncedHash(_ context.Context, id folder.ID, p string, h manif
 	return nil
 }
 
+// SetSyncedMode records the permission bits last known to match the peer.
+func (s *Store) SetSyncedMode(_ context.Context, id folder.ID, p string, mode uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.files[id][p]
+	if !ok {
+		return fmt.Errorf("file %q in folder %q: %w", p, id, ports.ErrNotFound)
+	}
+	e.SyncedMode = mode
+	s.files[id][p] = e
+	return nil
+}
+
 // FolderStats counts the live entries of a folder.
 func (s *Store) FolderStats(_ context.Context, id folder.ID) (ports.FolderStats, error) {
 	s.mu.Lock()

@@ -31,6 +31,15 @@ func file(path, content, synced string) manifest.Entry {
 	return manifest.Entry{Path: path, Kind: manifest.KindFile, Size: 1, Hash: hash(content), SyncedHash: hash(synced)}
 }
 
+// modedFile returns a live file entry carrying permission bits and the mode
+// both sides last agreed on.
+func modedFile(path, content, synced string, mode, syncedMode uint32) manifest.Entry {
+	e := file(path, content, synced)
+	e.Mode = mode
+	e.SyncedMode = syncedMode
+	return e
+}
+
 // tombstone returns a deleted entry.
 func tombstone(path string) manifest.Entry {
 	return manifest.Entry{Path: path, Kind: manifest.KindFile, Deleted: true}
@@ -133,6 +142,78 @@ func TestPlan_Rules(t *testing.T) {
 			action: syncplan.ActionNone, reason: syncplan.ReasonInSync,
 		},
 		{
+			name:   "a file the peer turned into a directory is replaced",
+			local:  manifestOf(file("f", "v1", "v1")),
+			remote: manifestOf(manifest.Entry{Path: "f", Kind: manifest.KindDir, Mode: 0o755}),
+			action: syncplan.ActionReplace, reason: syncplan.ReasonKindChanged,
+		},
+		{
+			name:   "a locally modified file the peer turned into a directory is a conflict",
+			local:  manifestOf(file("f", "local", "v1")),
+			remote: manifestOf(manifest.Entry{Path: "f", Kind: manifest.KindDir, Mode: 0o755}),
+			action: syncplan.ActionConflict, reason: syncplan.ReasonReplaceVsModify,
+		},
+		{
+			name:   "a file the peer never synced and turned into a directory is a conflict",
+			local:  manifestOf(file("f", "local", "")),
+			remote: manifestOf(manifest.Entry{Path: "f", Kind: manifest.KindDir, Mode: 0o755}),
+			action: syncplan.ActionConflict, reason: syncplan.ReasonReplaceVsModify,
+		},
+		{
+			name:   "a directory the peer turned into a file is replaced",
+			local:  manifestOf(dir),
+			remote: manifestOf(file("sub", "v1", "")),
+			action: syncplan.ActionReplace, reason: syncplan.ReasonKindChanged,
+		},
+		{
+			name:   "a symlink the peer turned into a file is replaced",
+			local:  manifestOf(manifest.Entry{Path: "link", Kind: manifest.KindSymlink, LinkTarget: "target"}),
+			remote: manifestOf(file("link", "v1", "")),
+			action: syncplan.ActionReplace, reason: syncplan.ReasonKindChanged,
+		},
+		{
+			name:   "a mode the peer changed is applied",
+			local:  manifestOf(modedFile("a.txt", "v1", "v1", 0o644, 0o644)),
+			remote: manifestOf(modedFile("a.txt", "v1", "", 0o700, 0)),
+			action: syncplan.ActionChmod, reason: syncplan.ReasonModeChanged,
+		},
+		{
+			name:   "a mode changed locally is left for the peer to take",
+			local:  manifestOf(modedFile("a.txt", "v1", "v1", 0o700, 0o644)),
+			remote: manifestOf(modedFile("a.txt", "v1", "", 0o644, 0)),
+			action: syncplan.ActionNone, reason: syncplan.ReasonLocalNewer,
+		},
+		{
+			name:   "a mode without a baseline is not applied",
+			local:  manifestOf(modedFile("a.txt", "v1", "v1", 0o644, 0)),
+			remote: manifestOf(modedFile("a.txt", "v1", "", 0o700, 0)),
+			action: syncplan.ActionNone, reason: syncplan.ReasonModeUnknown,
+		},
+		{
+			name:   "a mode is not applied to a locally modified file",
+			local:  manifestOf(modedFile("a.txt", "v2", "v1", 0o644, 0o644)),
+			remote: manifestOf(modedFile("a.txt", "v1", "", 0o700, 0)),
+			action: syncplan.ActionNone, reason: syncplan.ReasonLocalNewer,
+		},
+		{
+			name:   "a mode change waits for the content agreement to be recorded",
+			local:  manifestOf(modedFile("a.txt", "v1", "", 0o644, 0o644)),
+			remote: manifestOf(modedFile("a.txt", "v1", "", 0o700, 0)),
+			action: syncplan.ActionNone, reason: syncplan.ReasonInSync,
+		},
+		{
+			name:   "equal modes are in sync",
+			local:  manifestOf(modedFile("a.txt", "v1", "v1", 0o644, 0o644)),
+			remote: manifestOf(modedFile("a.txt", "v1", "", 0o644, 0)),
+			action: syncplan.ActionNone, reason: syncplan.ReasonInSync,
+		},
+		{
+			name:   "a peer that announces no mode changes nothing",
+			local:  manifestOf(modedFile("a.txt", "v1", "v1", 0o644, 0o644)),
+			remote: manifestOf(file("a.txt", "v1", "")),
+			action: syncplan.ActionNone, reason: syncplan.ReasonInSync,
+		},
+		{
 			name:   "symlink is created when the policy stores them",
 			local:  manifestOf(),
 			remote: manifestOf(link),
@@ -222,5 +303,42 @@ func TestPlan_DirsBeforeFilesAndDeletesLast(t *testing.T) {
 		if order[i] != want[i] {
 			t.Fatalf("plan = %v, want %v", order, want)
 		}
+	}
+}
+
+func TestPlan_DirReplacedByAFileComesAfterItsChildrenAreDeleted(t *testing.T) {
+	local := manifestOf(
+		manifest.Entry{Path: "sub", Kind: manifest.KindDir},
+		file("sub/inner.txt", "v1", "v1"),
+	)
+	remote := manifestOf(
+		file("sub", "v2", ""),
+		tombstone("sub/inner.txt"),
+	)
+
+	var order []string
+	for _, item := range syncplan.Plan(local, remote, testFolder()) {
+		order = append(order, item.Action.String()+":"+item.Path)
+	}
+	want := []string{"delete:sub/inner.txt", "replace:sub"}
+	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] {
+		t.Fatalf("plan = %v, want %v", order, want)
+	}
+}
+
+func TestPlan_FileReplacedByADirComesBeforeItsChildren(t *testing.T) {
+	local := manifestOf(file("f", "v1", "v1"))
+	remote := manifestOf(
+		file("f/inner.txt", "v2", ""),
+		manifest.Entry{Path: "f", Kind: manifest.KindDir, Mode: 0o755},
+	)
+
+	var order []string
+	for _, item := range syncplan.Plan(local, remote, testFolder()) {
+		order = append(order, item.Action.String()+":"+item.Path)
+	}
+	want := []string{"replace:f", "pull:f/inner.txt"}
+	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] {
+		t.Fatalf("plan = %v, want %v", order, want)
 	}
 }
