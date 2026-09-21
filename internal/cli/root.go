@@ -1,12 +1,9 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -33,27 +30,14 @@ func (d *Deps) app(ctx context.Context, requireIdentity bool) (*compose.App, err
 	})
 }
 
-// confirm asks the user to confirm a destructive action. --yes skips the
-// question; --no-input without --yes fails with ExitConfirmationRequired.
-func (d *Deps) confirm(prompt string) error {
-	if d.Global.Yes {
-		return nil
+// help prints the usage of a command group. With --json the help text would
+// be the only non-machine-readable thing on stdout, so the missing subcommand
+// is reported as a usage error instead.
+func (d *Deps) help(cmd *cobra.Command) error {
+	if d.Global.JSON {
+		return Errorf(ExitUsage, "%s: expected a subcommand", cmd.CommandPath())
 	}
-	if d.Global.NoInput || d.Global.JSON {
-		return Errorf(ExitConfirmationRequired, "%s: pass --yes to confirm", prompt)
-	}
-
-	_, _ = fmt.Fprintf(d.Stdout, "%s [y/N]: ", prompt)
-	line, err := bufio.NewReader(d.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		return Errorf(ExitConfirmationRequired, "%s: no answer given", prompt)
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return nil
-	default:
-		return Errorf(ExitConfirmationRequired, "%s: cancelled", prompt)
-	}
+	return cmd.Help()
 }
 
 // printer returns a Printer honouring the --json flag.
@@ -83,7 +67,7 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return deps.help(cmd)
 		},
 	}
 

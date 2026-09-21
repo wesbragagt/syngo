@@ -49,7 +49,7 @@ func newFolderCmd(deps *Deps) *cobra.Command {
 		Short: "Manage synchronized folders",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return deps.help(cmd)
 		},
 	}
 	cmd.AddCommand(newFolderAddCmd(deps), newFolderListCmd(deps), newFolderSetCmd(deps), newFolderRemoveCmd(deps))

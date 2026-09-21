@@ -3,17 +3,42 @@ package cli
 import (
 	"fmt"
 	"runtime"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
+// devVersion is what Version holds in a binary that was built without
+// -ldflags. The Makefile sets both variables from `git describe`.
+const devVersion = "0.1.0-dev"
+
 // Build information, overridable at link time with -ldflags -X.
 var (
 	// Version is the released version of the binary.
-	Version = "0.1.0-dev"
+	Version = devVersion
 	// Commit is the git revision the binary was built from.
 	Commit = "unknown"
 )
+
+// init fills in what the go tool recorded when the binary was built without
+// -ldflags, which is what `go install` and `go run` produce.
+func init() {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	if Version == devVersion && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		Version = info.Main.Version
+	}
+	if Commit != "unknown" {
+		return
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" && setting.Value != "" {
+			Commit = setting.Value
+		}
+	}
+}
 
 // versionInfo is the JSON shape of the version command.
 type versionInfo struct {

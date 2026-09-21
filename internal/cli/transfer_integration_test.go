@@ -34,6 +34,7 @@ type transferJSON struct {
 	Error         *string `json:"error"`
 	ChunksMissing *int    `json:"chunks_missing"`
 	MissingChunks []int   `json:"missing_chunks"`
+	Truncated     bool    `json:"missing_chunks_truncated"`
 }
 
 // seedTransfer writes one journal row into the data directory, as an
@@ -195,6 +196,33 @@ func TestTransferShow_TextAndJSON(t *testing.T) {
 	}
 	if len(view.MissingChunks) != 2 || view.MissingChunks[0] != 2 || view.MissingChunks[1] != 3 {
 		t.Fatalf("missing_chunks = %v, want [2 3]", view.MissingChunks)
+	}
+}
+
+func TestTransferShow_CapsTheMissingChunkList(t *testing.T) {
+	e := withFolder(t)
+	seedTransfer(t, e, "b2", "huge.bin", transfer.StatePending, 500, 0)
+
+	code, stdout, stderr := e.run("", "transfer", "show", "b2", "--json")
+	if code != cli.ExitOK {
+		t.Fatalf("transfer show exit = %d (stderr: %s)", code, stderr)
+	}
+	var view transferJSON
+	if err := json.Unmarshal([]byte(stdout), &view); err != nil {
+		t.Fatalf("output is not json: %v\n%s", err, stdout)
+	}
+
+	if view.ChunksMissing == nil || *view.ChunksMissing != 500 {
+		t.Fatalf("chunks_missing = %v, want the full count of 500", view.ChunksMissing)
+	}
+	if len(view.MissingChunks) != 100 {
+		t.Fatalf("missing_chunks holds %d indexes, want the first 100", len(view.MissingChunks))
+	}
+	if view.MissingChunks[0] != 0 || view.MissingChunks[99] != 99 {
+		t.Fatalf("missing_chunks = %v..., want the first indexes", view.MissingChunks[:5])
+	}
+	if !view.Truncated {
+		t.Fatal("missing_chunks_truncated = false, want true for a capped list")
 	}
 }
 

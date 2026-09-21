@@ -83,7 +83,7 @@ func newPeerCmd(deps *Deps) *cobra.Command {
 		Short: "Manage the devices this one synchronizes with",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return deps.help(cmd)
 		},
 	}
 	cmd.AddCommand(newPeerAddCmd(deps), newPeerListCmd(deps), newPeerRemoveCmd(deps), newPeerTestCmd(deps))

@@ -30,10 +30,17 @@ type transferView struct {
 	UpdatedAt   *string `json:"updated_at"`
 	Error       *string `json:"error"`
 	// ChunksMissing and MissingChunks are only filled in by
-	// `transfer show`.
-	ChunksMissing *int  `json:"chunks_missing,omitempty"`
-	MissingChunks []int `json:"missing_chunks,omitempty"`
+	// `transfer show`. MissingChunks is capped at missingChunksInJSON
+	// entries; MissingChunksTruncated says whether that happened.
+	ChunksMissing          *int  `json:"chunks_missing,omitempty"`
+	MissingChunks          []int `json:"missing_chunks,omitempty"`
+	MissingChunksTruncated bool  `json:"missing_chunks_truncated,omitempty"`
 }
+
+// missingChunksInJSON is how many missing chunk indexes `transfer show --json`
+// lists. A gigabyte at 16 KiB chunks has tens of thousands of them, which no
+// caller reads; chunks_missing carries the full count.
+const missingChunksInJSON = 100
 
 // transferViewOf converts a transfer view into its JSON shape.
 func transferViewOf(v transfers.View) transferView {
@@ -48,6 +55,10 @@ func transferViewOf(v transfers.View) transferView {
 		missing := len(v.MissingChunks)
 		out.ChunksMissing = &missing
 		out.MissingChunks = v.MissingChunks
+		if missing > missingChunksInJSON {
+			out.MissingChunks = v.MissingChunks[:missingChunksInJSON]
+			out.MissingChunksTruncated = true
+		}
 	}
 	return out
 }
@@ -68,7 +79,7 @@ func newTransferCmd(deps *Deps) *cobra.Command {
 		Short: "Inspect file transfers",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return deps.help(cmd)
 		},
 	}
 	cmd.AddCommand(newTransferListCmd(deps), newTransferShowCmd(deps))

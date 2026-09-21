@@ -19,11 +19,29 @@ func newDaemonCmd(deps *Deps) *cobra.Command {
 		Short: "Run and control the background daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return deps.help(cmd)
 		},
 	}
 	cmd.AddCommand(newDaemonRunCmd(deps))
 	return cmd
+}
+
+// daemonStarted is the JSON shape `daemon run --json` prints once the daemon
+// answers. It is the only document the command writes to stdout; everything
+// else it has to say goes to the log on stderr.
+type daemonStarted struct {
+	Running bool   `json:"running"`
+	PID     int    `json:"pid"`
+	DataDir string `json:"data_dir"`
+}
+
+// printDaemonStarted announces a daemon that is serving requests.
+func printDaemonStarted(deps *Deps, dataDir string) error {
+	if deps.Global.JSON {
+		return deps.printer().PrintJSON(daemonStarted{Running: true, PID: os.Getpid(), DataDir: dataDir})
+	}
+	_, err := fmt.Fprintf(deps.Stdout, "syncthis daemon running (pid %d, data dir %s)\n", os.Getpid(), dataDir)
+	return err
 }
 
 // newDaemonRunCmd builds the "daemon run" command.
@@ -59,8 +77,7 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 				defer close(announced)
 				select {
 				case <-ready:
-					_, _ = fmt.Fprintf(deps.Stdout, "syncthis daemon running (pid %d, data dir %s)\n",
-						os.Getpid(), app.DataDir)
+					_ = printDaemonStarted(deps, app.DataDir)
 				case <-ctx.Done():
 				}
 			}()
