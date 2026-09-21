@@ -1,0 +1,43 @@
+{
+  "Version": "1.90.9",
+  "TUN": true,
+  "BackendState": "Stopped",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": null,
+  "Self": {
+    "ID": "nSELF1CNTRL",
+    "PublicKey": "nodekey:1111111111111111111111111111111111111111111111111111111111111111",
+    "HostName": "laptop",
+    "DNSName": "laptop.tail1234.ts.net.",
+    "OS": "linux",
+    "UserID": 1234567890,
+    "TailscaleIPs": null,
+    "Addrs": null,
+    "CurAddr": "",
+    "Relay": "",
+    "RxBytes": 0,
+    "TxBytes": 0,
+    "Created": "2026-05-11T02:45:19.708292205Z",
+    "LastWrite": "0001-01-01T00:00:00Z",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "LastHandshake": "0001-01-01T00:00:00Z",
+    "Online": false,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "InNetworkMap": false,
+    "InMagicSock": false,
+    "InEngine": false
+  },
+  "Health": [
+    "state=Stopped, wantRunning=false"
+  ],
+  "MagicDNSSuffix": "tail1234.ts.net",
+  "CurrentTailnet": {
+    "Name": "example@github",
+    "MagicDNSSuffix": "tail1234.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "Peer": null
+}
