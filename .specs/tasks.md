@@ -61,7 +61,7 @@ Goal: prove safe filesystem tracking without networking.
 - [x] Add ignore file support.
 - [x] Implement dry-run, status, rescan, and repair commands.
 - [x] Add tests for rename, delete, atomic-save, and symlink behavior.
-- [ ] Add a crash test that kills the process mid-scan.
+- [x] Add a crash test that kills the process mid-scan.
 - [ ] Verify a 100,000-file folder reconciles safely.
 - [ ] Verify idle memory under 100 MB on the reference device.
 

@@ -219,6 +219,24 @@ pointing at content that has not reached the disk.
 A target that is no longer the version the plan was made against is left alone:
 the download is discarded rather than the local change.
 
+### A crash during a scan
+
+A scan writes its whole result in one transaction: the entries it found, the
+changes it recorded and the new folder sequence go in together. A process
+killed at any moment therefore leaves either the manifest that was there before
+the scan or the complete new one, never a part of either, and the database
+always opens afterwards. Nothing else has to be done to recover: the next scan
+walks the tree again and converges, and `repair --dry-run` finds nothing it
+cannot fix. A daemon killed this way also leaves its pid file and control
+socket behind; the next `daemon run` takes both over, because a pid that no
+process holds and a socket nothing listens on are stale by definition.
+
+This is what `TestCrash_ScanKilledMidWayLeavesARecoverableDatabase` and
+`TestCrash_DaemonKilledDuringStartupScan` in `internal/e2e` check, by sending
+SIGKILL to a real process scanning 20,000 files and then asserting that the
+file count is either 0 or 20,000 and that a rescan reaches 20,000 with nothing
+left to write.
+
 The row in `files` is written after the rename. A crash in between leaves a
 file the database does not know about; the next scan records it as a local
 creation, and because its content equals what the peer has, the following sync
