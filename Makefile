@@ -1,4 +1,4 @@
-.PHONY: build test e2e lint fmt hooks
+.PHONY: build test e2e lint fmt hooks e2e-docker-image e2e-docker e2e-docker-soak e2e-docker-clean
 
 # Build stamp. Both are compiled into the binary and reported by
 # `syncthis version`; a build outside a git checkout falls back to the module
@@ -23,6 +23,30 @@ test:
 # rest of the tree so they get the machine to themselves.
 e2e:
 	go test ./internal/e2e/ -race -count=1 -p 1
+
+# The container suite gives every device its own container, its own network
+# address and its own kernel view of the filesystem, so a test can kill a
+# daemon, partition a pair or slow a link. It is opt-in: `make test` compiles
+# it and skips it.
+E2E_IMAGE ?= syncthis-e2e:dev
+MINUTES   ?= 30
+
+e2e-docker-image:
+	docker build -f internal/e2edocker/Dockerfile \
+	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(E2E_IMAGE) .
+
+e2e-docker: e2e-docker-image
+	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) \
+	  go test ./internal/e2edocker/ -count=1 -p 1 -timeout 90m -run 'Test[^S]' -v
+
+e2e-docker-soak: e2e-docker-image
+	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) SYNCTHIS_E2E_SOAK_MINUTES=$(MINUTES) \
+	  go test ./internal/e2edocker/ -count=1 -run TestSoak -timeout $$(( $(MINUTES) + 30 ))m -v
+
+# Containers and networks of a run killed before its cleanups ran.
+e2e-docker-clean:
+	-docker ps -aq --filter label=syncthis.e2e | xargs -r docker rm -f
+	-docker network ls -q --filter label=syncthis.e2e | xargs -r docker network rm
 
 fmt:
 	gofmt -l -w .

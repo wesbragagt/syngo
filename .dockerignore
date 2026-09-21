@@ -1,0 +1,10 @@
+# The image build only needs go.mod, go.sum, cmd and internal; everything else
+# is left out so a docs change does not invalidate the build cache.
+.git/
+.direnv/
+.claude/
+.specs/
+.githooks/
+bin/
+docs/
+*.md
