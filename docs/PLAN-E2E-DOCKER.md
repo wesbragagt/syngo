@@ -363,3 +363,72 @@ docker ps -a --filter label=syncthis.e2e -q | wc -l      # 0 after a run
 - /home/wesbragagt/dev/syncthing/Makefile (new `e2e-docker*` targets)
 - /home/wesbragagt/dev/syncthing/internal/adapters/tcpwire/netiface.go (listen-address rules the containers must satisfy: `--allow-public` or `--interface eth0`)
 - /home/wesbragagt/dev/syncthing/internal/compose/compose.go (`Init` preserves a pre-written `config.json`, which the bootstrap relies on)
+## 10. Known failures
+
+Two scenarios of section 5 fail against the product as it is today. Neither
+invariant was loosened: both tests are written as the catalog describes them
+and carry a `t.Skip` that points here. Removing the skip is the test for the
+fix.
+
+### KF-1: a transfer whose source changes while it runs stays failed forever
+
+Scenario 3 (`TestMesh_ConcurrentDisjointEditsConverge`). The folders converge,
+but `transfer list` never empties again, so the run fails at the journal half
+of the convergence invariant.
+
+What happens: while a receiver pulls a file, the sender changes or deletes it.
+The next chunk request is refused with `hash_changed` or `not_found`
+(`internal/app/syncer/server.go`), and `Puller.failed`
+(`internal/app/syncer/puller.go`) writes the transfer off as `failed` with that
+message. The newer version is then pulled by a new transfer and the trees
+agree, but the failed row is permanent: `ResumeAll` only picks up `active`,
+`verifying` and `paused` transfers, `repair` skips `done` and `failed` rows
+(`internal/app/repair/service.go`), and no CLI command removes one. Every such
+race leaves a row behind and `status.transfers.failed` counts up for the life
+of the database.
+
+Reproduction, two devices in a mesh:
+
+1. A writes `big.bin`, 64 MiB.
+2. Wait until B reports `chunks_done > 0` for it.
+3. A rewrites `big.bin` with different content of the same size.
+4. Wait for the trees to be equal.
+
+Observed on B afterwards, with the trees equal:
+
+```
+[{Path:big.bin State:failed ChunksTotal:1024 ChunksDone:0   Error:chunk 0 of docs/big.bin refused: hash_changed}
+ {Path:big.bin State:failed ChunksTotal:1024 ChunksDone:273 Error:chunk 273 of docs/big.bin refused: hash_changed}]
+status.transfers = {Active:0 Pending:0 Paused:0 Failed:2}
+```
+
+A fix has to decide a policy (drop the row when a later transfer for the same
+path completes, or retry instead of failing when the refusal says the peer's
+version moved on), which is more than a few clearly correct lines, so it is
+recorded here rather than patched.
+
+### KF-2: three-way divergence loses one of the three versions
+
+Scenario 4 (`TestMesh_ThreeWritersOneConflict`). Three devices are partitioned
+from each other, each writes a different version of `report.md`, the links are
+healed.
+
+Expected: the greatest hash keeps `report.md`, the other two versions survive
+as two conflict copies on every device, nothing is lost.
+
+Observed: the winner keeps the path, but only **one** conflict copy exists, on
+all three devices, and the third version is gone everywhere. Only the device
+that kept the path recorded a conflict at all:
+
+```
+a: report.md = winner, copies = [report.sync-conflict-20260921-234323-VIB6A5F.md]
+b: same single copy, conflict list empty
+c: same single copy, conflict list empty, its own version (hash 56c352e6…) is nowhere
+```
+
+The conflict rule in `internal/domain/conflict` is a total order on two hashes
+and is correct pairwise; the loss comes from resolving the pairs one after the
+other. The device that keeps the path writes a copy for the first peer it
+reconciles with, then the second peer's version is compared against the winner
+it now holds and is dropped rather than kept as a second copy.
+

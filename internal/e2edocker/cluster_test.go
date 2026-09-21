@@ -585,12 +585,15 @@ func (d *Device) Logs() string {
 	return string(raw)
 }
 
-// slogLine is one JSON log line of the daemon.
+// slogLine is one JSON log line of the daemon. Changes is the attribute of a
+// finished scan; it is the only attribute a test waits on, so it is decoded
+// here rather than through a map of everything.
 type slogLine struct {
-	Time  string `json:"time"`
-	Level string `json:"level"`
-	Msg   string `json:"msg"`
-	Raw   string `json:"-"`
+	Time    string `json:"time"`
+	Level   string `json:"level"`
+	Msg     string `json:"msg"`
+	Changes int    `json:"changes"`
+	Raw     string `json:"-"`
 }
 
 // LogLines returns the log lines at one level, or every parsable line when
@@ -614,6 +617,34 @@ func (d *Device) LogLines(level string) []slogLine {
 		}
 	}
 	return lines
+}
+
+// LogSize is how much the daemon has logged so far. A wait that starts from
+// one of these positions looks only at what happened after a change.
+func (d *Device) LogSize() int { return len(d.Logs()) }
+
+// WaitScanRecorded waits until the daemon has finished a scan that found
+// something, after the given position in the log. It is how a test knows a
+// local write is in the database rather than only on disk, which matters
+// before a partition is healed: a version nobody recorded cannot be defended.
+func (d *Device) WaitScanRecorded(from int) {
+	d.c.T.Helper()
+	waitFor(d.c.T, d.Name+" recorded a local change", convergeTimeout, func() bool {
+		log := d.Logs()
+		if len(log) <= from {
+			return false
+		}
+		for _, raw := range strings.Split(log[from:], "\n") {
+			var line slogLine
+			if err := json.Unmarshal([]byte(raw), &line); err != nil {
+				continue
+			}
+			if line.Msg == "scan finished" && line.Changes > 0 {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // SaveArtifacts writes what a failed run needs to be explained: the log, the
