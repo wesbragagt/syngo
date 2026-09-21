@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,41 @@ func TestExitCodes_Table(t *testing.T) {
 			if code != tc.code {
 				t.Fatalf("exit = %d, want %d (stdout %q, stderr %q)", code, tc.code, stdout, stderr)
 			}
+		})
+	}
+}
+
+// TestExitCodes_ExtraArgumentIsAUsageError covers the commands that take no
+// positional argument at all: one handed to them is a mistake in what the user
+// typed, which is exit 2 and not the generic failure code.
+func TestExitCodes_ExtraArgumentIsAUsageError(t *testing.T) {
+	cases := [][]string{
+		{"status", "extra"},
+		{"version", "extra"},
+		{"folder", "list", "extra"},
+		{"peer", "list", "extra"},
+		{"init", "extra"},
+		{"daemon", "run", "extra"},
+		{"transfer", "list", "extra"},
+		{"conflict", "list", "one", "two"},
+		{"rescan", "one", "two"},
+		{"repair", "one", "two"},
+		{"pause", "one", "two"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			e := newEnv(t)
+			e.init(t)
+			if code, stdout, stderr := e.run("", args...); code != cli.ExitUsage {
+				t.Fatalf("exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitUsage, stdout, stderr)
+			}
+			code, stdout, stderr := e.run("", append(args, "--json")...)
+			if code != cli.ExitUsage {
+				t.Fatalf("with --json exit = %d, want %d (stdout %q, stderr %q)",
+					code, cli.ExitUsage, stdout, stderr)
+			}
+			assertOneJSONDocument(t, stdout)
+			assertErrorObject(t, stdout, cli.ExitUsage)
 		})
 	}
 }

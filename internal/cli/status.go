@@ -16,7 +16,7 @@ func newStatusCmd(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show device, folder, peer and transfer status",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {

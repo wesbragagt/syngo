@@ -28,7 +28,7 @@ func newInitCmd(deps *Deps) *cobra.Command {
 		Long: "init prepares the data directory: it generates the device identity, writes the\n" +
 			"default configuration and creates the database. Running it again prints the\n" +
 			"existing device identity and changes nothing else.",
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if settings.DeviceName == "" {
 				name, err := os.Hostname()

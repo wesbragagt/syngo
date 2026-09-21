@@ -17,7 +17,7 @@ func newDaemonCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run and control the background daemon",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.help(cmd)
 		},
@@ -58,7 +58,7 @@ func newDaemonRunCmd(deps *Deps) *cobra.Command {
 		Short: "Watch the configured folders and serve the control socket",
 		Long: "run watches every configured folder, rescans them periodically and answers\n" +
 			"control requests on <data-dir>/control.sock until it is interrupted.",
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {

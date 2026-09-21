@@ -35,7 +35,7 @@ func newSetPausedCmd(deps *Deps, paused bool, name, short string) *cobra.Command
 	return &cobra.Command{
 		Use:   name + " [FOLDER]",
 		Short: short,
-		Args:  cobra.MaximumNArgs(1),
+		Args:  atMostArgs(1, "expected at most one folder ID"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {

@@ -175,6 +175,9 @@ func jsonCases() []jsonCase {
 		{"an unknown flag", cli.ExitUsage, func(t *testing.T) (env, []string) {
 			return initialized(t), []string{"status", "--nonsense"}
 		}},
+		{"an extra positional argument", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"status", "extra"}
+		}},
 	}
 }
 

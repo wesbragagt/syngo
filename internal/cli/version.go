@@ -52,7 +52,7 @@ func newVersionCmd(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the syncthis version",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			info := versionInfo{Version: Version, Commit: Commit, Go: runtime.Version()}
 			if deps.Global.JSON {

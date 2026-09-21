@@ -77,7 +77,7 @@ func newTransferCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transfer",
 		Short: "Inspect file transfers",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.help(cmd)
 		},
@@ -95,7 +95,7 @@ func newTransferListCmd(deps *Deps) *cobra.Command {
 		Short: "List unfinished and failed transfers",
 		Long: "list shows the transfer journal. A transfer disappears from it once its\n" +
 			"file is installed, so what is left is running, paused or failed.",
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			filter := transfers.Filter{}
 			if state != "" {

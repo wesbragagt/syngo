@@ -158,3 +158,23 @@ func requireArgs(n int, usage string) cobra.PositionalArgs {
 		return nil
 	}
 }
+
+// noArgs is cobra.NoArgs with the usage exit code: cobra's own validators
+// return a plain error, which Execute would report as a generic failure.
+func noArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return Errorf(ExitUsage, "%s: expected no arguments, got %q", cmd.CommandPath(), args[0])
+	}
+	return nil
+}
+
+// atMostArgs returns a validator accepting up to n positional arguments and
+// reporting anything beyond them as a usage error.
+func atMostArgs(n int, usage string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) > n {
+			return Errorf(ExitUsage, "%s: %s", cmd.CommandPath(), usage)
+		}
+		return nil
+	}
+}

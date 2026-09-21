@@ -81,7 +81,7 @@ func newPeerCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "peer",
 		Short: "Manage the devices this one synchronizes with",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.help(cmd)
 		},
@@ -171,7 +171,7 @@ func newPeerListCmd(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List known peers",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {

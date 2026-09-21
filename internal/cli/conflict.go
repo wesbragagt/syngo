@@ -108,7 +108,7 @@ func newConflictCmd(deps *Deps) *cobra.Command {
 		Long: "A conflict is a path both sides changed. Syncthis keeps both versions:\n" +
 			"one stays at the path, the other is written beside it under a\n" +
 			"sync-conflict name. These commands show them and say which one wins.",
-		Args: cobra.NoArgs,
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.help(cmd)
 		},
@@ -125,7 +125,7 @@ func newConflictListCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [FOLDER]",
 		Short: "List unresolved conflicts",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  atMostArgs(1, "expected at most one folder ID"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {

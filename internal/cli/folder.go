@@ -47,7 +47,7 @@ func newFolderCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "folder",
 		Short: "Manage synchronized folders",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return deps.help(cmd)
 		},
@@ -182,7 +182,7 @@ func newFolderListCmd(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List configured folders",
-		Args:  cobra.NoArgs,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {

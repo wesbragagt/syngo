@@ -64,7 +64,7 @@ func newRepairCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repair [ID]",
 		Short: "Restore consistency between the database and the files on disk",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  atMostArgs(1, "expected at most one folder ID"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {
