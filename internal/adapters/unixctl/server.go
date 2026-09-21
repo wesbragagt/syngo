@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -30,8 +31,14 @@ type Server struct {
 	closeOnce sync.Once
 }
 
-// Listen binds the control socket at path. The caller is responsible for
-// removing a stale socket left behind by a dead daemon. log may be nil.
+// SocketMode is the permission the control socket is given: the owner alone
+// may talk to the daemon, because every command the daemon answers is one the
+// owner could run themselves.
+const SocketMode os.FileMode = 0o600
+
+// Listen binds the control socket at path and restricts it to its owner. The
+// caller is responsible for removing a stale socket left behind by a dead
+// daemon. log may be nil.
 func Listen(path string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -39,6 +46,14 @@ func Listen(path string, log *slog.Logger) (*Server, error) {
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("listen on control socket %s: %w", path, err)
+	}
+	// The socket is created with whatever the umask allows, which can be
+	// world-writable. It lives in a directory only the owner may enter, so
+	// the window this closes is small, but the mode is what says who may
+	// command the daemon.
+	if err := os.Chmod(path, SocketMode); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("restrict control socket %s: %w", path, err)
 	}
 	return &Server{ln: ln, path: path, log: log}, nil
 }
