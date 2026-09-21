@@ -24,6 +24,7 @@ type summaryView struct {
 	Hashed     int   `json:"hashed"`
 	Bytes      int64 `json:"bytes"`
 	Ignored    int   `json:"ignored"`
+	Skipped    int   `json:"skipped"`
 	Changes    int   `json:"changes"`
 	DurationMS int64 `json:"duration_ms"`
 	DryRun     bool  `json:"dry_run"`
@@ -34,6 +35,8 @@ type scanView struct {
 	FolderID string       `json:"folder_id"`
 	Changes  []changeView `json:"changes"`
 	Summary  summaryView  `json:"summary"`
+	// Warnings describes the entries the scan could not read.
+	Warnings []string `json:"warnings"`
 }
 
 // viewOfResult converts a scan result into its JSON shape.
@@ -44,13 +47,19 @@ func viewOfResult(r scan.Result) scanView {
 			Type: c.Type.String(), Path: c.Path, OldPath: c.OldPath, Hash: hashOf(c),
 		})
 	}
+	warnings := r.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
 	return scanView{
 		FolderID: string(r.FolderID),
 		Changes:  changes,
 		Summary: summaryView{
 			Scanned: r.Scanned, Hashed: r.Hashed, Bytes: r.Bytes, Ignored: r.Ignored,
-			Changes: len(r.Changes), DurationMS: r.Duration.Milliseconds(), DryRun: r.DryRun,
+			Skipped: r.Skipped, Changes: len(r.Changes),
+			DurationMS: r.Duration.Milliseconds(), DryRun: r.DryRun,
 		},
+		Warnings: warnings,
 	}
 }
 
@@ -118,13 +127,19 @@ func printScan(deps *Deps, r scan.Result) error {
 		}
 	}
 
+	for _, warning := range view.Warnings {
+		if _, err := fmt.Fprintln(deps.Stderr, "syncthis: skipped", warning); err != nil {
+			return err
+		}
+	}
+
 	suffix := ""
 	if r.DryRun {
 		suffix = " (dry run, nothing written)"
 	}
-	_, err := fmt.Fprintf(deps.Stdout, "%s: %d change(s); scanned %d, hashed %d, ignored %d%s\n",
+	_, err := fmt.Fprintf(deps.Stdout, "%s: %d change(s); scanned %d, hashed %d, ignored %d, skipped %d%s\n",
 		view.FolderID, view.Summary.Changes, view.Summary.Scanned,
-		view.Summary.Hashed, view.Summary.Ignored, suffix)
+		view.Summary.Hashed, view.Summary.Ignored, view.Summary.Skipped, suffix)
 	return err
 }
 

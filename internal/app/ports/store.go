@@ -15,6 +15,10 @@ import (
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrAlreadyExists = errors.New("already exists")
+	// ErrStaleManifest reports that the manifest a scan diffed against is no
+	// longer the stored one, because another scan wrote in the meantime. The
+	// caller reloads the manifest, re-diffs and writes again.
+	ErrStaleManifest = errors.New("manifest changed since it was loaded")
 )
 
 // FolderStats summarizes the persisted contents of a folder, excluding tombstones.
@@ -35,6 +39,25 @@ type ChangeRecord struct {
 	OldHash  manifest.Hash
 	NewHash  manifest.Hash
 	At       time.Time
+}
+
+// ScanWrite is everything one scan persists: the entries it found, the paths
+// it did not find again, the classified changes and the outcome recorded on
+// the folder.
+type ScanWrite struct {
+	// BaseSequence is the folder sequence the scan read from the manifest it
+	// diffed against.
+	BaseSequence uint64
+	Upserts      []manifest.Entry
+	Deleted      []string
+	Changes      []manifest.Change
+	// By is the device the new versions are attributed to.
+	By device.ID
+	// At is the scan timestamp, stored as the folder's last scan time.
+	At time.Time
+	// LastError is the failure summary recorded on the folder, empty when the
+	// scan read everything it wanted to.
+	LastError string
 }
 
 // TransferFilter narrows a transfer listing. Zero values mean "no filter".
@@ -78,6 +101,10 @@ type FileStore interface {
 	SetSyncedHash(ctx context.Context, id folder.ID, path string, h manifest.Hash) error
 	FolderStats(ctx context.Context, id folder.ID) (FolderStats, error)
 	AppendChanges(ctx context.Context, id folder.ID, changes []manifest.Change, now time.Time) error
+	// ApplyScan writes the result of one scan atomically. It returns
+	// ErrStaleManifest, and writes nothing, when the folder sequence moved
+	// since the scan loaded the manifest.
+	ApplyScan(ctx context.Context, id folder.ID, w ScanWrite) error
 	// SyncFolderSequence raises the folder sequence counter above every
 	// sequence already assigned to a file of that folder. It is a no-op when
 	// the counter is already ahead.

@@ -2,9 +2,12 @@ package scan_test
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"io/fs"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -494,3 +497,172 @@ func TestScan_CancelMidwayLeavesDBConsistent(t *testing.T) {
 
 // compile-time check that the counting hasher still satisfies the port.
 var _ ports.Hasher = (*countingHasher)(nil)
+
+// unreadableFS is a filesystem where one path cannot be opened, like a file
+// whose permissions deny the user running the scan.
+type unreadableFS struct {
+	*fakes.FileSystem
+	path string
+}
+
+// Open fails with a permission error for the unreadable path.
+func (f unreadableFS) Open(p string) (io.ReadCloser, error) {
+	if p == f.path {
+		return nil, fmt.Errorf("open %s: %w", p, fs.ErrPermission)
+	}
+	return f.FileSystem.Open(p)
+}
+
+// scannerOver returns a scanner using fsys instead of the environment's own
+// filesystem, with everything else shared.
+func (e *env) scannerOver(fsys ports.FileSystem) *scan.Scanner {
+	return scan.New(fsys, e.hasher, e.store, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+}
+
+// folderState returns the stored scan state of the environment's folder.
+func (e *env) folderState(t *testing.T) (time.Time, string) {
+	t.Helper()
+	f, err := e.store.GetFolder(context.Background(), e.folder.ID)
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+	return f.LastScanAt, f.LastError
+}
+
+func TestScan_UnreadableFileIsSkippedAndRecorded(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.write("locked", "secret")
+	scanner := e.scannerOver(unreadableFS{e.fs, root + "/locked"})
+
+	res, err := scanner.Scan(context.Background(), e.folder, scan.Options{})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	if res.Skipped != 1 || len(res.Warnings) != 1 {
+		t.Fatalf("skipped = %d, warnings = %v, want 1 and one message", res.Skipped, res.Warnings)
+	}
+	if !strings.Contains(res.Warnings[0], "locked") || !strings.Contains(res.Warnings[0], "permission denied") {
+		t.Fatalf("warning = %q", res.Warnings[0])
+	}
+	if got := summary(res); !equal(got, []string{"create:a.txt"}) {
+		t.Fatalf("changes = %v, want only the readable file", got)
+	}
+	if got := e.stored(t); !equal(got, []string{"a.txt"}) {
+		t.Fatalf("stored = %v, want only the readable file", got)
+	}
+
+	at, lastErr := e.folderState(t)
+	if lastErr != res.Warning() || lastErr == "" {
+		t.Fatalf("folder last error = %q, want the scan warning %q", lastErr, res.Warning())
+	}
+	if at.IsZero() {
+		t.Fatal("a scan that finished must record when it ran")
+	}
+}
+
+func TestScan_UnreadableFileKeepsItsStoredVersion(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.write("locked", "secret")
+	e.scan(t, scan.Options{})
+
+	scanner := e.scannerOver(unreadableFS{e.fs, root + "/locked"})
+	e.overwrite(t, "locked", "changed")
+
+	res, err := scanner.Scan(context.Background(), e.folder, scan.Options{})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(res.Changes) != 0 {
+		t.Fatalf("changes = %v, want none: an unreadable file is not a deletion", summary(res))
+	}
+	if got := e.stored(t); !equal(got, []string{"a.txt", "locked"}) {
+		t.Fatalf("stored = %v, want both files", got)
+	}
+}
+
+func TestScan_WalkFailureIsRecordedOnTheFolder(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+	firstScanAt, _ := e.folderState(t)
+
+	scanner := e.scannerOver(brokenFS{e.fs})
+	if _, err := scanner.Scan(context.Background(), e.folder, scan.Options{}); err == nil {
+		t.Fatal("scan should fail when the folder cannot be walked")
+	}
+
+	at, lastErr := e.folderState(t)
+	if lastErr == "" {
+		t.Fatal("a failed scan must record its error on the folder")
+	}
+	if !at.Equal(firstScanAt) {
+		t.Fatalf("last scan time = %v, want the time of the last scan that finished (%v)", at, firstScanAt)
+	}
+}
+
+// brokenFS is a filesystem whose walk always fails.
+type brokenFS struct {
+	*fakes.FileSystem
+}
+
+// Walk reports an unreadable directory.
+func (f brokenFS) Walk(_ context.Context, root string, _ ports.WalkFunc) error {
+	return fmt.Errorf("walk %s: %w", root, fs.ErrPermission)
+}
+
+// hookedStore runs a function the first time a manifest is loaded, so a test
+// can let another scan write in between a scan's load and its persist.
+type hookedStore struct {
+	*fakes.Store
+	once  sync.Once
+	after func()
+}
+
+// LoadManifest loads the manifest and then runs the hook once.
+func (s *hookedStore) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error) {
+	m, err := s.Store.LoadManifest(ctx, id)
+	s.once.Do(func() {
+		if s.after != nil {
+			s.after()
+		}
+	})
+	return m, err
+}
+
+func TestScan_ConcurrentScansLogEachChangeOnce(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.write("sub/b.txt", "beta")
+
+	hooked := &hookedStore{Store: e.store}
+	slow := scan.New(e.fs, e.hasher, hooked, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+	hooked.after = func() {
+		// A second scanner finishes completely while the first one is still
+		// walking the folder.
+		if _, err := e.scanner.Scan(context.Background(), e.folder, scan.Options{}); err != nil {
+			t.Errorf("concurrent scan: %v", err)
+		}
+	}
+
+	res, err := slow.Scan(context.Background(), e.folder, scan.Options{})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(res.Changes) != 0 {
+		t.Fatalf("changes = %v, want none: the other scan logged them already", summary(res))
+	}
+
+	recs, err := e.store.RecentChanges(context.Background(), e.folder.ID, 0)
+	if err != nil {
+		t.Fatalf("recent changes: %v", err)
+	}
+	if len(recs) != 3 {
+		t.Fatalf("change rows = %d, want 3 (one per created entry)", len(recs))
+	}
+	if got := e.stored(t); !equal(got, []string{"a.txt", "sub", "sub/b.txt"}) {
+		t.Fatalf("stored = %v", got)
+	}
+}

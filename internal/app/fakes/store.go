@@ -16,6 +16,9 @@ import (
 
 // Store is an in-memory ports.MetadataStore.
 type Store struct {
+	// applyMu serializes ApplyScan calls so the sequence check and the writes
+	// that follow it cannot interleave with another scan.
+	applyMu   sync.Mutex
 	mu        sync.Mutex
 	folders   map[folder.ID]folder.Folder
 	files     map[folder.ID]map[string]manifest.Entry
@@ -245,6 +248,32 @@ func (s *Store) AppendChanges(_ context.Context, id folder.ID, changes []manifes
 		s.changes[id] = append(s.changes[id], rec)
 	}
 	return nil
+}
+
+// ApplyScan writes one scan result atomically, refusing the write when the
+// folder sequence moved since the scan loaded the manifest.
+func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) error {
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
+
+	s.mu.Lock()
+	if current := s.sequences[id]; current != w.BaseSequence {
+		s.mu.Unlock()
+		return fmt.Errorf("folder %q at sequence %d, scan started from %d: %w",
+			id, current, w.BaseSequence, ports.ErrStaleManifest)
+	}
+	s.mu.Unlock()
+
+	if err := s.UpsertEntries(ctx, id, w.Upserts); err != nil {
+		return err
+	}
+	if err := s.MarkDeleted(ctx, id, w.Deleted, w.By, w.At); err != nil {
+		return err
+	}
+	if err := s.AppendChanges(ctx, id, w.Changes, w.At); err != nil {
+		return err
+	}
+	return s.SetFolderScan(ctx, id, w.At, w.LastError)
 }
 
 // SyncFolderSequence raises the folder sequence counter above every sequence

@@ -251,3 +251,56 @@ func TestAppendAndRecentChanges(t *testing.T) {
 		t.Fatalf("records = %d, want 2", len(all))
 	}
 }
+
+func TestApplyScan_RejectsAStaleWrite(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openStore(t)
+	if err := store.SaveFolder(ctx, testFolder("docs", "/home/u/docs")); err != nil {
+		t.Fatalf("SaveFolder error: %v", err)
+	}
+
+	entry := manifest.Entry{Path: "a.txt", Kind: manifest.KindFile, Hash: hashOf(1)}
+	write := ports.ScanWrite{
+		BaseSequence: 0,
+		Upserts:      []manifest.Entry{entry},
+		Changes:      []manifest.Change{{Type: manifest.Create, Path: "a.txt", New: &entry}},
+		By:           "DEVICEID",
+		At:           testTime,
+	}
+	if err := store.ApplyScan(ctx, "docs", write); err != nil {
+		t.Fatalf("first ApplyScan error: %v", err)
+	}
+
+	// A second scan that started from the same manifest must not append its
+	// changes a second time.
+	err := store.ApplyScan(ctx, "docs", write)
+	if !errors.Is(err, ports.ErrStaleManifest) {
+		t.Fatalf("stale ApplyScan error = %v, want ErrStaleManifest", err)
+	}
+
+	recs, err := store.RecentChanges(ctx, "docs", 0)
+	if err != nil {
+		t.Fatalf("RecentChanges error: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("change rows = %d, want 1", len(recs))
+	}
+
+	m, err := store.LoadManifest(ctx, "docs")
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	write.BaseSequence = m.Sequence
+	write.LastError = "1 entry/entries skipped: locked: permission denied"
+	if err := store.ApplyScan(ctx, "docs", write); err != nil {
+		t.Fatalf("ApplyScan from the current sequence error: %v", err)
+	}
+
+	f, err := store.GetFolder(ctx, "docs")
+	if err != nil {
+		t.Fatalf("GetFolder error: %v", err)
+	}
+	if f.LastError != write.LastError || !f.LastScanAt.Equal(testTime) {
+		t.Fatalf("folder scan state = %q at %v", f.LastError, f.LastScanAt)
+	}
+}

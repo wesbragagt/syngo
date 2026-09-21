@@ -173,7 +173,8 @@ func (w *walker) addSymlink(rel string, info ports.FileInfo) error {
 	}
 	target, err := w.scanner.fs.ReadLink(path.Join(w.folder.Path, rel))
 	if err != nil {
-		return fmt.Errorf("scan folder %q: %w", w.folder.ID, err)
+		w.skip(rel, err)
+		return nil
 	}
 	w.add(manifest.Entry{
 		Path: rel, Kind: manifest.KindSymlink, ModTime: info.ModTime,
@@ -199,7 +200,8 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 
 	hash, err := w.hash(path.Join(w.folder.Path, rel))
 	if err != nil {
-		return err
+		w.skip(rel, err)
+		return nil
 	}
 	e.Hash = hash
 	if prev, ok := w.old.Entries[rel]; ok {
@@ -215,7 +217,7 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 func (w *walker) hash(p string) (manifest.Hash, error) {
 	rc, err := w.scanner.fs.Open(p)
 	if err != nil {
-		return manifest.Hash{}, fmt.Errorf("scan folder %q: %w", w.folder.ID, err)
+		return manifest.Hash{}, err
 	}
 	defer func() { _ = rc.Close() }()
 
@@ -224,6 +226,20 @@ func (w *walker) hash(p string) (manifest.Hash, error) {
 		return manifest.Hash{}, fmt.Errorf("hash %s: %w", p, err)
 	}
 	return h, nil
+}
+
+// skip records an entry the scan could not read. The stored version, if there
+// is one, is carried over unchanged so an unreadable file is not classified as
+// a deletion, and the folder keeps the hash it already knows.
+func (w *walker) skip(rel string, err error) {
+	w.result.Skipped++
+	if len(w.result.Warnings) < MaxWarnings {
+		w.result.Warnings = append(w.result.Warnings, fmt.Sprintf("%s: %v", rel, err))
+	}
+	w.scanner.log.Debug("skipping unreadable entry", "folder", w.folder.ID, "path", rel, "error", err)
+	if prev, ok := w.old.Entries[rel]; ok && !prev.Deleted {
+		w.cur.Add(prev)
+	}
 }
 
 // add records an entry and reports progress.

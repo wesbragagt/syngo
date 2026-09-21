@@ -62,11 +62,13 @@ func (FS) Walk(ctx context.Context, root string, fn ports.WalkFunc) error {
 	return nil
 }
 
-// Open opens a file for reading.
+// Open opens a file for reading. The error of a failed open already names the
+// operation and the path, so it is returned as it is rather than wrapped in a
+// second "open <path>" prefix.
 func (FS) Open(path string) (io.ReadCloser, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, err
 	}
 	return f, nil
 }

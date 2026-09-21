@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -80,28 +81,7 @@ func (s *Store) UpsertEntries(ctx context.Context, id folder.ID, entries []manif
 		batch := entries[start:end]
 
 		err := s.tx(ctx, func(tx *sql.Tx) error {
-			next, err := nextSequence(ctx, tx, id, len(batch))
-			if err != nil {
-				return err
-			}
-			for i, e := range batch {
-				if _, err := tx.ExecContext(ctx, `
-					INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, link_target,
-					                   inode, deleted, modified_by, sequence, synced_hash, updated_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-					ON CONFLICT(folder_id, rel_path) DO UPDATE SET
-						kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
-						mode = excluded.mode, hash = excluded.hash, link_target = excluded.link_target,
-						inode = excluded.inode, deleted = excluded.deleted, modified_by = excluded.modified_by,
-						sequence = excluded.sequence, synced_hash = excluded.synced_hash,
-						updated_at = excluded.updated_at`,
-					string(id), e.Path, int(e.Kind), e.Size, e.ModTime.UnixNano(), int64(e.Mode),
-					e.Hash.String(), e.LinkTarget, int64(e.Inode), boolToInt(e.Deleted),
-					string(e.ModifiedBy), int64(next+uint64(i)), e.SyncedHash.String(), now); err != nil {
-					return fmt.Errorf("upsert file %q in folder %q: %w", e.Path, id, err)
-				}
-			}
-			return nil
+			return upsertEntries(ctx, tx, id, batch, now)
 		})
 		if err != nil {
 			return err
@@ -117,21 +97,7 @@ func (s *Store) MarkDeleted(ctx context.Context, id folder.ID, paths []string, b
 		batch := paths[start:end]
 
 		err := s.tx(ctx, func(tx *sql.Tx) error {
-			next, err := nextSequence(ctx, tx, id, len(batch))
-			if err != nil {
-				return err
-			}
-			for i, p := range batch {
-				if _, err := tx.ExecContext(ctx, `
-					UPDATE files SET deleted = 1, hash = '', size = 0, mtime_ns = ?, modified_by = ?,
-					                 sequence = ?, updated_at = ?
-					WHERE folder_id = ? AND rel_path = ?`,
-					now.UnixNano(), string(by), int64(next+uint64(i)), now.UnixNano(),
-					string(id), p); err != nil {
-					return fmt.Errorf("mark %q deleted in folder %q: %w", p, id, err)
-				}
-			}
-			return nil
+			return markDeleted(ctx, tx, id, batch, by, now)
 		})
 		if err != nil {
 			return err
@@ -177,22 +143,7 @@ func (s *Store) AppendChanges(ctx context.Context, id folder.ID, changes []manif
 		batch := changes[start:end]
 
 		err := s.tx(ctx, func(tx *sql.Tx) error {
-			for _, c := range batch {
-				var oldHash, newHash string
-				if c.Old != nil {
-					oldHash = c.Old.Hash.String()
-				}
-				if c.New != nil {
-					newHash = c.New.Hash.String()
-				}
-				if _, err := tx.ExecContext(ctx, `
-					INSERT INTO changes (folder_id, type, rel_path, old_path, old_hash, new_hash, at)
-					VALUES (?, ?, ?, ?, ?, ?, ?)`,
-					string(id), c.Type.String(), c.Path, c.OldPath, oldHash, newHash, now.UnixNano()); err != nil {
-					return fmt.Errorf("append change for %q in folder %q: %w", c.Path, id, err)
-				}
-			}
-			return nil
+			return appendChanges(ctx, tx, id, batch, now)
 		})
 		if err != nil {
 			return err
@@ -250,6 +201,117 @@ func (s *Store) RecentChanges(ctx context.Context, id folder.ID, limit int) ([]p
 		return nil, fmt.Errorf("recent changes of folder %q: %w", id, err)
 	}
 	return out, nil
+}
+
+// upsertEntries writes entries inside tx, assigning each one the next sequence
+// number of the folder.
+func upsertEntries(ctx context.Context, tx *sql.Tx, id folder.ID, entries []manifest.Entry, updatedAt int64) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	next, err := nextSequence(ctx, tx, id, len(entries))
+	if err != nil {
+		return err
+	}
+	for i, e := range entries {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, link_target,
+			                   inode, deleted, modified_by, sequence, synced_hash, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(folder_id, rel_path) DO UPDATE SET
+				kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
+				mode = excluded.mode, hash = excluded.hash, link_target = excluded.link_target,
+				inode = excluded.inode, deleted = excluded.deleted, modified_by = excluded.modified_by,
+				sequence = excluded.sequence, synced_hash = excluded.synced_hash,
+				updated_at = excluded.updated_at`,
+			string(id), e.Path, int(e.Kind), e.Size, e.ModTime.UnixNano(), int64(e.Mode),
+			e.Hash.String(), e.LinkTarget, int64(e.Inode), boolToInt(e.Deleted),
+			string(e.ModifiedBy), int64(next+uint64(i)), e.SyncedHash.String(), updatedAt); err != nil {
+			return fmt.Errorf("upsert file %q in folder %q: %w", e.Path, id, err)
+		}
+	}
+	return nil
+}
+
+// markDeleted turns paths into tombstones inside tx. Unknown paths are ignored.
+func markDeleted(ctx context.Context, tx *sql.Tx, id folder.ID, paths []string, by device.ID, now time.Time) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	next, err := nextSequence(ctx, tx, id, len(paths))
+	if err != nil {
+		return err
+	}
+	for i, p := range paths {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE files SET deleted = 1, hash = '', size = 0, mtime_ns = ?, modified_by = ?,
+			                 sequence = ?, updated_at = ?
+			WHERE folder_id = ? AND rel_path = ?`,
+			now.UnixNano(), string(by), int64(next+uint64(i)), now.UnixNano(),
+			string(id), p); err != nil {
+			return fmt.Errorf("mark %q deleted in folder %q: %w", p, id, err)
+		}
+	}
+	return nil
+}
+
+// appendChanges records scan classifications inside tx.
+func appendChanges(ctx context.Context, tx *sql.Tx, id folder.ID, changes []manifest.Change, now time.Time) error {
+	for _, c := range changes {
+		var oldHash, newHash string
+		if c.Old != nil {
+			oldHash = c.Old.Hash.String()
+		}
+		if c.New != nil {
+			newHash = c.New.Hash.String()
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO changes (folder_id, type, rel_path, old_path, old_hash, new_hash, at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			string(id), c.Type.String(), c.Path, c.OldPath, oldHash, newHash, now.UnixNano()); err != nil {
+			return fmt.Errorf("append change for %q in folder %q: %w", c.Path, id, err)
+		}
+	}
+	return nil
+}
+
+// ApplyScan writes one scan result in a single immediate transaction. The
+// folder sequence read at the start of the transaction must still be the one
+// the scan diffed against, otherwise nothing is written and ErrStaleManifest
+// is returned: a concurrent scan has already logged its own changes.
+func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var next int64
+		err := tx.QueryRowContext(ctx,
+			`SELECT next FROM folder_sequence WHERE folder_id = ?`, string(id)).Scan(&next)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			next = 1
+		case err != nil:
+			return fmt.Errorf("read sequence of folder %q: %w", id, err)
+		}
+		if current := uint64(next) - 1; current != w.BaseSequence {
+			return fmt.Errorf("folder %q at sequence %d, scan started from %d: %w",
+				id, current, w.BaseSequence, ports.ErrStaleManifest)
+		}
+
+		if err := upsertEntries(ctx, tx, id, w.Upserts, w.At.UnixNano()); err != nil {
+			return err
+		}
+		if err := markDeleted(ctx, tx, id, w.Deleted, w.By, w.At); err != nil {
+			return err
+		}
+		if err := appendChanges(ctx, tx, id, w.Changes, w.At); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx,
+			`UPDATE folders SET last_scan_at = ?, last_error = ? WHERE id = ?`,
+			nullTime(w.At), w.LastError, string(id))
+		if err != nil {
+			return fmt.Errorf("set scan state on folder %q: %w", id, err)
+		}
+		return requireRow(res, fmt.Sprintf("folder %q", id))
+	})
 }
 
 // folderSequence returns the last sequence number assigned in a folder.

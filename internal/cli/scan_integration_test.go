@@ -24,9 +24,11 @@ type scanOutput struct {
 		Scanned int  `json:"scanned"`
 		Hashed  int  `json:"hashed"`
 		Ignored int  `json:"ignored"`
+		Skipped int  `json:"skipped"`
 		Changes int  `json:"changes"`
 		DryRun  bool `json:"dry_run"`
 	} `json:"summary"`
+	Warnings []string `json:"warnings"`
 }
 
 // setupFolder initializes the data directory and registers the folder root.
@@ -255,5 +257,58 @@ func TestScan_UnknownFolderExits4(t *testing.T) {
 
 	if code, _, _ := e.run("", "scan", "nope"); code != cli.ExitNotFound {
 		t.Fatalf("scan exit = %d, want %d", code, cli.ExitNotFound)
+	}
+}
+
+func TestScan_UnreadableFileIsReportedInStatus(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads files whatever their permissions say")
+	}
+	e := newEnv(t)
+	if err := os.WriteFile(filepath.Join(e.folderPath, "readable.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write readable.txt: %v", err)
+	}
+	locked := filepath.Join(e.folderPath, "locked")
+	if err := os.WriteFile(locked, []byte("secret"), 0o000); err != nil {
+		t.Fatalf("write locked: %v", err)
+	}
+	setupFolder(t, e)
+
+	code, out := scanJSON(t, e)
+	if code != cli.ExitOK {
+		t.Fatalf("scan exit = %d, want 0: one unreadable file does not fail the folder", code)
+	}
+	if out.Summary.Skipped != 1 || len(out.Warnings) != 1 {
+		t.Fatalf("skipped = %d, warnings = %v, want 1 and one message", out.Summary.Skipped, out.Warnings)
+	}
+	if !strings.Contains(out.Warnings[0], "locked") {
+		t.Fatalf("warning = %q, want the unreadable path", out.Warnings[0])
+	}
+	if out.Summary.Changes != 1 {
+		t.Fatalf("changes = %d, want only the readable file", out.Summary.Changes)
+	}
+
+	status := folderStatus(t, e)
+	if status["state"] != "error" {
+		t.Fatalf("status state = %v, want \"error\"", status["state"])
+	}
+	message, ok := status["error"].(string)
+	if !ok || !strings.Contains(message, "locked") {
+		t.Fatalf("status error = %v, want the skipped path", status["error"])
+	}
+	if status["last_scan_at"] == nil {
+		t.Fatal("a scan that finished must record when it ran")
+	}
+
+	// Once the file can be read again the folder goes back to idle.
+	if err := os.Chmod(locked, 0o644); err != nil {
+		t.Fatalf("chmod locked: %v", err)
+	}
+	if code, out = scanJSON(t, e); code != cli.ExitOK || out.Summary.Skipped != 0 {
+		t.Fatalf("second scan exit = %d with %d skipped, want 0 and 0", code, out.Summary.Skipped)
+	}
+	status = folderStatus(t, e)
+	if status["state"] != "idle" || status["error"] != nil {
+		t.Fatalf("status = %v / %v, want idle and no error", status["state"], status["error"])
 	}
 }
