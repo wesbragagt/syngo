@@ -312,3 +312,36 @@ func TestScan_UnreadableFileIsReportedInStatus(t *testing.T) {
 		t.Fatalf("status = %v / %v, want idle and no error", status["state"], status["error"])
 	}
 }
+
+func TestScan_MissingRootFailsAndKeepsTheFileCounts(t *testing.T) {
+	e := newEnv(t)
+	if err := os.WriteFile(filepath.Join(e.folderPath, "a.txt"), []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	setupFolder(t, e)
+	if code, _ := scanJSON(t, e); code != cli.ExitOK {
+		t.Fatalf("first scan exit = %d, want 0", code)
+	}
+	before := folderStatus(t, e)
+
+	if err := os.RemoveAll(e.folderPath); err != nil {
+		t.Fatalf("remove folder root: %v", err)
+	}
+
+	code, _, stderr := e.run("", "scan", "docs")
+	if code == cli.ExitOK {
+		t.Fatal("scan exit = 0, want a failure when the folder root is gone")
+	}
+	if !strings.Contains(stderr, "root") {
+		t.Fatalf("stderr = %q, want it to name the missing root", stderr)
+	}
+
+	after := folderStatus(t, e)
+	if after["state"] != "error" {
+		t.Fatalf("status state = %v, want \"error\"", after["state"])
+	}
+	if after["files"] != before["files"] || after["bytes"] != before["bytes"] {
+		t.Fatalf("counts changed from %v/%v to %v/%v; a missing root is not a mass deletion",
+			before["files"], before["bytes"], after["files"], after["bytes"])
+	}
+}

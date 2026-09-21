@@ -185,3 +185,33 @@ func TestWatch_StopsOnCancel(t *testing.T) {
 		t.Fatalf("Watch did not return after cancel")
 	}
 }
+
+func TestWatch_MissingRootFails(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+
+	err := fsnotifywatch.New(nil).Watch(context.Background(), missing, make(chan ports.WatchEvent, 1))
+	if !errors.Is(err, fsnotifywatch.ErrRootMissing) {
+		t.Fatalf("Watch error = %v, want ErrRootMissing", err)
+	}
+}
+
+func TestWatch_SecondWatchOnTheSameRootStillReportsChanges(t *testing.T) {
+	root := t.TempDir()
+	events, cancel, done := watch(t, root)
+
+	// The first watch goes away, as it does when a scan fails, and the root
+	// is watched again.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(eventTimeout):
+		t.Fatal("the first watch did not stop")
+	}
+	drain(events)
+
+	second, _, _ := watch(t, root)
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	waitForEvent(t, second, filepath.Join(root, "a.txt"), ports.OpCreate, ports.OpWrite)
+}

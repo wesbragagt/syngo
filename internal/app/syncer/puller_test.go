@@ -679,3 +679,24 @@ func (h handlerFunc) Manifest(ctx context.Context, peer device.ID, id folder.ID)
 func (h handlerFunc) Chunk(ctx context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 	return h.chunk(ctx, peer, req)
 }
+
+func TestSync_MissingFolderRootPullsNothing(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", []byte("hello"))
+
+	d, conn := newDest(t, src.server)
+	if err := d.fs.Remove(d.folder.Path); err != nil {
+		t.Fatalf("remove destination root: %v", err)
+	}
+	before := d.fs.Paths()
+
+	if summary := d.sync(t, conn); summary != (syncer.Summary{}) {
+		t.Fatalf("summary = %+v, want nothing done", summary)
+	}
+	if len(conn.ManifestRequests()) != 0 {
+		t.Fatal("a folder whose root is gone asked the peer for its manifest")
+	}
+	if got := d.fs.Paths(); len(got) != len(before) {
+		t.Fatalf("filesystem = %v, want it untouched (%v)", got, before)
+	}
+}

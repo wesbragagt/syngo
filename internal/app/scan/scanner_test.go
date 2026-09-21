@@ -2,6 +2,7 @@ package scan_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -664,5 +665,48 @@ func TestScan_ConcurrentScansLogEachChangeOnce(t *testing.T) {
 	}
 	if got := e.stored(t); !equal(got, []string{"a.txt", "sub", "sub/b.txt"}) {
 		t.Fatalf("stored = %v", got)
+	}
+}
+
+func TestScan_MissingRootFailsWithoutDeletingAnything(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.write("sub/b.txt", "beta")
+	e.scan(t, scan.Options{})
+	firstScanAt, _ := e.folderState(t)
+
+	e.remove(t, "sub/b.txt")
+	e.remove(t, "a.txt")
+	e.remove(t, "sub")
+	if err := e.fs.Remove(root); err != nil {
+		t.Fatalf("remove root: %v", err)
+	}
+
+	_, err := e.scanner.Scan(context.Background(), e.folder, scan.Options{})
+	if !errors.Is(err, scan.ErrRootMissing) {
+		t.Fatalf("scan error = %v, want ErrRootMissing", err)
+	}
+	if got := e.stored(t); !equal(got, []string{"a.txt", "sub", "sub/b.txt"}) {
+		t.Fatalf("stored = %v, want the entries untouched", got)
+	}
+
+	at, lastErr := e.folderState(t)
+	if !strings.Contains(lastErr, "root") {
+		t.Fatalf("last error = %q, want it to name the missing root", lastErr)
+	}
+	if !at.Equal(firstScanAt) {
+		t.Fatalf("last scan time = %v, want the time of the last scan that finished (%v)", at, firstScanAt)
+	}
+}
+
+func TestScan_RootThatIsNotADirectoryFails(t *testing.T) {
+	e := newEnv(t)
+	if err := e.fs.Remove(root); err != nil {
+		t.Fatalf("remove root: %v", err)
+	}
+	e.fs.AddFile(root, []byte("not a directory"), 0o644)
+
+	if _, err := e.scanner.Scan(context.Background(), e.folder, scan.Options{}); !errors.Is(err, scan.ErrRootMissing) {
+		t.Fatalf("scan error = %v, want ErrRootMissing", err)
 	}
 }

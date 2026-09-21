@@ -100,6 +100,12 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 	if !f.CanReceive() || f.Paused {
 		return summary, nil
 	}
+	// A folder whose root is gone must not be recreated by a sync: doing so
+	// would install files into a directory the user removed.
+	if !p.rootUsable(f) {
+		p.log.Warn("folder root is missing, skipping sync", "folder", f.ID, "path", f.Path)
+		return summary, nil
+	}
 
 	remote, err := conn.RequestManifest(ctx, f.ID)
 	if err != nil {
@@ -132,6 +138,15 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		"pulled", summary.Pulled, "deleted", summary.Deleted, "conflicts", summary.Conflicts,
 		"failed", summary.Failed, "bytes", summary.Bytes)
 	return summary, nil
+}
+
+// rootUsable reports whether the folder root is still a directory.
+func (p *Puller) rootUsable(f folder.Folder) bool {
+	info, err := p.fs.Lstat(f.Path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 // ResumeAll prepares the live transfers of a folder for a new process: a

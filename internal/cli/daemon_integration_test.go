@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,7 +167,10 @@ func TestDaemonRun_TracksCreateModifyRenameDelete(t *testing.T) {
 	if err := os.Rename(filepath.Join(e.folderPath, "sub/b.txt"), filepath.Join(e.folderPath, "sub/c.txt")); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	waitForStatus(t, e, "the rename", func(r statusReport) bool { return r.Folders[0].Files == 2 })
+	// The file count does not change on a rename, so the stored names are
+	// what proves the daemon saw it: a dry run finds nothing to change
+	// only once the store holds sub/c.txt and no longer holds sub/b.txt.
+	waitForClean(t, e, "the rename")
 
 	if err := os.Remove(filepath.Join(e.folderPath, "sub/c.txt")); err != nil {
 		t.Fatalf("remove: %v", err)
@@ -248,6 +252,94 @@ func TestDaemonRun_StalePIDFileAndSocketAreReplaced(t *testing.T) {
 
 	startDaemon(t, e)
 	waitForDaemon(t, e)
+}
+
+func TestDaemonRun_OrphanedUnixSocketIsReplaced(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+
+	// A daemon killed without cleaning up leaves a real socket file that
+	// nothing listens on any more.
+	ln, err := net.Listen("unix", compose.ControlSocketPath(e.dataDir))
+	if err != nil {
+		t.Fatalf("bind stale socket: %v", err)
+	}
+	// Closing the listener must leave the socket file behind, the way a
+	// killed daemon does.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close stale listener: %v", err)
+	}
+	info, err := os.Stat(compose.ControlSocketPath(e.dataDir))
+	if err != nil {
+		t.Fatalf("stat stale socket: %v", err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("stale path mode = %v, want a socket", info.Mode())
+	}
+
+	startDaemon(t, e)
+	waitForDaemon(t, e)
+}
+
+func TestDaemonRun_ReWatchesARecreatedFolderRoot(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+	// The reconciliation tick re-attaches the watch. It is long enough that
+	// a file written right after the recovery can only be noticed by the
+	// watch, and short enough for the test to wait for one tick.
+	startDaemon(t, e, "--rescan-interval", "3s")
+	waitForDaemon(t, e)
+	write(t, e, "a.txt", "one")
+	waitForStatus(t, e, "the first file", func(r statusReport) bool { return r.Folders[0].Files == 1 })
+
+	// The root disappears: the folder goes into error and keeps its files.
+	if err := os.RemoveAll(e.folderPath); err != nil {
+		t.Fatalf("remove folder root: %v", err)
+	}
+	report := waitForStatus(t, e, "the folder to report the missing root", func(r statusReport) bool {
+		return r.Folders[0].State == "error"
+	})
+	if report.Folders[0].Files != 1 {
+		t.Fatalf("files = %d while the root is gone, want the stored entry kept", report.Folders[0].Files)
+	}
+
+	// The root comes back: the daemon watches it again, so a file written
+	// after the reconciliation tick is picked up without a manual rescan.
+	if err := os.MkdirAll(e.folderPath, 0o755); err != nil {
+		t.Fatalf("recreate folder root: %v", err)
+	}
+	waitForStatus(t, e, "the folder to recover", func(r statusReport) bool {
+		return r.Folders[0].State != "error" && r.Folders[0].Files == 0
+	})
+
+	// The recovery happened on a tick, so the next one is a rescan interval
+	// away: a file seen before then went through the watch.
+	started := time.Now()
+	write(t, e, "b.txt", "two")
+	waitForStatus(t, e, "the file written after the root came back", func(r statusReport) bool {
+		return r.Folders[0].Files == 1
+	})
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("file detected after %s, want the watch to report it well before the next rescan", elapsed)
+	}
+}
+
+// waitForClean polls a dry-run scan until it finds nothing left to record,
+// which means the store describes exactly what is on disk.
+func waitForClean(t *testing.T, e env, what string) {
+	t.Helper()
+	deadline := time.Now().Add(convergeTimeout)
+	var last scanOutput
+	for time.Now().Before(deadline) {
+		code, out := scanJSON(t, e, "--dry-run")
+		last = out
+		if code == cli.ExitOK && out.Summary.Changes == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s; a dry run still reports %+v", what, last.Changes)
 }
 
 // deadPID returns the pid of a process that has already exited.

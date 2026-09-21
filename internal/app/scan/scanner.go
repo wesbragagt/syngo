@@ -3,6 +3,8 @@ package scan
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"path"
 	"strings"
@@ -13,6 +15,11 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
+
+// ErrRootMissing reports a folder root that does not exist or is not a
+// directory. A scan refuses to run rather than report every stored entry as
+// deleted, which would propagate the deletions to the peers.
+var ErrRootMissing = errors.New("folder root does not exist or is not a directory")
 
 // Scanner turns the contents of a folder into manifest entries and persists
 // the difference with what was stored by the previous scan.
@@ -48,6 +55,9 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 	started := s.clock.Now()
 	result := Result{FolderID: f.ID, DryRun: o.DryRun}
 
+	if err := s.checkRoot(f); err != nil {
+		return Result{}, s.recordFailure(ctx, f, err)
+	}
 	matcher, err := LoadIgnore(ctx, s.fs, f)
 	if err != nil {
 		return Result{}, s.recordFailure(ctx, f, err)
@@ -104,6 +114,23 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 	s.log.Debug("scan completed", "folder", f.ID, "changes", len(result.Changes),
 		"scanned", result.Scanned, "hashed", result.Hashed, "dry_run", o.DryRun)
 	return result, nil
+}
+
+// checkRoot reports whether the folder root is still a directory. A root that
+// was removed is not a folder whose contents were all deleted: the scan fails
+// and leaves the stored entries alone.
+func (s *Scanner) checkRoot(f folder.Folder) error {
+	info, err := s.fs.Lstat(f.Path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("folder %q root %s: %w", f.ID, f.Path, ErrRootMissing)
+	}
+	if err != nil {
+		return fmt.Errorf("folder %q root %s: %w", f.ID, f.Path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("folder %q root %s: %w", f.ID, f.Path, ErrRootMissing)
+	}
+	return nil
 }
 
 // persistRetries is how many times a scan reloads the manifest and re-diffs

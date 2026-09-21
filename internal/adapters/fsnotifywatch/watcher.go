@@ -19,6 +19,11 @@ import (
 
 var _ ports.Watcher = Watcher{}
 
+// ErrRootMissing reports a watch root that is not an existing directory.
+// Watch fails with it instead of watching nothing, so the caller can attach
+// the watch again once the directory is back.
+var ErrRootMissing = errors.New("watch root is not a directory")
+
 // reservedDir is the per-folder state directory; it holds partial downloads
 // and is never part of a manifest, so it is not worth watching.
 const reservedDir = ".syncthis"
@@ -37,8 +42,13 @@ func New(log *slog.Logger) Watcher {
 }
 
 // Watch sends every change beneath root to out until ctx is done. It returns
-// the context error on cancellation.
+// the context error on cancellation, and ErrRootMissing when root is not a
+// directory. Watching a tree that is already watched is safe: each call owns
+// its own inotify instance and drops it when it returns.
 func (w Watcher) Watch(ctx context.Context, root string, out chan<- ports.WatchEvent) error {
+	if !isDir(root) {
+		return fmt.Errorf("watch %s: %w", root, ErrRootMissing)
+	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("create watcher for %s: %w", root, err)

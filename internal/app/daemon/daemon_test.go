@@ -151,6 +151,14 @@ func startDaemon(t *testing.T, cfg daemon.Config, folders ...folder.Folder) *har
 // connections go through a fake dialer.
 func startDaemonWithPeers(t *testing.T, cfg daemon.Config, peers []device.Device, folders ...folder.Folder) *harness {
 	t.Helper()
+	return startDaemonWatching(t, cfg, nil, peers, folders...)
+}
+
+// startDaemonWatching wires a daemon around a watcher of the test's choosing.
+// A nil watcher installs the fake the other tests push events through.
+func startDaemonWatching(t *testing.T, cfg daemon.Config, watcher ports.Watcher,
+	peers []device.Device, folders ...folder.Folder) *harness {
+	t.Helper()
 
 	store := fakes.NewStore()
 	for _, f := range folders {
@@ -166,7 +174,10 @@ func startDaemonWithPeers(t *testing.T, cfg daemon.Config, peers []device.Device
 	dialer := fakes.NewDialer()
 	clock := fakes.NewClock(time.Time{})
 	identity := fakes.NewIdentity("DEVICE", "test")
-	watcher := fakes.NewWatcher()
+	fakeWatcher := fakes.NewWatcher()
+	if watcher == nil {
+		watcher = fakeWatcher
+	}
 	scanner := newRecordingScanner()
 
 	if cfg.RescanInterval == 0 {
@@ -186,7 +197,7 @@ func startDaemonWithPeers(t *testing.T, cfg daemon.Config, peers []device.Device
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &harness{daemon: d, store: store, watcher: watcher, scanner: scanner, dialer: dialer,
+	h := &harness{daemon: d, store: store, watcher: fakeWatcher, scanner: scanner, dialer: dialer,
 		done: make(chan error, 1), cancel: cancel, ctx: ctx, stopped: make(chan struct{})}
 	go func() { h.done <- d.Run(ctx) }()
 	t.Cleanup(func() {
@@ -244,9 +255,12 @@ func TestDaemon_ScansEveryFolderOnStartup(t *testing.T) {
 	if call := h.scanner.snapshot()[0]; !call.full() || call.ID != "docs" {
 		t.Fatalf("startup call = %+v, want a full scan of docs", call)
 	}
-	if roots := h.watcher.Roots(); len(roots) != 1 || roots[0] != folderRoot {
-		t.Fatalf("watched roots = %v, want [%s]", roots, folderRoot)
-	}
+	// The watch is attached in its own goroutine, so it is waited for
+	// rather than read once.
+	waitFor(t, "the watch on the folder root", func() bool {
+		roots := h.watcher.Roots()
+		return len(roots) == 1 && roots[0] == folderRoot
+	})
 }
 
 func TestDaemon_EventTriggersPartialScan(t *testing.T) {
@@ -540,4 +554,64 @@ func TestDaemon_UnreachablePeerReportsError(t *testing.T) {
 		}
 		return !report.Peers[0].Connected && report.Peers[0].Error != nil
 	})
+}
+
+// rootWatcher is a ports.Watcher whose root can be taken away: while the root
+// is missing, Watch fails at once the way the fsnotify adapter does.
+type rootWatcher struct {
+	mu       sync.Mutex
+	missing  bool
+	attached int
+}
+
+// Watch blocks until ctx is done, or fails when the root is missing.
+func (w *rootWatcher) Watch(ctx context.Context, _ string, _ chan<- ports.WatchEvent) error {
+	w.mu.Lock()
+	missing := w.missing
+	if !missing {
+		w.attached++
+	}
+	w.mu.Unlock()
+	if missing {
+		return errors.New("watch root is not a directory")
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// setMissing takes the root away or puts it back.
+func (w *rootWatcher) setMissing(missing bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.missing = missing
+}
+
+// attaches returns how often the watch was established.
+func (w *rootWatcher) attaches() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.attached
+}
+
+func TestDaemon_ReattachesWatchWhenTheRootComesBack(t *testing.T) {
+	watcher := &rootWatcher{}
+	h := startDaemonWatching(t, daemon.Config{RescanInterval: 20 * time.Millisecond},
+		watcher, nil, testFolder("docs", false))
+	waitFor(t, "startup watch", func() bool { return watcher.attaches() == 1 })
+
+	// The root goes away: scans fail and the watch is dropped.
+	watcher.setMissing(true)
+	h.scanner.failWith(errors.New("folder root does not exist or is not a directory"))
+	before := len(h.scanner.snapshot())
+	waitFor(t, "a failing scan", func() bool { return len(h.scanner.snapshot()) > before })
+	if got := watcher.attaches(); got != 1 {
+		t.Fatalf("watch attaches = %d while the root is missing, want 1", got)
+	}
+
+	// The root comes back: the next tick watches it again and scans it.
+	watcher.setMissing(false)
+	h.scanner.failWith(nil)
+	waitFor(t, "the watch to be re-established", func() bool { return watcher.attaches() >= 2 })
+	after := len(h.scanner.snapshot())
+	waitFor(t, "a scan after the root came back", func() bool { return len(h.scanner.snapshot()) > after })
 }
