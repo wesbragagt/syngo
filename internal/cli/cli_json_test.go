@@ -142,6 +142,16 @@ func jsonCases() []jsonCase {
 		{"conflict resolve", cli.ExitOK, func(t *testing.T) (env, []string) {
 			return withConflict(t), []string{"conflict", "resolve", "c1", "--keep", "remote", "--yes"}
 		}},
+		{"conflict resolve of a stale conflict", cli.ExitIntegrity, func(t *testing.T) (env, []string) {
+			return staleConflict(t), []string{"conflict", "resolve", "c1", "--keep", "local", "--yes"}
+		}},
+		{"conflict resolve of a resolved conflict", cli.ExitNotFound, func(t *testing.T) (env, []string) {
+			e := withConflict(t)
+			if code, _, stderr := e.run("", "conflict", "resolve", "c1", "--keep", "both"); code != cli.ExitOK {
+				t.Fatalf("first resolve exit = %d (stderr: %s)", code, stderr)
+			}
+			return e, []string{"conflict", "resolve", "c1", "--keep", "both"}
+		}},
 		{"conflict resolve with an unknown version", cli.ExitUsage, func(t *testing.T) (env, []string) {
 			return withConflict(t), []string{"conflict", "resolve", "c1", "--keep", "mine", "--yes"}
 		}},

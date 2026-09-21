@@ -406,3 +406,154 @@ func TestConflict_WithoutASubcommandIsUsage(t *testing.T) {
 		t.Fatalf("conflict without a subcommand = %d, %q, want the help", code, stdout)
 	}
 }
+
+// staleConflict edits the path after the conflict was recorded, which is what
+// a second round of changes on both sides leaves behind: what is at the path
+// is neither of the two recorded versions.
+func staleConflict(t *testing.T) env {
+	t.Helper()
+	e := withConflict(t)
+	if err := os.WriteFile(filepath.Join(e.folderPath, "a.txt"), []byte(laterVersion), 0o644); err != nil {
+		t.Fatalf("edit the path: %v", err)
+	}
+	return e
+}
+
+// laterVersion is content neither side had when the conflict was recorded.
+const laterVersion = "a later round wrote this"
+
+func TestConflictResolve_RefusesToOverwriteAChangedPath(t *testing.T) {
+	e := staleConflict(t)
+
+	code, _, stderr := e.run("", "conflict", "resolve", "c1", "--keep", "local", "--yes")
+	if code != cli.ExitIntegrity {
+		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitIntegrity, stderr)
+	}
+	if !strings.Contains(stderr, "a.txt") || !strings.Contains(stderr, "changed since") {
+		t.Fatalf("stderr = %q, want it to name the file that changed", stderr)
+	}
+	if got := content(t, e, "a.txt"); got != laterVersion {
+		t.Fatalf("a.txt = %q, want it untouched", got)
+	}
+	if got := content(t, e, copyPath); got != localVersion {
+		t.Fatalf("the copy = %q, want it untouched", got)
+	}
+}
+
+func TestConflictResolve_RefusesToDeleteAChangedCopy(t *testing.T) {
+	e := withConflict(t)
+	if err := os.WriteFile(filepath.Join(e.folderPath, copyPath), []byte("merged by hand"), 0o644); err != nil {
+		t.Fatalf("edit the copy: %v", err)
+	}
+
+	code, _, stderr := e.run("", "conflict", "resolve", "c1", "--keep", "remote", "--yes")
+	if code != cli.ExitIntegrity {
+		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitIntegrity, stderr)
+	}
+	if got := content(t, e, copyPath); got != "merged by hand" {
+		t.Fatalf("the copy = %q, want it untouched", got)
+	}
+	if got := content(t, e, "a.txt"); got != remoteVersion {
+		t.Fatalf("a.txt = %q, want it untouched", got)
+	}
+}
+
+func TestConflictResolve_AnAlreadyResolvedConflictExits4(t *testing.T) {
+	e := withConflict(t)
+	if code, _, stderr := e.run("", "conflict", "resolve", "c1", "--keep", "both"); code != cli.ExitOK {
+		t.Fatalf("first resolve exit = %d (stderr: %s)", code, stderr)
+	}
+	code, _, stderr := e.run("", "conflict", "resolve", "c1", "--keep", "local", "--yes")
+	if code != cli.ExitNotFound {
+		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitNotFound, stderr)
+	}
+	if !strings.Contains(stderr, "already resolved") {
+		t.Fatalf("stderr = %q, want it to say the conflict is already resolved", stderr)
+	}
+	if got := content(t, e, "a.txt"); got != remoteVersion {
+		t.Fatalf("a.txt = %q, want the second resolve to have changed nothing", got)
+	}
+}
+
+func TestConflictList_MarksAStaleConflict(t *testing.T) {
+	e := staleConflict(t)
+
+	code, stdout, stderr := e.run("", "conflict", "list")
+	if code != cli.ExitOK {
+		t.Fatalf("conflict list exit = %d (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "STALE") {
+		t.Fatalf("conflict list output = %q, want a STALE column", stdout)
+	}
+
+	var list []struct {
+		ID    string `json:"id"`
+		Stale bool   `json:"stale"`
+	}
+	if code := conflictJSON(t, e, &list, "conflict", "list"); code != cli.ExitOK {
+		t.Fatalf("conflict list --json exit = %d", code)
+	}
+	if len(list) != 1 || !list[0].Stale {
+		t.Fatalf("list = %+v, want the conflict marked stale", list)
+	}
+
+	var view struct {
+		Stale bool `json:"stale"`
+	}
+	if code := conflictJSON(t, e, &view, "conflict", "show", "c1"); code != cli.ExitOK || !view.Stale {
+		t.Fatalf("show = %+v (exit %d), want the conflict marked stale", view, code)
+	}
+	if _, stdout, _ := e.run("", "conflict", "show", "c1"); !strings.Contains(stdout, "stale:    yes") {
+		t.Fatalf("conflict show output = %q, want it to say the conflict is stale", stdout)
+	}
+
+	// Keeping both is what closes a stale conflict, and it touches no file.
+	if code, _, stderr := e.run("", "conflict", "resolve", "c1", "--keep", "both"); code != cli.ExitOK {
+		t.Fatalf("resolve --keep both exit = %d (stderr: %s)", code, stderr)
+	}
+	if got := content(t, e, "a.txt"); got != laterVersion {
+		t.Fatalf("a.txt = %q, want it untouched", got)
+	}
+}
+
+func TestConflictExport_KeepsTheModeOfEachVersion(t *testing.T) {
+	e := withConflict(t)
+	if err := os.Chmod(filepath.Join(e.folderPath, "a.txt"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	dir := filepath.Join(t.TempDir(), "review")
+
+	var result struct {
+		Files []string `json:"files"`
+	}
+	if code := conflictJSON(t, e, &result, "conflict", "export", "c1", dir); code != cli.ExitOK {
+		t.Fatalf("conflict export exit = %d", code)
+	}
+	want := map[string]os.FileMode{"path-a.txt": 0o755, "conflict-" + copyPath: 0o644}
+	for _, name := range result.Files {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if info.Mode().Perm() != want[name] {
+			t.Fatalf("%s has mode %o, want %o", name, info.Mode().Perm(), want[name])
+		}
+	}
+}
+
+func TestConflictExport_IntoADirectoryThatCannotBeCreatedExits1(t *testing.T) {
+	e := withConflict(t)
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+
+	code, _, stderr := e.run("", "conflict", "export", "c1", filepath.Join(parent, "review"))
+	if code != cli.ExitError {
+		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitError, stderr)
+	}
+	if !strings.Contains(stderr, "written to") {
+		t.Fatalf("stderr = %q, want it to say the directory cannot be written to", stderr)
+	}
+}
