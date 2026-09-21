@@ -2,6 +2,7 @@ package repair_test
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -261,3 +262,55 @@ func TestRepair_DryRunNoWrites(t *testing.T) {
 // compile-time check that the fake store still satisfies the port the service
 // depends on.
 var _ ports.MetadataStore = (*fakes.Store)(nil)
+
+// removeAll deletes the given folder-relative paths, deepest first. An empty
+// path is the root itself.
+func removeAll(t *testing.T, e *env, rels ...string) {
+	t.Helper()
+	for _, rel := range rels {
+		full := root
+		if rel != "" {
+			full = root + "/" + rel
+		}
+		if err := e.fs.Remove(full); err != nil {
+			t.Fatalf("remove %s: %v", full, err)
+		}
+	}
+}
+
+// TestRun_RefusesAMissingRoot proves repair does not read a folder whose root
+// is gone as a folder whose files were all deleted: doing so would mark every
+// entry deleted and send the deletions to the peers.
+func TestRun_RefusesAMissingRoot(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.addFile(t, "a.txt", "alpha")
+	e.addFile(t, "sub/b.txt", "beta")
+
+	removeAll(t, e, "sub/b.txt", "sub", "a.txt", "")
+
+	if _, err := e.service.Run(ctx, "docs", false); !errors.Is(err, repair.ErrRootMissing) {
+		t.Fatalf("repair = %v, want ErrRootMissing", err)
+	}
+	m, err := e.store.LoadManifest(ctx, "docs")
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if len(m.Live()) != 2 {
+		t.Fatalf("live entries = %d, want both of them kept", len(m.Live()))
+	}
+}
+
+// TestRun_RefusesARootThatIsNoLongerADirectory covers the other half of the
+// guard: a root replaced by a file.
+func TestRun_RefusesARootThatIsNoLongerADirectory(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.addFile(t, "a.txt", "alpha")
+	removeAll(t, e, "a.txt", "")
+	e.fs.AddFile(root, []byte("not a directory"), 0o644)
+
+	if _, err := e.service.Run(ctx, "docs", false); !errors.Is(err, repair.ErrRootMissing) {
+		t.Fatalf("repair = %v, want ErrRootMissing", err)
+	}
+}

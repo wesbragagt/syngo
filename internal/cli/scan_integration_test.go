@@ -345,3 +345,40 @@ func TestScan_MissingRootFailsAndKeepsTheFileCounts(t *testing.T) {
 			before["files"], before["bytes"], after["files"], after["bytes"])
 	}
 }
+
+// TestRepair_RefusesAMissingRoot proves the command stops at a folder whose
+// root is gone instead of recording every file as deleted.
+func TestRepair_RefusesAMissingRoot(t *testing.T) {
+	e := newEnv(t)
+	if err := os.WriteFile(filepath.Join(e.folderPath, "a.txt"), []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	setupFolder(t, e)
+	if code, _, stderr := e.run("", "scan", "docs"); code != cli.ExitOK {
+		t.Fatalf("scan exit = %d (stderr: %s)", code, stderr)
+	}
+	if err := os.RemoveAll(e.folderPath); err != nil {
+		t.Fatalf("remove folder root: %v", err)
+	}
+
+	code, _, stderr := e.run("", "repair", "docs")
+	if code == cli.ExitOK {
+		t.Fatal("repair of a folder whose root is gone succeeded")
+	}
+	if !strings.Contains(stderr, "root") {
+		t.Fatalf("stderr = %q, want it to name the missing root", stderr)
+	}
+
+	// The file is still recorded: putting the root back and repairing
+	// again finds it, which it could not do if the entry had been dropped.
+	if err := os.MkdirAll(e.folderPath, 0o755); err != nil {
+		t.Fatalf("recreate folder root: %v", err)
+	}
+	code, stdout, stderr := e.run("", "repair", "docs", "--json")
+	if code != cli.ExitOK {
+		t.Fatalf("repair exit = %d (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "a.txt") {
+		t.Fatalf("repair output = %q, want the still recorded a.txt", stdout)
+	}
+}

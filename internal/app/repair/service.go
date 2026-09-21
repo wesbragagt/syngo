@@ -20,6 +20,12 @@ import (
 // TempDir is the folder-relative directory holding partial downloads.
 const TempDir = ".syncthis/tmp"
 
+// ErrRootMissing reports a folder root that does not exist or is not a
+// directory. Repair refuses to run rather than report every stored entry as
+// missing, which would mark the whole folder deleted and propagate that to the
+// peers.
+var ErrRootMissing = errors.New("folder root does not exist or is not a directory")
+
 // Finding is a problem repair could not fix on its own.
 type Finding struct {
 	Path   string
@@ -71,6 +77,9 @@ func (s *Service) Run(ctx context.Context, folderID folder.ID, dryRun bool) (Rep
 	if err != nil {
 		return Report{}, err
 	}
+	if err := s.checkRoot(f); err != nil {
+		return Report{}, err
+	}
 	report := Report{FolderID: folderID, DryRun: dryRun}
 
 	m, err := s.store.LoadManifest(ctx, folderID)
@@ -98,6 +107,22 @@ func (s *Service) Run(ctx context.Context, folderID folder.ID, dryRun bool) (Rep
 		return Report{}, err
 	}
 	return report, nil
+}
+
+// checkRoot reports whether the folder root is still a directory. A root that
+// was removed is not a folder whose contents were all deleted.
+func (s *Service) checkRoot(f folder.Folder) error {
+	info, err := s.fs.Lstat(f.Path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("folder %q root %s: %w", f.ID, f.Path, ErrRootMissing)
+	}
+	if err != nil {
+		return fmt.Errorf("folder %q root %s: %w", f.ID, f.Path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("folder %q root %s: %w", f.ID, f.Path, ErrRootMissing)
+	}
+	return nil
 }
 
 // inspectFiles checks every live entry against disk and returns the entries
