@@ -173,3 +173,13 @@ func (c *Cluster) names(devices []int) []string {
 	}
 	return out
 }
+
+// lastLines is the tail of a log, for a failure message that should not carry
+// the whole run.
+func lastLines(text string, n int) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}

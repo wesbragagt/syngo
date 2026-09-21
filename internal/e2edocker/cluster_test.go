@@ -1,6 +1,7 @@
 package e2edocker
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -8,13 +9,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
 	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/domain/conflict"
 	"github.com/wesbragagt/syncthis/internal/testutil/tree"
 )
 
@@ -80,9 +84,13 @@ type Cluster struct {
 	Subnet  string
 	Devices []*Device
 
-	d       docker
-	tmp     string
-	started time.Time
+	d   docker
+	tmp string
+	// isolated and netem remember the faults a test caused, so Heal can
+	// undo exactly those.
+	isolated map[int]bool
+	netem    map[int]bool
+	started  time.Time
 }
 
 // Device is one daemon in one container.
@@ -121,11 +129,13 @@ func StartWith(t *testing.T, o ClusterOptions) *Cluster {
 	}
 
 	c := &Cluster{
-		T:       t,
-		RunID:   runID(),
-		d:       docker{t: t, bin: dockerBin},
-		tmp:     t.TempDir(),
-		started: time.Now(),
+		T:        t,
+		RunID:    runID(),
+		d:        docker{t: t, bin: dockerBin},
+		tmp:      t.TempDir(),
+		isolated: map[int]bool{},
+		netem:    map[int]bool{},
+		started:  time.Now(),
 	}
 	c.Network = "syncthis-e2e-" + c.RunID
 	t.Cleanup(c.Close)
@@ -375,16 +385,28 @@ func (d *Device) Conflicts() []conflictRow {
 // it without docker.
 func (d *Device) StartDaemon() {
 	d.c.T.Helper()
+	// A daemon that refuses to start exits instead of answering, and the
+	// exit line tells the two apart at once rather than after a timeout.
+	before := len(d.DaemonExits())
 	bind := "--allow-public"
 	if d.Spec.BindIface {
 		bind = "--interface eth0"
 	}
+	// The exit code is appended to daemon.exit rather than lost, because a
+	// daemon that refuses to start (a stale pid file, a socket still
+	// bound) exits non-zero in the background and would otherwise look
+	// like a slow start. The shell waits for the daemon, so the pid file
+	// still holds the daemon's own pid.
 	cmd := fmt.Sprintf(
-		"exec syncthis --data-dir %s --log-level debug --log-format json daemon run %s >>%s/daemon.stdout 2>>%s/daemon.log",
-		containerData, bind, containerData, containerData)
+		"syncthis --data-dir %s --log-level debug --log-format json daemon run %s >>%s/daemon.stdout 2>>%s/daemon.log; echo $? >>%s/daemon.exit",
+		containerData, bind, containerData, containerData, containerData)
 	d.c.d.execDetached(d.Ctr, "", "sh", "-c", cmd)
 
 	waitFor(d.c.T, d.Name+" daemon running", daemonTimeout, func() bool {
+		if exits := d.DaemonExits(); len(exits) > before {
+			d.c.T.Fatalf("%s: daemon run exited %d instead of starting; log:\n%s",
+				d.Name, exits[before], lastLines(d.Logs(), 20))
+		}
 		return d.Status().Daemon.Running
 	})
 }
@@ -408,9 +430,15 @@ func (d *Device) KillDaemon() {
 func (d *Device) signalDaemon(sig string) {
 	d.c.T.Helper()
 	pid := d.DaemonPID()
+	exits := len(d.DaemonExits())
 	d.c.d.exec(d.Ctr, "", "kill", "-"+sig, strconv.Itoa(pid))
 	waitFor(d.c.T, fmt.Sprintf("%s daemon pid %d gone", d.Name, pid), daemonTimeout, func() bool {
 		return d.c.d.exec(d.Ctr, "", "kill", "-0", strconv.Itoa(pid)).code != 0
+	})
+	// The shell that started the daemon records its exit code; waiting for
+	// that line keeps the next start from mistaking it for its own.
+	waitFor(d.c.T, d.Name+" daemon exit recorded", daemonTimeout, func() bool {
+		return len(d.DaemonExits()) > exits
 	})
 }
 
@@ -444,6 +472,25 @@ func (d *Device) DaemonPID() int {
 	return pid
 }
 
+// DaemonExits is the exit code of every daemon run of this device that has
+// finished, oldest first.
+func (d *Device) DaemonExits() []int {
+	d.c.T.Helper()
+	raw, err := os.ReadFile(filepath.Join(d.HostData, "daemon.exit"))
+	if err != nil && !os.IsNotExist(err) {
+		d.c.T.Fatalf("%s: read daemon.exit: %v", d.Name, err)
+	}
+	var codes []int
+	for _, line := range strings.Fields(string(raw)) {
+		code, err := strconv.Atoi(line)
+		if err != nil {
+			d.c.T.Fatalf("%s: daemon.exit holds %q: %v", d.Name, line, err)
+		}
+		codes = append(codes, code)
+	}
+	return codes
+}
+
 // WriteFile puts a file in the folder, from the host side of the bind mount.
 func (d *Device) WriteFile(rel string, data []byte) {
 	d.c.T.Helper()
@@ -456,6 +503,29 @@ func (d *Device) WriteFile(rel string, data []byte) {
 	}
 	if err := os.Chmod(path, 0o644); err != nil {
 		d.c.T.Fatalf("%s: chmod %s: %v", d.Name, rel, err)
+	}
+}
+
+// ReadFile is the content of a path of the folder, read from the host side of
+// the bind mount.
+func (d *Device) ReadFile(rel string) []byte {
+	d.c.T.Helper()
+	data, err := os.ReadFile(filepath.Join(d.HostRoot, rel))
+	if err != nil {
+		d.c.T.Fatalf("%s: read %s: %v", d.Name, rel, err)
+	}
+	return data
+}
+
+// Rename moves a path inside the folder.
+func (d *Device) Rename(from, to string) {
+	d.c.T.Helper()
+	target := filepath.Join(d.HostRoot, to)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		d.c.T.Fatalf("%s: make parent of %s: %v", d.Name, to, err)
+	}
+	if err := os.Rename(filepath.Join(d.HostRoot, from), target); err != nil {
+		d.c.T.Fatalf("%s: rename %s to %s: %v", d.Name, from, to, err)
 	}
 }
 
@@ -561,6 +631,7 @@ func (c *Cluster) SaveArtifacts(reason string) {
 			continue
 		}
 		c.writeArtifact(dir, "daemon.log", dev.Logs())
+		c.writeArtifact(dir, "daemon.exit", fmt.Sprint(dev.DaemonExits()))
 		for _, report := range [][]string{
 			{"status.json", "status"},
 			{"transfers.json", "transfer", "list"},
@@ -584,6 +655,25 @@ func (c *Cluster) writeArtifact(dir, name, content string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		c.T.Logf("artifacts: write %s: %v", filepath.Join(dir, name), err)
 	}
+}
+
+// hashOf is the content hash a tree entry would carry for these bytes, so a
+// test can name a version by the same string the comparison uses.
+func hashOf(data []byte) string { return blake3hash.New().SumBytes(data).String() }
+
+// equalBytes reports whether two versions of a file hold the same content.
+func equalBytes(a, b []byte) bool { return bytes.Equal(a, b) }
+
+// conflictCopies lists the keep-both copies of a tree, sorted.
+func conflictCopies(entries map[string]tree.Entry) []string {
+	var copies []string
+	for path := range entries {
+		if strings.Contains(filepath.Base(path), conflict.Marker) {
+			copies = append(copies, path)
+		}
+	}
+	sort.Strings(copies)
+	return copies
 }
 
 // payload builds n bytes that differ per seed, so a wrong version of a file
