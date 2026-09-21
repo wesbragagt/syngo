@@ -124,6 +124,36 @@ func jsonCases() []jsonCase {
 		{"transfer show of an unknown id", cli.ExitNotFound, func(t *testing.T) (env, []string) {
 			return withDocs(t), []string{"transfer", "show", "nope"}
 		}},
+		{"conflict list", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "list"}
+		}},
+		{"conflict list when empty", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withDocs(t), []string{"conflict", "list"}
+		}},
+		{"conflict list of an unknown folder", cli.ExitNotFound, func(t *testing.T) (env, []string) {
+			return withDocs(t), []string{"conflict", "list", "gone"}
+		}},
+		{"conflict show", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "show", "c1"}
+		}},
+		{"conflict show of an unknown id", cli.ExitNotFound, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "show", "nope"}
+		}},
+		{"conflict resolve", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "resolve", "c1", "--keep", "remote", "--yes"}
+		}},
+		{"conflict resolve with an unknown version", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "resolve", "c1", "--keep", "mine", "--yes"}
+		}},
+		{"conflict export", cli.ExitOK, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "export", "c1", t.TempDir()}
+		}},
+		{"conflict export of an unknown id", cli.ExitNotFound, func(t *testing.T) (env, []string) {
+			return withConflict(t), []string{"conflict", "export", "nope", t.TempDir()}
+		}},
+		{"conflict without a subcommand", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"conflict"}
+		}},
 		{"sync-plan without peers", cli.ExitOK, func(t *testing.T) (env, []string) {
 			return withDocs(t), []string{"sync-plan", "docs"}
 		}},

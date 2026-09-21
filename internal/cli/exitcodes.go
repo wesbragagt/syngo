@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/peers"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -81,6 +82,9 @@ func codeOf(err error) int {
 		return ExitDaemonUnavailable
 	case errors.Is(err, ports.ErrPeerUnreachable), errors.Is(err, ports.ErrDeviceMismatch):
 		return ExitPeerUnreachable
+	case errors.Is(err, conflicts.ErrVersionGone):
+		// Neither file holds the version the user asked to keep any more.
+		return ExitIntegrity
 	case errors.Is(err, peers.ErrNotConfirmed):
 		return ExitConfirmationRequired
 	case errors.Is(err, peers.ErrInvalidAddress), errors.Is(err, peers.ErrSelf):

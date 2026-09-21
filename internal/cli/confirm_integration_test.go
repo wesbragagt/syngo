@@ -37,6 +37,12 @@ func confirmingCommands() []confirming {
 			},
 		},
 		{
+			name: "conflict resolve",
+			setup: func(t *testing.T) (env, []string) {
+				return withConflict(t), []string{"conflict", "resolve", "c1", "--keep", "remote"}
+			},
+		},
+		{
 			name: "peer add",
 			setup: func(t *testing.T) (env, []string) {
 				_, addr := startPeerDaemon(t, "remote")
