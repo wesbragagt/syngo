@@ -90,6 +90,8 @@ type App struct {
 	PeerHandler ports.PeerHandler
 	// Puller fetches from peers what this device is missing.
 	Puller *syncer.Puller
+	// Planner answers what a sync would do, without doing it.
+	Planner *syncer.Planner
 }
 
 // Build opens the data directory and wires the application. It does not create
@@ -214,6 +216,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.PeerHandler = handler
 		app.Dialer = dialer
 		app.Peers = peers.New(store, dialer, clock, identity, listenPort(cfg.Listen))
+		app.Planner = syncer.NewPlanner(store, dialer)
 	}
 	return app, nil
 }

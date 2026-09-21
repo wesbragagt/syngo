@@ -231,3 +231,53 @@ func TestTransferShow_NeedsAnID(t *testing.T) {
 		t.Fatalf("exit = %d, want %d", code, cli.ExitUsage)
 	}
 }
+
+func TestSyncPlan_WithoutPeersIsInSync(t *testing.T) {
+	e := withFolder(t)
+
+	code, stdout, stderr := e.run("", "sync-plan", "docs")
+	if code != cli.ExitOK {
+		t.Fatalf("sync-plan exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "no peers configured") {
+		t.Fatalf("sync-plan output = %q", stdout)
+	}
+
+	code, stdout, _ = e.run("", "sync-plan", "docs", "--json")
+	if code != cli.ExitOK {
+		t.Fatalf("sync-plan --json exit = %d, want 0", code)
+	}
+	var view struct {
+		FolderID string `json:"folder_id"`
+		DryRun   bool   `json:"dry_run"`
+		Changes  int    `json:"changes"`
+		Peers    []any  `json:"peers"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &view); err != nil {
+		t.Fatalf("sync-plan --json is not json: %v\n%s", err, stdout)
+	}
+	if view.FolderID != "docs" || !view.DryRun || view.Changes != 0 || len(view.Peers) != 0 {
+		t.Fatalf("view = %+v", view)
+	}
+}
+
+func TestSyncPlan_BadArguments(t *testing.T) {
+	e := withFolder(t)
+
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"no folder", []string{"sync-plan"}, cli.ExitUsage},
+		{"bad peer id", []string{"sync-plan", "docs", "--peer", "nope"}, cli.ExitUsage},
+		{"unknown folder", []string{"sync-plan", "other"}, cli.ExitNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if code, _, _ := e.run("", tt.args...); code != tt.want {
+				t.Fatalf("exit = %d, want %d", code, tt.want)
+			}
+		})
+	}
+}
