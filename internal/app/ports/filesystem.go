@@ -56,6 +56,10 @@ type FileSystem interface {
 	// OpenTemp reopens an existing partial file so a transfer can resume.
 	OpenTemp(path string) (TempFile, error)
 	Rename(oldPath, newPath string) error
+	// SyncDir flushes the directory entry itself, so a rename into it
+	// survives a power loss. It is a no-op on platforms that do not need
+	// it.
+	SyncDir(path string) error
 	// Remove deletes a file or an empty directory.
 	Remove(path string) error
 	Chtimes(path string, mtime time.Time) error

@@ -3,6 +3,7 @@ package localfs_test
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,6 +149,18 @@ func TestCreateTemp_Rename_Atomic(t *testing.T) {
 	}
 	if string(buf) != "payload" {
 		t.Fatalf("reopened content = %q", buf)
+	}
+}
+
+func TestSyncDir_FlushesAnExistingDirectoryAndReportsAMissingOne(t *testing.T) {
+	root := t.TempDir()
+	fsys := localfs.New()
+
+	if err := fsys.SyncDir(root); err != nil {
+		t.Fatalf("SyncDir error: %v", err)
+	}
+	if err := fsys.SyncDir(filepath.Join(root, "gone")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("SyncDir of a missing directory = %v, want a not-exist error", err)
 	}
 }
 

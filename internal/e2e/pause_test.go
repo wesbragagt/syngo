@@ -34,7 +34,7 @@ func TestPause_HaltsTransferAndResumeCompletesIt(t *testing.T) {
 			b.Events.Count("transfer.chunk_verified"))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonTimeout)
 	defer cancel()
 	if err := b.App.Control.Pause(ctx, folderID); err != nil {
 		t.Fatalf("pause %s: %v", b.name, err)
@@ -96,7 +96,7 @@ func TestSyncPlan_ListsThePendingPullsAndExits10(t *testing.T) {
 
 	// The receiver is paused, so the plan describes work that is really
 	// still outstanding while the command runs.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonTimeout)
 	defer cancel()
 	if err := b.App.Control.Pause(ctx, folderID); err != nil {
 		t.Fatalf("pause %s: %v", b.name, err)

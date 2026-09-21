@@ -87,8 +87,17 @@ func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 	if err := i.fs.Chtimes(t.TempPath, mtime); err != nil {
 		return manifest.Entry{}, fmt.Errorf("set modification time of %s: %w", t.TempPath, err)
 	}
+	// The content and the metadata of the partial file reach the disk
+	// before the rename, and the directory entry reaches it after, so a
+	// crash either leaves the old file or the complete new one.
+	if err := i.sync(t.TempPath); err != nil {
+		return manifest.Entry{}, err
+	}
 	if err := i.fs.Rename(t.TempPath, final); err != nil {
 		return manifest.Entry{}, fmt.Errorf("install %s: %w", final, err)
+	}
+	if err := i.fs.SyncDir(path.Dir(final)); err != nil {
+		return manifest.Entry{}, fmt.Errorf("flush directory of %s: %w", final, err)
 	}
 
 	entry := manifest.Entry{
@@ -96,6 +105,19 @@ func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 		Mode: uint32(mode), Hash: t.Hash, SyncedHash: t.Hash,
 	}
 	return i.described(final, entry), nil
+}
+
+// sync flushes a partial file to disk.
+func (i *Installer) sync(temp string) error {
+	f, err := i.fs.OpenTemp(temp)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", temp, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("flush %s: %w", temp, err)
+	}
+	return nil
 }
 
 // MkDir creates a directory described by a peer's entry.

@@ -34,7 +34,9 @@ type FileSystem struct {
 	tempSeq int
 	renames [][2]string
 	removes []string
-	modTime time.Time
+	// syncedDirs records the directories SyncDir flushed.
+	syncedDirs []string
+	modTime    time.Time
 }
 
 // NewFileSystem returns an empty filesystem containing only "/".
@@ -292,6 +294,30 @@ func (f *FileSystem) Rename(oldPath, newPath string) error {
 	}
 	f.renames = append(f.renames, [2]string{oldPath, newPath})
 	return nil
+}
+
+// SyncDir records that a directory was flushed. The in-memory filesystem has
+// nothing to flush, so it only checks that the directory exists.
+func (f *FileSystem) SyncDir(p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p = clean(p)
+	n, ok := f.nodes[p]
+	if !ok {
+		return notExist("syncdir", p)
+	}
+	if !n.mode.IsDir() {
+		return fmt.Errorf("syncdir %s: not a directory", p)
+	}
+	f.syncedDirs = append(f.syncedDirs, p)
+	return nil
+}
+
+// SyncedDirs returns the directories passed to SyncDir, in order.
+func (f *FileSystem) SyncedDirs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.syncedDirs...)
 }
 
 // Remove deletes a file or an empty directory.

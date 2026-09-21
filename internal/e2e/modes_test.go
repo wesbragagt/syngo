@@ -67,7 +67,7 @@ func TestReceiveOnly_NeverServesItsManifest(t *testing.T) {
 	writeFile(t, b, "local.txt", []byte("b"))
 	pair(t, a, b)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonTimeout)
 	defer cancel()
 	conn, err := a.App.Dialer.Dial(ctx, b.Listen, b.ID)
 	if err != nil {

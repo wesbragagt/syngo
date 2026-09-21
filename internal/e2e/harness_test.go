@@ -24,13 +24,17 @@ import (
 )
 
 // Test timings. They are short so a cycle happens within a test, and long
-// enough that a loaded machine still makes progress.
+// enough that a loaded machine still makes progress. The waiting times are
+// multiplied by timeoutScale, which the race build raises: under the race
+// detector, and with the other packages of the tree being tested at the same
+// time, a folder takes noticeably longer to converge.
 const (
 	testChunkSize      = 16 << 10
 	testRescanInterval = 300 * time.Millisecond
 	testSyncInterval   = 200 * time.Millisecond
 	testDebounce       = 50 * time.Millisecond
-	convergeTimeout    = 60 * time.Second
+	convergeTimeout    = 60 * time.Second * timeoutScale
+	daemonTimeout      = 30 * time.Second * timeoutScale
 	folderID           = folder.ID("docs")
 )
 
@@ -147,7 +151,7 @@ func (n *node) run() {
 	case <-ready:
 	case err := <-n.done:
 		n.t.Fatalf("daemon %s stopped before it was ready: %v", n.name, err)
-	case <-time.After(30 * time.Second):
+	case <-time.After(daemonTimeout):
 		n.t.Fatalf("daemon %s did not start", n.name)
 	}
 	n.Listen = n.Status().Daemon.Listen
@@ -167,7 +171,7 @@ func (n *node) Stop() {
 		if err != nil {
 			n.t.Errorf("daemon %s returned %v", n.name, err)
 		}
-	case <-time.After(30 * time.Second):
+	case <-time.After(daemonTimeout):
 		n.t.Fatalf("daemon %s did not stop", n.name)
 	}
 	n.cancel = nil
@@ -193,7 +197,7 @@ func (n *node) Restart() {
 // Status asks the running daemon for its report.
 func (n *node) Status() status.Report {
 	n.t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonTimeout)
 	defer cancel()
 
 	report, err := n.App.Control.Status(ctx)

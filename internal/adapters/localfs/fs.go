@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -136,6 +137,22 @@ func (FS) OpenTemp(path string) (ports.TempFile, error) {
 // Rename moves a file or directory.
 func (FS) Rename(oldPath, newPath string) error {
 	if err := os.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SyncDir flushes a directory entry to disk, so a rename into it survives a
+// power loss. A directory that cannot be opened for reading is reported, but a
+// platform that refuses to fsync a directory is not: the rename is durable
+// there by other means.
+func (FS) SyncDir(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
 		return err
 	}
 	return nil
