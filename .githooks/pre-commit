@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-commit hook: format check, vet, lint, and unit tests.
+# Install with: make hooks   (sets git core.hooksPath to .githooks)
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-commit: gofmt"
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+  echo "gofmt: these files need formatting:"
+  echo "$unformatted"
+  exit 1
+fi
+
+echo "pre-commit: go vet"
+go vet ./...
+
+if command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-commit: golangci-lint"
+  golangci-lint run ./...
+fi
+
+echo "pre-commit: go test"
+go test ./...
