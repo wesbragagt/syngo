@@ -135,7 +135,7 @@ func TestResume_SenderRestartFinishesTheTransfer(t *testing.T) {
 	}
 }
 
-func TestResume_RepairResetsATransferWhosePartialFileIsGone(t *testing.T) {
+func TestResume_MissingPartialFileStartsTheTransferOver(t *testing.T) {
 	a := startNode(t, "a", folder.ModeSendOnly)
 	b := startNode(t, "b", folder.ModeReceiveOnly)
 	writeFile(t, a, "huge.bin", payload(hugeFileSize, 29))
