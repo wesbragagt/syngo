@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -278,6 +279,12 @@ func readTree(t *testing.T, root string) map[string]treeEntry {
 	out := make(map[string]treeEntry)
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		// A daemon may delete a path while the walk is reading it. A
+		// tree that is still moving is compared again by the caller, so
+		// what is already gone is left out rather than failing the test.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -293,6 +300,9 @@ func readTree(t *testing.T, root string) map[string]treeEntry {
 		}
 
 		info, err := d.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -301,6 +311,9 @@ func readTree(t *testing.T, root string) map[string]treeEntry {
 		case info.Mode()&fs.ModeSymlink != 0:
 			entry.Kind = manifest.KindSymlink
 			if entry.Target, err = os.Readlink(path); err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
 				return err
 			}
 		case info.IsDir():
@@ -309,6 +322,9 @@ func readTree(t *testing.T, root string) map[string]treeEntry {
 			entry.Kind = manifest.KindFile
 			entry.Size = info.Size()
 			f, err := os.Open(path)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}
