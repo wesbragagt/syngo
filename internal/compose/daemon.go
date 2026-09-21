@@ -45,6 +45,9 @@ type DaemonOptions struct {
 	// Debounce overrides how long filesystem events are collected before a
 	// scan; it exists for tests, the default suits real use.
 	Debounce time.Duration
+	// SyncInterval overrides how often a connected peer is asked what
+	// changed on its side.
+	SyncInterval time.Duration
 	// Ready, when not nil, is closed once the daemon is serving requests.
 	Ready chan<- struct{}
 }
@@ -93,6 +96,7 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 		Listener: listener,
 		Peers:    a.PeerHandler,
 		Dialer:   a.Dialer,
+		Syncer:   a.Puller,
 		Log:      a.Logger,
 	})
 	if o.Ready != nil {
@@ -161,12 +165,16 @@ func controlAnswers(path string) bool {
 func (a *App) daemonConfig(o DaemonOptions) daemon.Config {
 	cfg := daemon.Config{
 		RescanInterval: a.Config.RescanInterval.Duration(),
+		SyncInterval:   a.Config.SyncInterval.Duration(),
 		Debounce:       o.Debounce,
 		Listen:         a.Config.Listen,
 		PID:            os.Getpid(),
 	}
 	if o.RescanInterval > 0 {
 		cfg.RescanInterval = o.RescanInterval
+	}
+	if o.SyncInterval > 0 {
+		cfg.SyncInterval = o.SyncInterval
 	}
 	if o.Listen != "" {
 		cfg.Listen = o.Listen

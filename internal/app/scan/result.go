@@ -27,6 +27,9 @@ type Options struct {
 type Result struct {
 	FolderID folder.ID
 	Changes  []manifest.Change
+	// Sequence is the folder sequence number after the scan was persisted.
+	// It is zero for a dry run.
+	Sequence uint64
 	// Scanned counts the entries that became manifest entries.
 	Scanned int
 	// Hashed counts the files whose contents had to be read.

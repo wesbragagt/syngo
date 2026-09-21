@@ -49,6 +49,8 @@ type FileSystem interface {
 	// ReadAt reads up to n bytes at off. A short read at EOF is not an error.
 	ReadAt(path string, off int64, n int) ([]byte, error)
 	ReadLink(path string) (string, error)
+	// Symlink creates a symbolic link at path pointing at target.
+	Symlink(target, path string) error
 	MkdirAll(path string, perm fs.FileMode) error
 	CreateTemp(dir, pattern string) (TempFile, error)
 	// OpenTemp reopens an existing partial file so a transfer can resume.

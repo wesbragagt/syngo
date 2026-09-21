@@ -2,11 +2,14 @@ package tcpwire
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // ProtocolVersion is the only version this implementation speaks.
@@ -41,6 +44,46 @@ type rejectedHeader struct {
 // nonceHeader is the Ping and Pong frame header.
 type nonceHeader struct {
 	Nonce uint64 `json:"nonce"`
+}
+
+// Error codes carried by an Error frame that answers a request. They mirror
+// the sentinel errors of the transport port, so a caller can test them with
+// errors.Is after the round trip.
+const (
+	CodeFolderUnknown     = "folder_unknown"
+	CodeFolderReceiveOnly = "folder_receive_only"
+	CodePaused            = "paused"
+	CodeInternal          = "internal"
+	CodeBadRequest        = "bad_request"
+)
+
+// errorCode names the wire code for an application error.
+func errorCode(err error) string {
+	switch {
+	case errors.Is(err, ports.ErrFolderUnknown):
+		return CodeFolderUnknown
+	case errors.Is(err, ports.ErrFolderReceiveOnly):
+		return CodeFolderReceiveOnly
+	case errors.Is(err, ports.ErrPaused):
+		return CodePaused
+	default:
+		return CodeInternal
+	}
+}
+
+// errorSentinel maps a received error code back to the port sentinel, or nil
+// when the code has none.
+func errorSentinel(code string) error {
+	switch code {
+	case CodeFolderUnknown:
+		return ports.ErrFolderUnknown
+	case CodeFolderReceiveOnly:
+		return ports.ErrFolderReceiveOnly
+	case CodePaused:
+		return ports.ErrPaused
+	default:
+		return nil
+	}
 }
 
 // errorHeader is the Error frame header.
@@ -91,4 +134,135 @@ func decodeHeader(f Frame, out any) error {
 		return fmt.Errorf("decode %s header: %w", f.Type, err)
 	}
 	return nil
+}
+
+// manifestRequestHeader is the ManifestRequest frame header.
+type manifestRequestHeader struct {
+	FolderID string `json:"folder_id"`
+}
+
+// manifestEntry is one entry of a ManifestResponse. The synced hash is local
+// bookkeeping and is never sent.
+type manifestEntry struct {
+	Path       string `json:"path"`
+	Kind       uint8  `json:"kind"`
+	Size       int64  `json:"size"`
+	MTimeNS    int64  `json:"mtime_ns"`
+	Mode       uint32 `json:"mode"`
+	Hash       string `json:"hash"`
+	LinkTarget string `json:"link_target"`
+	Deleted    bool   `json:"deleted"`
+	ModifiedBy string `json:"modified_by"`
+	Sequence   uint64 `json:"sequence"`
+}
+
+// manifestReplyHeader is the ManifestResponse frame header.
+type manifestReplyHeader struct {
+	FolderID string          `json:"folder_id"`
+	Sequence uint64          `json:"sequence"`
+	Entries  []manifestEntry `json:"entries"`
+}
+
+// manifestChangedHeader is the unsolicited ManifestChanged frame header.
+type manifestChangedHeader struct {
+	FolderID string `json:"folder_id"`
+	Sequence uint64 `json:"sequence"`
+}
+
+// chunkRequestHeader is the ChunkRequest frame header.
+type chunkRequestHeader struct {
+	FolderID  string `json:"folder_id"`
+	Path      string `json:"path"`
+	Hash      string `json:"hash"`
+	Index     int    `json:"index"`
+	ChunkSize int    `json:"chunk_size"`
+}
+
+// chunkDataHeader is the ChunkData frame header; the payload is the chunk.
+type chunkDataHeader struct {
+	FolderID  string `json:"folder_id"`
+	Path      string `json:"path"`
+	Index     int    `json:"index"`
+	Offset    int64  `json:"offset"`
+	Length    int    `json:"length"`
+	ChunkHash string `json:"chunk_hash"`
+}
+
+// chunkErrorHeader is the ChunkError frame header.
+type chunkErrorHeader struct {
+	FolderID string `json:"folder_id"`
+	Path     string `json:"path"`
+	Index    int    `json:"index"`
+	Reason   string `json:"reason"`
+}
+
+// toWireManifest converts a manifest into its wire form.
+func toWireManifest(m manifest.Manifest) manifestReplyHeader {
+	entries := make([]manifestEntry, 0, len(m.Entries))
+	for _, e := range m.Sorted() {
+		entries = append(entries, manifestEntry{
+			Path:       e.Path,
+			Kind:       uint8(e.Kind),
+			Size:       e.Size,
+			MTimeNS:    e.ModTime.UnixNano(),
+			Mode:       e.Mode,
+			Hash:       e.Hash.String(),
+			LinkTarget: e.LinkTarget,
+			Deleted:    e.Deleted,
+			ModifiedBy: string(e.ModifiedBy),
+			Sequence:   e.Sequence,
+		})
+	}
+	return manifestReplyHeader{FolderID: string(m.FolderID), Sequence: m.Sequence, Entries: entries}
+}
+
+// fromWireManifest converts a received manifest into the domain form.
+func fromWireManifest(h manifestReplyHeader) (manifest.Manifest, error) {
+	m := manifest.New(folder.ID(h.FolderID))
+	m.Sequence = h.Sequence
+	for _, e := range h.Entries {
+		hash, err := manifest.ParseHash(e.Hash)
+		if err != nil {
+			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
+		}
+		m.Add(manifest.Entry{
+			Path:       e.Path,
+			Kind:       manifest.Kind(e.Kind),
+			Size:       e.Size,
+			ModTime:    time.Unix(0, e.MTimeNS).UTC(),
+			Mode:       e.Mode,
+			Hash:       hash,
+			LinkTarget: e.LinkTarget,
+			Deleted:    e.Deleted,
+			ModifiedBy: device.ID(e.ModifiedBy),
+			Sequence:   e.Sequence,
+		})
+	}
+	return m, nil
+}
+
+// toWireChunkRequest converts a chunk request into its wire form.
+func toWireChunkRequest(req ports.ChunkRequest) chunkRequestHeader {
+	return chunkRequestHeader{
+		FolderID:  string(req.FolderID),
+		Path:      req.Path,
+		Hash:      req.Hash.String(),
+		Index:     req.Index,
+		ChunkSize: req.ChunkSize,
+	}
+}
+
+// fromWireChunkRequest converts a received chunk request into the port's form.
+func fromWireChunkRequest(h chunkRequestHeader) (ports.ChunkRequest, error) {
+	hash, err := manifest.ParseHash(h.Hash)
+	if err != nil {
+		return ports.ChunkRequest{}, fmt.Errorf("chunk request for %q: %w", h.Path, err)
+	}
+	return ports.ChunkRequest{
+		FolderID:  folder.ID(h.FolderID),
+		Path:      h.Path,
+		Hash:      hash,
+		Index:     h.Index,
+		ChunkSize: h.ChunkSize,
+	}, nil
 }

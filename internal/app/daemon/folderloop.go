@@ -84,6 +84,15 @@ func (l *folderLoop) run(ctx context.Context) {
 	rescan := time.NewTicker(l.daemon.cfg.rescanInterval())
 	defer rescan.Stop()
 
+	// Transfers interrupted by the last shutdown are picked up before the
+	// folder is scanned, so their partial files are not mistaken for
+	// leftovers.
+	if l.daemon.deps.Syncer != nil {
+		if err := l.daemon.deps.Syncer.ResumeAll(ctx, l.folder); err != nil && ctx.Err() == nil {
+			log.Error("resume transfers", "error", err)
+		}
+	}
+
 	// A folder is scanned once at startup so a daemon that was down while
 	// files changed catches up without waiting for the first tick.
 	l.scan(ctx, nil)
@@ -148,6 +157,11 @@ func (l *folderLoop) scan(ctx context.Context, paths []string) {
 		return
 	}
 	log.Debug("scan finished", "changes", len(result.Changes), "paths", paths)
+
+	// Peers pull, so they only need to be told that there is something new.
+	if len(result.Changes) > 0 && l.daemon.deps.Listener != nil {
+		l.daemon.deps.Listener.Broadcast(current.ID, result.Sequence)
+	}
 }
 
 // stopTimer stops t and drains it so it can be reset safely.

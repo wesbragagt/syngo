@@ -89,10 +89,7 @@ func (l *Listener) Close() error { return l.ln.Close() }
 
 // Broadcast tells every connected peer that a folder changed.
 func (l *Listener) Broadcast(id folder.ID, seq uint64) {
-	frame, err := frameOf(MsgManifestChanged, struct {
-		FolderID string `json:"folder_id"`
-		Sequence uint64 `json:"sequence"`
-	}{FolderID: string(id), Sequence: seq}, nil)
+	frame, err := frameOf(MsgManifestChanged, manifestChangedHeader{FolderID: string(id), Sequence: seq}, nil)
 	if err != nil {
 		l.log.Error("encode folder change notification", "folder", id, "error", err)
 		return
@@ -147,7 +144,7 @@ func (l *Listener) handle(ctx context.Context, raw net.Conn, h ports.PeerHandler
 		return
 	}
 
-	sc := &serverConn{tls: conn, remote: remote, log: l.log.With("peer", remote.Short())}
+	sc := &serverConn{tls: conn, remote: remote, log: l.log.With("peer", remote.Short()), handler: h}
 	l.add(sc)
 	defer l.remove(sc)
 	l.log.Info("peer connected", "peer", remote.Short(), "remote", raw.RemoteAddr().String())
@@ -171,10 +168,11 @@ func (l *Listener) remove(c *serverConn) {
 
 // serverConn is one accepted peer.
 type serverConn struct {
-	tls    *tls.Conn
-	remote device.ID
-	log    *slog.Logger
-	writes sync.Mutex
+	tls     *tls.Conn
+	remote  device.ID
+	log     *slog.Logger
+	handler ports.PeerHandler
+	writes  sync.Mutex
 }
 
 // write sends one frame, serialized against broadcasts.
@@ -184,9 +182,9 @@ func (c *serverConn) write(frame Frame) error {
 	return WriteFrame(c.tls, frame)
 }
 
-// serve answers requests until the peer goes silent or closes. Manifest and
-// chunk requests arrive with the sync engine; until then they are answered
-// with an Error frame.
+// serve answers requests until the peer goes silent or closes. A request the
+// application refuses is answered and the connection stays up; only a frame
+// this side cannot parse ends it.
 func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 	for {
 		if err := c.tls.SetReadDeadline(time.Now().Add(idleTimeout)); err != nil {
@@ -200,23 +198,82 @@ func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 			return
 		}
 
+		var reply Frame
 		switch frame.Type {
 		case MsgPing:
-			var header nonceHeader
-			if err := decodeHeader(frame, &header); err != nil {
-				_ = writeError(c.tls, "bad_request", err.Error())
-				return
-			}
-			pong, err := frameOf(MsgPong, header, nil)
-			if err != nil {
-				return
-			}
-			if err := c.write(pong); err != nil {
-				return
-			}
+			reply, err = c.pong(frame)
+		case MsgManifestRequest:
+			reply, err = c.manifest(ctx, frame)
+		case MsgChunkRequest:
+			reply, err = c.chunk(ctx, frame)
 		default:
-			_ = writeError(c.tls, "unsupported", fmt.Sprintf("%s frames are not supported yet", frame.Type))
+			_ = writeError(c.tls, CodeBadRequest, fmt.Sprintf("%s frames are not accepted", frame.Type))
+			return
+		}
+		if err != nil {
+			// A header this side cannot read means the peers no
+			// longer agree on the protocol.
+			_ = writeError(c.tls, CodeBadRequest, err.Error())
+			return
+		}
+		if err := c.write(reply); err != nil {
 			return
 		}
 	}
+}
+
+// pong answers a keepalive.
+func (c *serverConn) pong(frame Frame) (Frame, error) {
+	var header nonceHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		return Frame{}, err
+	}
+	return frameOf(MsgPong, header, nil)
+}
+
+// manifest answers a manifest request, or reports why it cannot.
+func (c *serverConn) manifest(ctx context.Context, frame Frame) (Frame, error) {
+	var header manifestRequestHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		return Frame{}, err
+	}
+	m, err := c.handler.Manifest(ctx, c.remote, folder.ID(header.FolderID))
+	if err != nil {
+		c.log.Debug("manifest refused", "folder", header.FolderID, "error", err)
+		return frameOf(MsgError, errorHeader{Code: errorCode(err), Message: err.Error()}, nil)
+	}
+	return frameOf(MsgManifestReply, toWireManifest(m), nil)
+}
+
+// chunk answers a chunk request, or reports why it cannot.
+func (c *serverConn) chunk(ctx context.Context, frame Frame) (Frame, error) {
+	var header chunkRequestHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		return Frame{}, err
+	}
+	req, err := fromWireChunkRequest(header)
+	if err != nil {
+		return Frame{}, err
+	}
+
+	data, err := c.handler.Chunk(ctx, c.remote, req)
+	var refused *ports.ChunkError
+	switch {
+	case errors.As(err, &refused):
+		return frameOf(MsgChunkError, chunkErrorHeader{
+			FolderID: string(refused.FolderID), Path: refused.Path,
+			Index: refused.Index, Reason: string(refused.Reason),
+		}, nil)
+	case err != nil:
+		c.log.Debug("chunk refused", "folder", header.FolderID, "path", header.Path, "error", err)
+		return frameOf(MsgError, errorHeader{Code: errorCode(err), Message: err.Error()}, nil)
+	}
+	return frameOf(MsgChunkData, chunkDataHeader{
+		FolderID:  header.FolderID,
+		Path:      header.Path,
+		Index:     data.Index,
+		Offset:    data.Offset,
+		Length:    len(data.Data),
+		ChunkHash: data.ChunkHash.String(),
+	}, data.Data)
 }

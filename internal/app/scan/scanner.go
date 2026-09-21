@@ -117,8 +117,12 @@ const persistRetries = 2
 func (s *Scanner) persist(ctx context.Context, f folder.Folder, cur manifest.Manifest,
 	base uint64, result *Result, now time.Time) error {
 	for attempt := 0; ; attempt++ {
-		err := s.store.ApplyScan(ctx, f.ID, s.writeOf(result, base, now))
+		write := s.writeOf(result, base, now)
+		err := s.store.ApplyScan(ctx, f.ID, write)
 		if err == nil {
+			// The store hands out one sequence number per written
+			// row, in order, starting at the base.
+			result.Sequence = base + uint64(len(write.Upserts)+len(write.Deleted))
 			return nil
 		}
 		if !errors.Is(err, ports.ErrStaleManifest) || attempt >= persistRetries {

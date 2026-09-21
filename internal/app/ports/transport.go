@@ -19,6 +19,14 @@ var (
 	// ErrDeviceMismatch reports that the device answering at an address is
 	// not the one the caller expected.
 	ErrDeviceMismatch = errors.New("device id does not match the expected one")
+	// ErrFolderUnknown reports a request for a folder the peer does not
+	// have configured.
+	ErrFolderUnknown = errors.New("folder is not configured")
+	// ErrFolderReceiveOnly reports a request for a folder the peer only
+	// receives into, so it never serves its contents.
+	ErrFolderReceiveOnly = errors.New("folder is receive-only")
+	// ErrPaused reports a request for a folder the peer has paused.
+	ErrPaused = errors.New("folder is paused")
 )
 
 // Stages of a connection attempt, as reported by ConnectError.

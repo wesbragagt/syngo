@@ -12,6 +12,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/repair"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/app/syncer"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
@@ -20,6 +21,7 @@ import (
 const (
 	DefaultRescanInterval = 10 * time.Minute
 	DefaultDebounce       = 500 * time.Millisecond
+	DefaultSyncInterval   = 30 * time.Second
 )
 
 // Scanner scans a folder; *scan.Scanner implements it.
@@ -30,6 +32,15 @@ type Scanner interface {
 // Repairer restores consistency for one folder; *repair.Service implements it.
 type Repairer interface {
 	Run(ctx context.Context, id folder.ID, dryRun bool) (repair.Report, error)
+}
+
+// Syncer pulls from a peer what a folder is missing; *syncer.Puller
+// implements it.
+type Syncer interface {
+	SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.Folder) (syncer.Summary, error)
+	// ResumeAll prepares the unfinished transfers of a folder after a
+	// restart.
+	ResumeAll(ctx context.Context, f folder.Folder) error
 }
 
 // Config holds the daemon's runtime settings.
@@ -46,6 +57,9 @@ type Config struct {
 	Listen string
 	// PeerPingInterval is how often a connected peer is pinged.
 	PeerPingInterval time.Duration
+	// SyncInterval is how often a connected peer is asked what changed on
+	// its side, on top of the change notifications it sends.
+	SyncInterval time.Duration
 	// PID is the process id to report in status. The application layer has
 	// no access to the process itself, so the composition root fills it in.
 	PID int
@@ -65,6 +79,14 @@ func (c Config) peerPingInterval() time.Duration {
 		return c.PeerPingInterval
 	}
 	return DefaultPeerPingInterval
+}
+
+// syncInterval returns the configured sync interval or the default.
+func (c Config) syncInterval() time.Duration {
+	if c.SyncInterval > 0 {
+		return c.SyncInterval
+	}
+	return DefaultSyncInterval
 }
 
 // debounce returns the configured debounce or the default.
@@ -93,6 +115,9 @@ type Deps struct {
 	// Dialer connects to known peers. A nil dialer disables outgoing
 	// connections, so peers are reported as not connected.
 	Dialer ports.Dialer
+	// Syncer pulls folder contents from connected peers. A nil syncer
+	// leaves the daemon watching folders without synchronizing them.
+	Syncer Syncer
 	Log    *slog.Logger
 }
 

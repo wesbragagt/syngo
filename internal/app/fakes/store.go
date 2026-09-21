@@ -154,6 +154,17 @@ func (s *Store) LoadManifest(_ context.Context, id folder.ID) (manifest.Manifest
 	return m, nil
 }
 
+// GetFile returns one stored entry of a folder, or ErrNotFound.
+func (s *Store) GetFile(_ context.Context, id folder.ID, p string) (manifest.Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.files[id][p]
+	if !ok {
+		return manifest.Entry{}, fmt.Errorf("file %q in folder %q: %w", p, id, ports.ErrNotFound)
+	}
+	return e, nil
+}
+
 // UpsertEntries stores entries, assigning each the next folder sequence number.
 func (s *Store) UpsertEntries(_ context.Context, id folder.ID, entries []manifest.Entry) error {
 	s.mu.Lock()

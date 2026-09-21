@@ -95,6 +95,8 @@ type FolderStore interface {
 // FileStore persists folder contents and the change log.
 type FileStore interface {
 	LoadManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error)
+	// GetFile returns one stored entry, tombstones included, or ErrNotFound.
+	GetFile(ctx context.Context, id folder.ID, path string) (manifest.Entry, error)
 	// UpsertEntries assigns each entry the next folder sequence number.
 	UpsertEntries(ctx context.Context, id folder.ID, entries []manifest.Entry) error
 	MarkDeleted(ctx context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error

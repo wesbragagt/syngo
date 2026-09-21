@@ -80,6 +80,8 @@ type App struct {
 	Dialer ports.Dialer
 	// PeerHandler answers what peers ask of this device.
 	PeerHandler ports.PeerHandler
+	// Puller fetches from peers what this device is missing.
+	Puller *syncer.Puller
 }
 
 // Build opens the data directory and wires the application. It does not create
@@ -192,7 +194,9 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.Scan = scan.New(fs, app.Hasher, store, clock, identity, events, logger)
 		app.Repair = repair.New(fs, app.Hasher, store, clock, identity)
 
-		handler := syncer.New(store, identity, logger)
+		handler := syncer.New(store, fs, app.Hasher, identity, logger)
+		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, events,
+			syncer.PullerConfig{ChunkSize: cfg.ChunkSize}, logger)
 		// The Hello is built per connection because the folder list
 		// changes while the process runs.
 		dialer := tcpwire.NewDialer(identity.TLSCertificate(), func() ports.HelloInfo {

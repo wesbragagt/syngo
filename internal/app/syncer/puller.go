@@ -1,0 +1,578 @@
+package syncer
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"path"
+	"sync"
+
+	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+)
+
+// Pull tuning.
+const (
+	// DefaultConcurrency is how many files are pulled at the same time.
+	DefaultConcurrency = 4
+	// chunkAttempts is how often a chunk that fails verification is asked
+	// for again before the transfer is given up on.
+	chunkAttempts = 3
+	// syncEvery is how many chunks are written before the partial file is
+	// flushed to disk.
+	syncEvery = 16
+	// tempDirMode is the permission of <root>/.syncthis/tmp.
+	tempDirMode fs.FileMode = 0o700
+)
+
+// Summary counts what one folder sync cycle did.
+type Summary struct {
+	Pulled    int
+	Deleted   int
+	Dirs      int
+	Symlinks  int
+	Skipped   int
+	Conflicts int
+	Failed    int
+	Bytes     int64
+}
+
+// Puller fetches from a peer what this device is missing, one folder at a
+// time. It owns the transfer journal: every chunk it verifies is recorded, so
+// an interrupted download resumes instead of starting over.
+type Puller struct {
+	store     Store
+	fs        ports.FileSystem
+	hasher    ports.Hasher
+	clock     ports.Clock
+	events    ports.EventSink
+	installer *Installer
+	chunkSize int
+	workers   int
+	log       *slog.Logger
+
+	// resumed remembers the transfers whose partial file this process has
+	// already re-verified, so the check happens once per transfer and not
+	// once per sync cycle.
+	mu      sync.Mutex
+	resumed map[transfer.ID]bool
+}
+
+// PullerConfig tunes a puller. Zero fields take the defaults.
+type PullerConfig struct {
+	ChunkSize   int
+	Concurrency int
+}
+
+// NewPuller returns a puller writing through fsys.
+func NewPuller(store Store, fsys ports.FileSystem, hasher ports.Hasher, clock ports.Clock,
+	events ports.EventSink, cfg PullerConfig, log *slog.Logger) *Puller {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	if cfg.ChunkSize < transfer.MinChunkSize {
+		cfg.ChunkSize = transfer.DefaultChunkSize
+	}
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = DefaultConcurrency
+	}
+	return &Puller{
+		store: store, fs: fsys, hasher: hasher, clock: clock, events: events,
+		installer: NewInstaller(fsys, hasher),
+		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, log: log,
+		resumed: make(map[transfer.ID]bool),
+	}
+}
+
+// SyncFolder brings one folder in line with what the peer has: it asks for the
+// peer's manifest, plans against the local one and applies the plan. Only the
+// local side is changed; what the peer lacks is the peer's business.
+func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.Folder) (Summary, error) {
+	var summary Summary
+	if !f.CanReceive() || f.Paused {
+		return summary, nil
+	}
+
+	remote, err := conn.RequestManifest(ctx, f.ID)
+	if err != nil {
+		return summary, fmt.Errorf("manifest of %q from %s: %w", f.ID, conn.RemoteID().Short(), err)
+	}
+	local, err := p.store.LoadManifest(ctx, f.ID)
+	if err != nil {
+		return summary, err
+	}
+
+	peer := conn.RemoteID()
+	var pulls []syncplan.Item
+	for _, item := range syncplan.Plan(local, remote, f) {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		if item.Action == syncplan.ActionPull {
+			pulls = append(pulls, item)
+			continue
+		}
+		if err := p.apply(ctx, f, peer, item, &summary); err != nil {
+			return summary, err
+		}
+	}
+	if err := p.pullAll(ctx, conn, f, pulls, &summary); err != nil {
+		return summary, err
+	}
+
+	p.log.Debug("folder sync finished", "folder", f.ID, "peer", peer.Short(),
+		"pulled", summary.Pulled, "deleted", summary.Deleted, "conflicts", summary.Conflicts,
+		"failed", summary.Failed, "bytes", summary.Bytes)
+	return summary, nil
+}
+
+// ResumeAll prepares the live transfers of a folder for a new process: a
+// transfer nobody is fetching any more is pending, not active.
+func (p *Puller) ResumeAll(ctx context.Context, f folder.Folder) error {
+	list, err := p.store.ListTransfers(ctx, ports.TransferFilter{FolderID: f.ID})
+	if err != nil {
+		return err
+	}
+	for _, t := range list {
+		if t.State != transfer.StateActive && t.State != transfer.StateVerifying {
+			continue
+		}
+		if err := p.store.SetTransferState(ctx, t.ID, transfer.StatePending, "", p.clock.Now()); err != nil {
+			return err
+		}
+		p.log.Debug("transfer picked up again", "folder", f.ID, "path", t.Path,
+			"chunks_done", len(t.Chunks)-len(t.MissingChunks()))
+	}
+	return nil
+}
+
+// apply carries out one non-pull plan decision.
+func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item, summary *Summary) error {
+	switch item.Action {
+	case syncplan.ActionMkDir:
+		entry, err := p.installer.MkDir(ctx, f.Path, *item.Remote)
+		if err != nil {
+			return err
+		}
+		summary.Dirs++
+		return p.record(ctx, f.ID, entry, peer)
+
+	case syncplan.ActionSymlink:
+		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
+		if err != nil {
+			p.log.Warn("symlink not created", "folder", f.ID, "path", item.Path, "error", err)
+			summary.Failed++
+			return nil
+		}
+		summary.Symlinks++
+		return p.record(ctx, f.ID, entry, peer)
+
+	case syncplan.ActionDelete:
+		if err := p.installer.Delete(ctx, f.Path, item.Path); err != nil {
+			p.log.Warn("delete not applied", "folder", f.ID, "path", item.Path, "error", err)
+			summary.Failed++
+			return nil
+		}
+		summary.Deleted++
+		return p.store.MarkDeleted(ctx, f.ID, []string{item.Path}, peer, p.clock.Now())
+
+	case syncplan.ActionConflict:
+		summary.Conflicts++
+		p.log.Warn("conflict left to the user", "folder", f.ID, "path", item.Path, "reason", item.Reason)
+		p.publish("sync.conflict", map[string]any{
+			"folder_id": string(f.ID), "path": item.Path, "reason": item.Reason,
+			"peer_id": string(peer),
+		})
+		return nil
+
+	default:
+		summary.Skipped++
+		if item.Reason == syncplan.ReasonInSync && item.Local != nil && item.Local.SyncedHash != item.Remote.Hash {
+			return p.store.SetSyncedHash(ctx, f.ID, item.Path, item.Remote.Hash)
+		}
+		return nil
+	}
+}
+
+// pullAll downloads the files of a plan, at most Concurrency at a time. A
+// failure that only concerns one file is counted and the cycle continues; any
+// other failure ends the cycle, because the connection or the store is gone.
+func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Folder,
+	items []syncplan.Item, summary *Summary) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		fatalErr error
+	)
+	slots := make(chan struct{}, p.workers)
+	for _, item := range items {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		}
+
+		wg.Add(1)
+		go func(item syncplan.Item) {
+			defer wg.Done()
+			defer func() { <-slots }()
+
+			bytes, err := p.pull(ctx, conn, f, item)
+			switch {
+			case err == nil:
+				mu.Lock()
+				summary.Pulled++
+				summary.Bytes += bytes
+				mu.Unlock()
+			case isPerFile(err):
+				mu.Lock()
+				summary.Failed++
+				mu.Unlock()
+				p.log.Warn("file not pulled", "folder", f.ID, "path", item.Path, "error", err)
+			default:
+				mu.Lock()
+				if fatalErr == nil {
+					fatalErr = err
+					cancel()
+				}
+				mu.Unlock()
+			}
+		}(item)
+	}
+	wg.Wait()
+
+	if fatalErr != nil {
+		return fmt.Errorf("pull folder %q: %w", f.ID, fatalErr)
+	}
+	return ctx.Err()
+}
+
+// pull downloads one file and installs it, returning how many bytes arrived.
+func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
+	item syncplan.Item) (int64, error) {
+	t, err := p.transferFor(ctx, f, item, conn.RemoteID())
+	if err != nil {
+		return 0, err
+	}
+	if err := p.resume(ctx, &t); err != nil {
+		return 0, err
+	}
+	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateActive, "", p.clock.Now()); err != nil {
+		return 0, err
+	}
+
+	if err := p.fetch(ctx, conn, &t); err != nil {
+		if ctx.Err() != nil {
+			// A cancelled transfer keeps its journal and its
+			// partial file; the next cycle continues it.
+			return 0, ctx.Err()
+		}
+		return 0, p.failed(ctx, t, err)
+	}
+	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateVerifying, "", p.clock.Now()); err != nil {
+		return 0, err
+	}
+
+	entry, err := p.installer.Install(ctx, f.Path, t, item.Local)
+	if err != nil {
+		return 0, p.failed(ctx, t, err)
+	}
+	if err := p.record(ctx, f.ID, entry, conn.RemoteID()); err != nil {
+		return 0, err
+	}
+	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateDone, "", p.clock.Now()); err != nil {
+		return 0, err
+	}
+	// The files table is the record of what arrived; a finished transfer
+	// only kept the journal alive, so its rows go away with it.
+	if err := p.store.DeleteTransfer(ctx, t.ID); err != nil {
+		return 0, err
+	}
+	p.forget(t.ID)
+
+	p.publish("transfer.completed", map[string]any{
+		"transfer_id": string(t.ID), "folder_id": string(f.ID), "path": t.Path, "size": t.Size,
+	})
+	return t.Size, nil
+}
+
+// transferFor returns the journal entry to continue, or starts a new one. A
+// live transfer for another version of the same path is given up on first,
+// because only one transfer per path may be live.
+func (p *Puller) transferFor(ctx context.Context, f folder.Folder, item syncplan.Item,
+	peer device.ID) (transfer.Transfer, error) {
+	remote := *item.Remote
+	existing, err := p.store.FindLiveTransfer(ctx, f.ID, item.Path)
+	switch {
+	case err == nil:
+		if existing.Hash == remote.Hash && existing.Size == remote.Size && existing.ChunkSize == p.chunkSize {
+			return existing, nil
+		}
+		if err := p.failed(ctx, existing, errors.New("the peer now offers another version")); err != nil {
+			return transfer.Transfer{}, err
+		}
+		p.removeTemp(existing.TempPath)
+	case !errors.Is(err, ports.ErrNotFound):
+		return transfer.Transfer{}, err
+	}
+
+	id, err := newTransferID()
+	if err != nil {
+		return transfer.Transfer{}, err
+	}
+	tempPath, err := p.newTemp(f.Path, id)
+	if err != nil {
+		return transfer.Transfer{}, err
+	}
+
+	t := transfer.NewInbound(id, f.ID, remote, peer, p.chunkSize, tempPath, p.clock.Now())
+	if err := p.store.SaveTransfer(ctx, t); err != nil {
+		return transfer.Transfer{}, err
+	}
+	p.log.Debug("transfer started", "folder", f.ID, "path", t.Path, "size", t.Size, "chunks", len(t.Chunks))
+	return t, nil
+}
+
+// resume makes the journal agree with the partial file on disk. The file is
+// the authority: a chunk the journal calls verified is re-read and re-hashed,
+// so a crash between the write and the journal update cannot leave a wrong
+// byte behind. A partial file that is gone resets the whole transfer.
+func (p *Puller) resume(ctx context.Context, t *transfer.Transfer) error {
+	p.mu.Lock()
+	done := p.resumed[t.ID]
+	p.resumed[t.ID] = true
+	p.mu.Unlock()
+	if done {
+		return nil
+	}
+
+	info, err := p.fs.Lstat(t.TempPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.ResetChunks()
+		tempPath, err := p.newTempIn(path.Dir(t.TempPath), t.ID)
+		if err != nil {
+			return err
+		}
+		t.TempPath = tempPath
+		p.log.Debug("partial file gone, starting over", "path", t.Path, "transfer", t.ID)
+		return p.store.SaveTransfer(ctx, *t)
+	}
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", t.TempPath, err)
+	}
+
+	changed := false
+	for i, c := range t.Chunks {
+		if !c.Verified {
+			continue
+		}
+		if c.Offset+int64(c.Length) > info.Size {
+			t.Chunks[i].Verified = false
+			changed = true
+			continue
+		}
+		data, err := p.fs.ReadAt(t.TempPath, c.Offset, c.Length)
+		if err != nil {
+			return fmt.Errorf("read %s at %d: %w", t.TempPath, c.Offset, err)
+		}
+		if len(data) != c.Length || p.hasher.SumBytes(data) != c.Hash {
+			t.Chunks[i].Verified = false
+			t.Chunks[i].Hash = manifest.Hash{}
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	p.log.Debug("partial file disagrees with the journal", "path", t.Path, "transfer", t.ID)
+	return p.store.SaveTransfer(ctx, *t)
+}
+
+// fetch downloads every chunk the journal is still missing.
+func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Transfer) error {
+	missing := t.MissingChunks()
+	if len(missing) == 0 {
+		return nil
+	}
+
+	temp, err := p.fs.OpenTemp(t.TempPath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", t.TempPath, err)
+	}
+	defer func() { _ = temp.Close() }()
+
+	for n, idx := range missing {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunk := t.Chunks[idx]
+		data, err := p.chunk(ctx, conn, *t, chunk)
+		if err != nil {
+			return err
+		}
+		if _, err := temp.WriteAt(data, chunk.Offset); err != nil {
+			return fmt.Errorf("write %s at %d: %w", t.TempPath, chunk.Offset, err)
+		}
+		if (n+1)%syncEvery == 0 {
+			if err := temp.Sync(); err != nil {
+				return fmt.Errorf("flush %s: %w", t.TempPath, err)
+			}
+		}
+
+		hash := p.hasher.SumBytes(data)
+		now := p.clock.Now()
+		if err := p.store.MarkChunkVerified(ctx, t.ID, idx, hash, now); err != nil {
+			return err
+		}
+		if err := t.MarkVerified(idx, hash, now); err != nil {
+			return err
+		}
+		p.publish("transfer.chunk_verified", map[string]any{
+			"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
+			"path": t.Path, "index": idx,
+		})
+	}
+
+	if err := temp.Truncate(t.Size); err != nil {
+		return fmt.Errorf("truncate %s: %w", t.TempPath, err)
+	}
+	if err := temp.Sync(); err != nil {
+		return fmt.Errorf("flush %s: %w", t.TempPath, err)
+	}
+	return nil
+}
+
+// chunk asks the peer for one chunk and verifies it before it is written. A
+// chunk that does not hash to what the peer announced is asked for again; a
+// peer that keeps sending broken data fails the transfer.
+func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Transfer,
+	c transfer.Chunk) ([]byte, error) {
+	req := ports.ChunkRequest{
+		FolderID: t.FolderID, Path: t.Path, Hash: t.Hash, Index: c.Index, ChunkSize: t.ChunkSize,
+	}
+
+	var last error
+	for attempt := 1; attempt <= chunkAttempts; attempt++ {
+		data, err := conn.RequestChunk(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case len(data.Data) != c.Length:
+			last = fmt.Errorf("chunk %d of %s: %d bytes, expected %d: %w",
+				c.Index, t.Path, len(data.Data), c.Length, ErrIntegrity)
+		case p.hasher.SumBytes(data.Data) != data.ChunkHash:
+			last = fmt.Errorf("chunk %d of %s: content does not match its hash: %w",
+				c.Index, t.Path, ErrIntegrity)
+		default:
+			return data.Data, nil
+		}
+		p.log.Warn("chunk failed verification", "path", t.Path, "index", c.Index,
+			"attempt", attempt, "error", last)
+	}
+	return nil, last
+}
+
+// failed records why a transfer stopped. The partial file is kept so the
+// failure can be inspected, except when the peer's version changed, in which
+// case the bytes are worthless.
+func (p *Puller) failed(ctx context.Context, t transfer.Transfer, cause error) error {
+	var refused *ports.ChunkError
+	if errors.As(cause, &refused) &&
+		(refused.Reason == ports.ChunkHashChanged || refused.Reason == ports.ChunkNotFound) {
+		p.removeTemp(t.TempPath)
+	}
+	p.forget(t.ID)
+
+	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateFailed, cause.Error(), p.clock.Now()); err != nil {
+		return err
+	}
+	p.publish("transfer.failed", map[string]any{
+		"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
+		"path": t.Path, "error": cause.Error(),
+	})
+	return cause
+}
+
+// record stores what now sits on disk, attributed to the peer that sent it, so
+// the next local scan sees an unchanged file and does not send it back.
+func (p *Puller) record(ctx context.Context, id folder.ID, e manifest.Entry, peer device.ID) error {
+	e.ModifiedBy = peer
+	if e.Kind == manifest.KindFile {
+		e.SyncedHash = e.Hash
+	}
+	return p.store.UpsertEntries(ctx, id, []manifest.Entry{e})
+}
+
+// newTemp creates an empty partial file inside the temp directory of a folder
+// root and returns its path.
+func (p *Puller) newTemp(root string, id transfer.ID) (string, error) {
+	return p.newTempIn(p.installer.TempDir(root), id)
+}
+
+// newTempIn creates an empty partial file in dir and returns its path.
+func (p *Puller) newTempIn(dir string, id transfer.ID) (string, error) {
+	if err := p.fs.MkdirAll(dir, tempDirMode); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+	f, err := p.fs.CreateTemp(dir, string(id)+"-*.part")
+	if err != nil {
+		return "", fmt.Errorf("create partial file in %s: %w", dir, err)
+	}
+	defer func() { _ = f.Close() }()
+	return f.Name(), nil
+}
+
+// removeTemp deletes a partial file, ignoring one that is already gone.
+func (p *Puller) removeTemp(path string) {
+	if err := p.fs.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		p.log.Warn("partial file not removed", "path", path, "error", err)
+	}
+}
+
+// forget drops the resume mark of a transfer that is over.
+func (p *Puller) forget(id transfer.ID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.resumed, id)
+}
+
+// publish emits an event when a sink is configured.
+func (p *Puller) publish(kind string, fields map[string]any) {
+	if p.events == nil {
+		return
+	}
+	p.events.Publish(ports.Event{Kind: kind, At: p.clock.Now(), Fields: fields})
+}
+
+// isPerFile reports whether a failure concerns only one file, leaving the rest
+// of the cycle worth running.
+func isPerFile(err error) bool {
+	var refused *ports.ChunkError
+	return errors.As(err, &refused) || errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath)
+}
+
+// newTransferID returns a random 32 character hexadecimal transfer id.
+func newTransferID() (transfer.ID, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate transfer id: %w", err)
+	}
+	return transfer.ID(hex.EncodeToString(raw[:])), nil
+}

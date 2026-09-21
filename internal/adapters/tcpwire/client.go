@@ -19,10 +19,6 @@ import (
 
 var _ ports.Dialer = (*Dialer)(nil)
 
-// errNotImplemented is returned by the request methods whose frames the sync
-// engine introduces.
-var errNotImplemented = errors.New("this protocol request is not implemented yet")
-
 // notificationBuffer is how many folder change notifications a connection
 // queues before it drops them; the puller rescans anyway.
 const notificationBuffer = 16
@@ -220,14 +216,82 @@ func (c *conn) Ping(ctx context.Context) (time.Duration, error) {
 	return latency, nil
 }
 
-// RequestManifest is implemented by the sync engine.
-func (c *conn) RequestManifest(_ context.Context, id folder.ID) (manifest.Manifest, error) {
-	return manifest.Manifest{}, fmt.Errorf("manifest of %s: %w", id, errNotImplemented)
+// RequestManifest asks the peer for everything it knows about a folder,
+// tombstones included.
+func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error) {
+	frame, err := frameOf(MsgManifestRequest, manifestRequestHeader{FolderID: string(id)}, nil)
+	if err != nil {
+		return manifest.Manifest{}, err
+	}
+	reply, err := c.request(ctx, frame)
+	if err != nil {
+		return manifest.Manifest{}, fmt.Errorf("manifest of %s: %w", id, err)
+	}
+	if reply.Type != MsgManifestReply {
+		return manifest.Manifest{}, fmt.Errorf("manifest of %s: expected %s, got %s", id, MsgManifestReply, reply.Type)
+	}
+
+	var header manifestReplyHeader
+	if err := decodeHeader(reply, &header); err != nil {
+		return manifest.Manifest{}, err
+	}
+	m, err := fromWireManifest(header)
+	if err != nil {
+		return manifest.Manifest{}, fmt.Errorf("manifest of %s: %w", id, err)
+	}
+	if m.FolderID != id {
+		return manifest.Manifest{}, fmt.Errorf("manifest of %s: peer answered for folder %q", id, m.FolderID)
+	}
+	return m, nil
 }
 
-// RequestChunk is implemented by the sync engine.
-func (c *conn) RequestChunk(_ context.Context, req ports.ChunkRequest) (ports.ChunkData, error) {
-	return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: %w", req.Index, req.Path, errNotImplemented)
+// RequestChunk asks the peer for one chunk of a file. A peer that refuses
+// answers with a *ports.ChunkError explaining why.
+func (c *conn) RequestChunk(ctx context.Context, req ports.ChunkRequest) (ports.ChunkData, error) {
+	frame, err := frameOf(MsgChunkRequest, toWireChunkRequest(req), nil)
+	if err != nil {
+		return ports.ChunkData{}, err
+	}
+	reply, err := c.request(ctx, frame)
+	if err != nil {
+		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: %w", req.Index, req.Path, err)
+	}
+
+	switch reply.Type {
+	case MsgChunkError:
+		var header chunkErrorHeader
+		if err := decodeHeader(reply, &header); err != nil {
+			return ports.ChunkData{}, err
+		}
+		return ports.ChunkData{}, &ports.ChunkError{
+			FolderID: folder.ID(header.FolderID),
+			Path:     header.Path,
+			Index:    header.Index,
+			Reason:   ports.ChunkErrorReason(header.Reason),
+		}
+	case MsgChunkData:
+	default:
+		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: expected %s, got %s",
+			req.Index, req.Path, MsgChunkData, reply.Type)
+	}
+
+	var header chunkDataHeader
+	if err := decodeHeader(reply, &header); err != nil {
+		return ports.ChunkData{}, err
+	}
+	hash, err := manifest.ParseHash(header.ChunkHash)
+	if err != nil {
+		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: %w", req.Index, req.Path, err)
+	}
+	if header.Index != req.Index {
+		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: peer answered for index %d",
+			req.Index, req.Path, header.Index)
+	}
+	if header.Length != len(reply.Payload) {
+		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: header says %d bytes, payload has %d",
+			req.Index, req.Path, header.Length, len(reply.Payload))
+	}
+	return ports.ChunkData{Index: header.Index, Offset: header.Offset, Data: reply.Payload, ChunkHash: hash}, nil
 }
 
 // Close shuts the connection down. It is safe to call more than once.
@@ -262,6 +326,9 @@ func (c *conn) request(ctx context.Context, frame Frame) (Frame, error) {
 	}
 	select {
 	case f := <-reply:
+		if f.Type == MsgError {
+			return Frame{}, peerError(f)
+		}
 		return f, nil
 	case <-c.done:
 		return Frame{}, c.err()
@@ -306,13 +373,12 @@ func (c *conn) readLoop() {
 			c.fail(&ports.RejectedError{Reason: header.Reason})
 			return
 		case MsgError:
-			var header errorHeader
-			if err := decodeHeader(frame, &header); err != nil {
-				c.fail(err)
+			// An error answering a request belongs to that request;
+			// an unsolicited one ends the connection.
+			if !c.deliver(frame) {
+				c.fail(peerError(frame))
 				return
 			}
-			c.fail(fmt.Errorf("peer reported %s: %s", header.Code, header.Message))
-			return
 		default:
 			c.deliver(frame)
 		}
@@ -336,18 +402,31 @@ func (c *conn) notify(frame Frame) {
 	}
 }
 
-// deliver hands a reply to the waiting request, or drops it when the request
-// was abandoned.
-func (c *conn) deliver(frame Frame) {
+// deliver hands a reply to the waiting request. It reports whether a request
+// was waiting; an unexpected frame is dropped.
+func (c *conn) deliver(frame Frame) bool {
 	c.mu.Lock()
 	pending := c.pending
 	c.pending = nil
 	c.mu.Unlock()
 	if pending == nil {
 		c.log.Debug("unexpected frame", "type", frame.Type.String())
-		return
+		return false
 	}
 	pending <- frame
+	return true
+}
+
+// peerError turns an Error frame into the error the caller sees.
+func peerError(frame Frame) error {
+	var header errorHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		return err
+	}
+	if sentinel := errorSentinel(header.Code); sentinel != nil {
+		return fmt.Errorf("%s: %w", header.Message, sentinel)
+	}
+	return fmt.Errorf("peer reported %s: %s", header.Code, header.Message)
 }
 
 // keepalive pings the peer whenever the connection has been idle, so the

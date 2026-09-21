@@ -99,6 +99,14 @@ func (FS) ReadLink(path string) (string, error) {
 	return target, nil
 }
 
+// Symlink creates a symbolic link at path pointing at target.
+func (FS) Symlink(target, path string) error {
+	if err := os.Symlink(target, path); err != nil {
+		return err
+	}
+	return nil
+}
+
 // MkdirAll creates a directory and any missing parents.
 func (FS) MkdirAll(path string, perm fs.FileMode) error {
 	if err := os.MkdirAll(path, perm); err != nil {

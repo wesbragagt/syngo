@@ -8,6 +8,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
 // Backoff bounds for reconnecting to a peer.
@@ -80,7 +81,9 @@ func (l *peerLoop) run(ctx context.Context) {
 	}
 }
 
-// serve keeps one established connection alive until it fails.
+// serve keeps one established connection alive and pulls from it until it
+// fails. A sync cycle runs on connect, whenever the peer says one of its
+// folders changed, and on every sync interval tick.
 func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 	defer func() { _ = conn.Close() }()
 	log := l.daemon.deps.Log.With("peer", l.peer.ID.Short())
@@ -89,22 +92,84 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 	if !l.ping(ctx, conn, log) {
 		return
 	}
-	ticker := time.NewTicker(l.daemon.cfg.peerPingInterval())
-	defer ticker.Stop()
+	l.sync(ctx, conn, "")
+
+	pings := time.NewTicker(l.daemon.cfg.peerPingInterval())
+	defer pings.Stop()
+	syncs := time.NewTicker(l.daemon.cfg.syncInterval())
+	defer syncs.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-conn.Notifications():
-			// The sync engine reacts to these; until then a change
-			// notification only proves the peer is alive.
-		case <-ticker.C:
+		case id := <-conn.Notifications():
+			l.sync(ctx, conn, id)
+		case <-syncs.C:
+			l.sync(ctx, conn, "")
+		case <-pings.C:
 			if !l.ping(ctx, conn, log) {
 				return
 			}
 		}
 	}
+}
+
+// sync pulls one folder, or every folder both sides share when id is empty.
+func (l *peerLoop) sync(ctx context.Context, conn ports.PeerConn, id folder.ID) {
+	if l.daemon.deps.Syncer == nil {
+		return
+	}
+	for _, f := range l.syncable(ctx, conn, id) {
+		if ctx.Err() != nil {
+			return
+		}
+		l.daemon.setState(f.ID, status.StateSyncing)
+		summary, err := l.daemon.deps.Syncer.SyncFolder(ctx, conn, f)
+		l.daemon.setState(f.ID, "")
+		if err != nil {
+			if ctx.Err() == nil {
+				l.daemon.deps.Log.Warn("folder sync failed",
+					"folder", f.ID, "peer", l.peer.ID.Short(), "error", err)
+			}
+			continue
+		}
+		if summary.Pulled > 0 || summary.Deleted > 0 || summary.Dirs > 0 || summary.Symlinks > 0 {
+			l.daemon.deps.Log.Info("folder synced", "folder", f.ID, "peer", l.peer.ID.Short(),
+				"pulled", summary.Pulled, "deleted", summary.Deleted, "bytes", summary.Bytes)
+		}
+	}
+}
+
+// syncable returns the folders this device may pull from the peer: those both
+// sides have, that this side receives into and that are not paused.
+func (l *peerLoop) syncable(ctx context.Context, conn ports.PeerConn, only folder.ID) []folder.Folder {
+	advertised := make(map[folder.ID]struct{})
+	for _, advert := range conn.RemoteHello().Folders {
+		if advert.Mode != folder.ModeReceiveOnly {
+			advertised[advert.ID] = struct{}{}
+		}
+	}
+
+	configured, err := l.daemon.deps.Store.ListFolders(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			l.daemon.deps.Log.Error("load folders for sync", "error", err)
+		}
+		return nil
+	}
+
+	var out []folder.Folder
+	for _, f := range configured {
+		if only != "" && f.ID != only {
+			continue
+		}
+		if _, shared := advertised[f.ID]; !shared || f.Paused || !f.CanReceive() {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // ping measures the round trip and records it. It reports whether the

@@ -27,37 +27,10 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		var (
-			e                    manifest.Entry
-			kind                 int
-			mtimeNS              int64
-			mode                 int64
-			hashHex, syncedHex   string
-			deleted              int
-			modifiedBy, linkDest string
-			sequence             int64
-		)
-		if err := rows.Scan(&e.Path, &kind, &e.Size, &mtimeNS, &mode, &hashHex, &linkDest,
-			&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex); err != nil {
+		e, err := scanEntry(rows)
+		if err != nil {
 			return manifest.Manifest{}, fmt.Errorf("load manifest of folder %q: %w", id, err)
 		}
-		hash, err := manifest.ParseHash(hashHex)
-		if err != nil {
-			return manifest.Manifest{}, fmt.Errorf("file %q in folder %q: %w", e.Path, id, err)
-		}
-		synced, err := manifest.ParseHash(syncedHex)
-		if err != nil {
-			return manifest.Manifest{}, fmt.Errorf("file %q in folder %q: %w", e.Path, id, err)
-		}
-		e.Kind = manifest.Kind(kind)
-		e.ModTime = time.Unix(0, mtimeNS).UTC()
-		e.Mode = uint32(mode)
-		e.Hash = hash
-		e.SyncedHash = synced
-		e.LinkTarget = linkDest
-		e.Deleted = deleted != 0
-		e.ModifiedBy = device.ID(modifiedBy)
-		e.Sequence = uint64(sequence)
 		m.Add(e)
 	}
 	if err := rows.Err(); err != nil {
@@ -70,6 +43,20 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 	}
 	m.Sequence = seq
 	return m, nil
+}
+
+// GetFile returns one stored entry of a folder, tombstones included, or
+// ErrNotFound.
+func (s *Store) GetFile(ctx context.Context, id folder.ID, path string) (manifest.Entry, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
+		       modified_by, sequence, synced_hash
+		FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path)
+	e, err := scanEntry(row)
+	if err != nil {
+		return manifest.Entry{}, notFound(err, fmt.Sprintf("file %q in folder %q", path, id))
+	}
+	return e, nil
 }
 
 // UpsertEntries writes entries in transactions of at most 500 rows, assigning
@@ -375,4 +362,40 @@ func (s *Store) SyncFolderSequence(ctx context.Context, id folder.ID) error {
 		return fmt.Errorf("sync sequence of folder %q: %w", id, err)
 	}
 	return nil
+}
+
+// scanEntry reads one file row into a manifest entry.
+func scanEntry(row scanner) (manifest.Entry, error) {
+	var (
+		e                    manifest.Entry
+		kind                 int
+		mtimeNS              int64
+		mode                 int64
+		hashHex, syncedHex   string
+		deleted              int
+		modifiedBy, linkDest string
+		sequence             int64
+	)
+	if err := row.Scan(&e.Path, &kind, &e.Size, &mtimeNS, &mode, &hashHex, &linkDest,
+		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex); err != nil {
+		return manifest.Entry{}, err
+	}
+	hash, err := manifest.ParseHash(hashHex)
+	if err != nil {
+		return manifest.Entry{}, fmt.Errorf("file %q: %w", e.Path, err)
+	}
+	synced, err := manifest.ParseHash(syncedHex)
+	if err != nil {
+		return manifest.Entry{}, fmt.Errorf("file %q: %w", e.Path, err)
+	}
+	e.Kind = manifest.Kind(kind)
+	e.ModTime = time.Unix(0, mtimeNS).UTC()
+	e.Mode = uint32(mode)
+	e.Hash = hash
+	e.SyncedHash = synced
+	e.LinkTarget = linkDest
+	e.Deleted = deleted != 0
+	e.ModifiedBy = device.ID(modifiedBy)
+	e.Sequence = uint64(sequence)
+	return e, nil
 }

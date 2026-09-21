@@ -17,6 +17,9 @@ type PeerScript struct {
 	Probe ports.ProbeResult
 	// Err, when set, is returned instead of the probe result.
 	Err error
+	// Handler answers the manifest and chunk requests of connections to
+	// this address. A nil handler refuses them.
+	Handler ports.PeerHandler
 }
 
 // Dialer is a scripted ports.Dialer: it answers from a table of addresses
@@ -92,23 +95,39 @@ func (d *Dialer) Dial(_ context.Context, addr string, expect device.ID) (ports.P
 			Err:   &ports.RejectedError{Reason: script.Probe.RejectReason},
 		}
 	}
-	return &PeerConn{
-		ID:      script.Probe.DeviceID,
-		Hello:   ports.HelloInfo{DeviceID: script.Probe.DeviceID, Name: script.Probe.Name},
-		Latency: latency,
-		changes: make(chan folder.ID, 1),
-	}, nil
+	return NewPeerConn(script.Probe.DeviceID, script.Probe.Name, script.Handler, latency), nil
 }
 
-// PeerConn is an established fake connection.
+// NewPeerConn returns an established fake connection answering through
+// handler. A nil handler refuses every manifest and chunk request.
+func NewPeerConn(id device.ID, name string, handler ports.PeerHandler, latency time.Duration) *PeerConn {
+	hello := ports.HelloInfo{DeviceID: id, Name: name}
+	if handler != nil {
+		hello = handler.Hello(context.Background())
+		hello.DeviceID = id
+	}
+	return &PeerConn{
+		ID:      id,
+		Hello:   hello,
+		Handler: handler,
+		Latency: latency,
+		changes: make(chan folder.ID, 16),
+	}
+}
+
+// PeerConn is an established fake connection. It answers requests through its
+// handler and records what was asked of it.
 type PeerConn struct {
 	ID      device.ID
 	Hello   ports.HelloInfo
+	Handler ports.PeerHandler
 	Latency time.Duration
 
-	mu     sync.Mutex
-	pings  int
-	closed bool
+	mu        sync.Mutex
+	pings     int
+	closed    bool
+	manifests []folder.ID
+	chunks    []ports.ChunkRequest
 
 	changes chan folder.ID
 }
@@ -137,14 +156,50 @@ func (c *PeerConn) Pings() int {
 	return c.pings
 }
 
-// RequestManifest is not scripted in this milestone.
-func (c *PeerConn) RequestManifest(context.Context, folder.ID) (manifest.Manifest, error) {
-	return manifest.Manifest{}, errors.New("not implemented")
+// RequestManifest returns what the handler knows about a folder.
+func (c *PeerConn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error) {
+	c.mu.Lock()
+	c.manifests = append(c.manifests, id)
+	handler := c.Handler
+	c.mu.Unlock()
+	if handler == nil {
+		return manifest.Manifest{}, errors.New("this fake peer serves no manifests")
+	}
+	return handler.Manifest(ctx, c.ID, id)
 }
 
-// RequestChunk is not scripted in this milestone.
-func (c *PeerConn) RequestChunk(context.Context, ports.ChunkRequest) (ports.ChunkData, error) {
-	return ports.ChunkData{}, errors.New("not implemented")
+// RequestChunk returns one chunk from the handler.
+func (c *PeerConn) RequestChunk(ctx context.Context, req ports.ChunkRequest) (ports.ChunkData, error) {
+	c.mu.Lock()
+	c.chunks = append(c.chunks, req)
+	handler := c.Handler
+	c.mu.Unlock()
+	if handler == nil {
+		return ports.ChunkData{}, errors.New("this fake peer serves no chunks")
+	}
+	return handler.Chunk(ctx, c.ID, req)
+}
+
+// ChunkRequests returns every chunk request the connection carried, in order.
+func (c *PeerConn) ChunkRequests() []ports.ChunkRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]ports.ChunkRequest(nil), c.chunks...)
+}
+
+// ManifestRequests returns the folders whose manifest was asked for.
+func (c *PeerConn) ManifestRequests() []folder.ID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]folder.ID(nil), c.manifests...)
+}
+
+// Notify queues a folder change notification.
+func (c *PeerConn) Notify(id folder.ID) {
+	select {
+	case c.changes <- id:
+	default:
+	}
 }
 
 // Notifications reports folders the peer says have changed.

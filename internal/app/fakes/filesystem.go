@@ -224,6 +224,19 @@ func (f *FileSystem) ReadLink(p string) (string, error) {
 	return n.target, nil
 }
 
+// Symlink creates a symbolic link at p pointing at target.
+func (f *FileSystem) Symlink(target, p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p = clean(p)
+	if _, ok := f.nodes[p]; ok {
+		return fmt.Errorf("symlink %s: %w", p, fs.ErrExist)
+	}
+	f.mkdirAll(path.Dir(p), 0o755)
+	f.nodes[p] = &node{mode: fs.ModeSymlink | 0o777, target: target, modTime: f.modTime, inode: f.newInode()}
+	return nil
+}
+
 // MkdirAll creates a directory and any missing parents.
 func (f *FileSystem) MkdirAll(p string, perm fs.FileMode) error {
 	f.mu.Lock()
