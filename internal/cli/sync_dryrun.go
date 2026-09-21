@@ -144,6 +144,15 @@ func printPlans(deps *Deps, view planView) error {
 		_, err := fmt.Fprintln(out, "\nfolder is in sync; nothing would change")
 		return err
 	}
-	_, err := fmt.Fprintf(out, "\n%d changes would be applied; nothing was changed\n", view.Changes)
+	_, err := fmt.Fprintf(out, "\n%d %s would be applied; nothing was changed\n",
+		view.Changes, plural(view.Changes, "change", "changes"))
 	return err
+}
+
+// plural picks the singular or the plural form for a count.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
