@@ -166,31 +166,39 @@ func TestConflictShow_NamesBothVersions(t *testing.T) {
 	}
 
 	var view struct {
-		ID    string `json:"id"`
-		Local *struct {
-			Path  string `json:"path"`
-			Size  int64  `json:"size"`
-			Hash  string `json:"hash"`
-			MTime string `json:"mtime"`
-		} `json:"local"`
-		Conflict *struct {
-			Path string `json:"path"`
-			Size int64  `json:"size"`
-			Hash string `json:"hash"`
-		} `json:"conflict"`
+		ID   string `json:"id"`
+		File *struct {
+			Path    string `json:"path"`
+			Size    int64  `json:"size"`
+			Hash    string `json:"hash"`
+			MTime   string `json:"mtime"`
+			Version string `json:"version"`
+		} `json:"file"`
+		Copy *struct {
+			Path    string `json:"path"`
+			Size    int64  `json:"size"`
+			Hash    string `json:"hash"`
+			Version string `json:"version"`
+		} `json:"copy"`
 	}
 	if code := conflictJSON(t, e, &view, "conflict", "show", "c1"); code != cli.ExitOK {
 		t.Fatalf("conflict show --json exit = %d", code)
 	}
-	if view.Local == nil || view.Conflict == nil {
+	if view.File == nil || view.Copy == nil {
 		t.Fatalf("view = %+v, want both files described", view)
 	}
-	if view.Local.Size != int64(len(remoteVersion)) || view.Conflict.Size != int64(len(localVersion)) {
-		t.Fatalf("sizes = %d and %d, want %d and %d", view.Local.Size, view.Conflict.Size,
+	if view.File.Size != int64(len(remoteVersion)) || view.Copy.Size != int64(len(localVersion)) {
+		t.Fatalf("sizes = %d and %d, want %d and %d", view.File.Size, view.Copy.Size,
 			len(remoteVersion), len(localVersion))
 	}
-	if view.Local.MTime == "" || view.Local.Hash == "" {
-		t.Fatalf("local version = %+v, want a time and a hash", view.Local)
+	if view.File.MTime == "" || view.File.Hash == "" {
+		t.Fatalf("the file at the path = %+v, want a time and a hash", view.File)
+	}
+	// The file at the path holds the peer's version and the copy holds
+	// this device's, and each says so.
+	if view.File.Version != "remote" || view.Copy.Version != "local" {
+		t.Fatalf("versions = %q and %q, want remote at the path and local in the copy",
+			view.File.Version, view.Copy.Version)
 	}
 }
 

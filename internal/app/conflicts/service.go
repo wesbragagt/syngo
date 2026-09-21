@@ -75,9 +75,9 @@ type File struct {
 	Hash manifest.Hash
 }
 
-// View is one conflict as reported to the user. Local and Conflict are filled
-// in by Show and by Resolve; a listing leaves them out, because it would have
-// to hash every file to fill them.
+// View is one conflict as reported to the user. File and Copy are filled in by
+// Show, by Resolve and by Export; a listing leaves them out, because it would
+// have to hash every file to fill them.
 type View struct {
 	ID           string
 	FolderID     folder.ID
@@ -90,10 +90,12 @@ type View struct {
 	PeerID       device.ID
 	DetectedAt   time.Time
 	Resolved     bool
-	// Local describes the file at Path, Conflict the one at ConflictPath.
-	// Either is nil when there is no such file.
-	Local    *File
-	Conflict *File
+	// File describes what is at Path and Copy what is at ConflictPath.
+	// Either is nil when there is no file there. Which of them holds the
+	// local and which the remote version is what their hashes say: a
+	// resolution goes by content, not by position.
+	File *File
+	Copy *File
 }
 
 // Resolution is what a resolve did.
@@ -209,10 +211,10 @@ func (s *Service) keepOne(view View, keep Keep) (Resolution, error) {
 	// The peer deleted the path: keeping its version means removing the
 	// local file, and there is no copy to put anywhere.
 	if want.IsZero() {
-		if view.Local == nil {
+		if view.File == nil {
 			return result, nil
 		}
-		if view.Local.Hash != view.LocalHash {
+		if view.File.Hash != view.LocalHash {
 			return Resolution{}, fmt.Errorf("%s: %w", view.Path, ErrVersionGone)
 		}
 		if err := s.remove(view.FolderPath, view.Path); err != nil {
@@ -223,23 +225,23 @@ func (s *Service) keepOne(view View, keep Keep) (Resolution, error) {
 	}
 
 	switch {
-	case view.Local != nil && view.Local.Hash == want:
+	case view.File != nil && view.File.Hash == want:
 		result.KeptPath = view.Path
-		if view.Conflict != nil {
-			if err := s.remove(view.FolderPath, view.Conflict.Path); err != nil {
+		if view.Copy != nil {
+			if err := s.remove(view.FolderPath, view.Copy.Path); err != nil {
 				return Resolution{}, err
 			}
-			result.RemovedPath = view.Conflict.Path
+			result.RemovedPath = view.Copy.Path
 		}
-	case view.Conflict != nil && view.Conflict.Hash == want:
+	case view.Copy != nil && view.Copy.Hash == want:
 		// The rename replaces the other version in one step, so the path
 		// never holds a half-written file.
-		if err := s.rename(view.FolderPath, view.Conflict.Path, view.Path); err != nil {
+		if err := s.rename(view.FolderPath, view.Copy.Path, view.Path); err != nil {
 			return Resolution{}, err
 		}
 		result.KeptPath = view.Path
-		result.MovedFrom = view.Conflict.Path
-		result.RemovedPath = view.Conflict.Path
+		result.MovedFrom = view.Copy.Path
+		result.RemovedPath = view.Copy.Path
 	default:
 		return Resolution{}, fmt.Errorf("%s: %w", view.Path, ErrVersionGone)
 	}
@@ -264,7 +266,7 @@ func (s *Service) Export(ctx context.Context, id, dir string) (Export, error) {
 	for _, version := range []struct {
 		file *File
 		side string
-	}{{view.Local, "path"}, {view.Conflict, "conflict"}} {
+	}{{view.File, "path"}, {view.Copy, "conflict"}} {
 		if version.file == nil {
 			continue
 		}
@@ -304,11 +306,24 @@ func (s *Service) load(ctx context.Context, id string) (View, error) {
 
 // described fills in what the two files hold now.
 func (s *Service) described(view View) View {
-	view.Local = s.describe(view.FolderPath, view.Path)
+	view.File = s.describe(view.FolderPath, view.Path)
 	if view.ConflictPath != "" {
-		view.Conflict = s.describe(view.FolderPath, view.ConflictPath)
+		view.Copy = s.describe(view.FolderPath, view.ConflictPath)
 	}
 	return view
+}
+
+// Holder returns the file holding one of the two versions, or nil when no file
+// holds it any more.
+func (v View) Holder(hash manifest.Hash) *File {
+	switch {
+	case v.File != nil && v.File.Hash == hash:
+		return v.File
+	case v.Copy != nil && v.Copy.Hash == hash:
+		return v.Copy
+	default:
+		return nil
+	}
 }
 
 // describe reads the size, time and content hash of one version, or returns

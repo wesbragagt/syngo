@@ -117,22 +117,30 @@ func TestShow_DescribesBothVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	if view.Local == nil || view.Conflict == nil {
+	if view.File == nil || view.Copy == nil {
 		t.Fatalf("view = %+v, want both files described", view)
 	}
-	if view.Local.Hash != view.RemoteHash {
+	if view.File.Hash != view.RemoteHash {
 		t.Fatalf("the file at the path holds %s, want the peer's version %s",
-			view.Local.Hash, view.RemoteHash)
+			view.File.Hash, view.RemoteHash)
 	}
-	if view.Conflict.Hash != view.LocalHash {
-		t.Fatalf("the copy holds %s, want the local version %s", view.Conflict.Hash, view.LocalHash)
+	if view.Copy.Hash != view.LocalHash {
+		t.Fatalf("the copy holds %s, want the local version %s", view.Copy.Hash, view.LocalHash)
 	}
-	if view.Local.Size != int64(len(f.remote)) || view.Conflict.Size != int64(len(f.local)) {
+	if view.File.Size != int64(len(f.remote)) || view.Copy.Size != int64(len(f.local)) {
 		t.Fatalf("sizes = %d and %d, want %d and %d",
-			view.Local.Size, view.Conflict.Size, len(f.remote), len(f.local))
+			view.File.Size, view.Copy.Size, len(f.remote), len(f.local))
 	}
-	if view.Local.ModTime.IsZero() {
+	if view.File.ModTime.IsZero() {
 		t.Fatal("no modification time was reported")
+	}
+	// Which file holds which version is answered by content, so a version
+	// is found wherever it sits.
+	if holder := view.Holder(view.LocalHash); holder == nil || holder.Path != view.ConflictPath {
+		t.Fatalf("the local version is reported in %+v, want the copy", holder)
+	}
+	if holder := view.Holder(view.RemoteHash); holder == nil || holder.Path != view.Path {
+		t.Fatalf("the remote version is reported in %+v, want the path", holder)
 	}
 }
 

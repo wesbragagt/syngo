@@ -555,22 +555,24 @@ detected: 2026-09-21T15:30:00Z
 resolved: no
 
 local version: 3f0a…
-  path:  notes/report.sync-conflict-20260921-153000-ETI3RRZ.md
+  file:  notes/report.sync-conflict-20260921-153000-ETI3RRZ.md
   size:  1841 bytes
   mtime: 2026-09-21T15:29:41Z
-  holds: 3f0a…
 
 remote version: 9b12…
-  path:  notes/report.md
+  file:  notes/report.md
   size:  1902 bytes
   mtime: 2026-09-21T15:29:58Z
-  holds: 9b12…
 ```
 
-With `--json` the same object as `conflict list` carries a `local` and a
-`conflict` object describing the file at `path` and the file at
-`conflict_path`, each with `path`, `size`, `mtime` and `hash`. Either is
-absent when there is no file there any more.
+Which file holds which version is answered by hashing them, not by their
+names, so a version is found wherever it sits.
+
+With `--json` the same object as `conflict list` carries a `file` object for
+what is at `path` and a `copy` object for what is at `conflict_path`, each with
+`path`, `size`, `mtime`, `hash` and the `version` it holds (`local`, `remote`,
+or `unknown` when something edited it since). Either is absent when there is no
+file there any more.
 
 ### `syncthis conflict resolve ID --keep local|remote|both`
 

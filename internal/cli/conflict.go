@@ -13,32 +13,38 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/compose"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // conflictView is the JSON shape of one conflict. local and conflict describe
 // the two files as they are on disk and are only filled in by the commands
 // that look at them.
 type conflictView struct {
-	ID           string        `json:"id"`
-	FolderID     string        `json:"folder_id"`
-	Path         string        `json:"path"`
-	ConflictPath string        `json:"conflict_path"`
-	Reason       string        `json:"reason"`
-	LocalHash    string        `json:"local_hash"`
-	RemoteHash   string        `json:"remote_hash"`
-	PeerID       string        `json:"peer_id"`
-	DetectedAt   *string       `json:"detected_at"`
-	Resolved     bool          `json:"resolved"`
-	Local        *conflictFile `json:"local,omitempty"`
-	Conflict     *conflictFile `json:"conflict,omitempty"`
+	ID           string  `json:"id"`
+	FolderID     string  `json:"folder_id"`
+	Path         string  `json:"path"`
+	ConflictPath string  `json:"conflict_path"`
+	Reason       string  `json:"reason"`
+	LocalHash    string  `json:"local_hash"`
+	RemoteHash   string  `json:"remote_hash"`
+	PeerID       string  `json:"peer_id"`
+	DetectedAt   *string `json:"detected_at"`
+	Resolved     bool    `json:"resolved"`
+	// File describes what is at path and Copy what is at conflict_path,
+	// each saying which of the two versions it holds.
+	File *conflictFile `json:"file,omitempty"`
+	Copy *conflictFile `json:"copy,omitempty"`
 }
 
-// conflictFile is one version of a conflict as it is on disk now.
+// conflictFile is one of the two files of a conflict as it is on disk now.
 type conflictFile struct {
 	Path    string  `json:"path"`
 	Size    int64   `json:"size"`
 	ModTime *string `json:"mtime"`
 	Hash    string  `json:"hash"`
+	// Version is "local", "remote", or "unknown" when the file holds
+	// neither of the two versions the conflict recorded.
+	Version string `json:"version"`
 }
 
 // resolveView is what `conflict resolve` prints.
@@ -67,16 +73,31 @@ func conflictViewOf(v conflicts.View) conflictView {
 		ID: v.ID, FolderID: string(v.FolderID), Path: v.Path, ConflictPath: v.ConflictPath,
 		Reason: v.Reason, LocalHash: v.LocalHash.String(), RemoteHash: v.RemoteHash.String(),
 		PeerID: string(v.PeerID), DetectedAt: timestamp(v.DetectedAt), Resolved: v.Resolved,
-		Local: conflictFileOf(v.Local), Conflict: conflictFileOf(v.Conflict),
+		File: conflictFileOf(v, v.File), Copy: conflictFileOf(v, v.Copy),
 	}
 }
 
-// conflictFileOf converts one version into its JSON shape.
-func conflictFileOf(f *conflicts.File) *conflictFile {
+// conflictFileOf converts one file of a conflict into its JSON shape.
+func conflictFileOf(v conflicts.View, f *conflicts.File) *conflictFile {
 	if f == nil {
 		return nil
 	}
-	return &conflictFile{Path: f.Path, Size: f.Size, ModTime: timestamp(f.ModTime), Hash: f.Hash.String()}
+	return &conflictFile{
+		Path: f.Path, Size: f.Size, ModTime: timestamp(f.ModTime),
+		Hash: f.Hash.String(), Version: versionOf(v, f),
+	}
+}
+
+// versionOf says which of the two versions a file holds.
+func versionOf(v conflicts.View, f *conflicts.File) string {
+	switch f.Hash {
+	case v.LocalHash:
+		return string(conflicts.KeepLocal)
+	case v.RemoteHash:
+		return string(conflicts.KeepRemote)
+	default:
+		return "unknown"
+	}
 }
 
 // newConflictCmd builds the "conflict" command group.
@@ -267,9 +288,11 @@ func newConflictExportCmd(deps *Deps) *cobra.Command {
 
 // resolveQuestion is what the user confirms before a file is removed.
 func resolveQuestion(view conflicts.View, keep conflicts.Keep) string {
-	loses := view.ConflictPath
-	if keep == conflicts.KeepLocal && view.Conflict != nil && view.Conflict.Hash == view.LocalHash {
-		loses = view.Path
+	// The file that goes is the one holding the version that loses, which
+	// is the path itself when the peer's answer is a deletion.
+	loses := ""
+	if losing := view.Holder(losingHash(view, keep)); losing != nil {
+		loses = losing.Path
 	}
 	if keep == conflicts.KeepRemote && view.RemoteHash.IsZero() {
 		loses = view.Path
@@ -279,6 +302,18 @@ func resolveQuestion(view conflicts.View, keep conflicts.Keep) string {
 	}
 	return fmt.Sprintf("keep the %s version of %s and delete %s", keep, view.Path, loses)
 }
+
+// losingHash is the version a resolution does not keep.
+func losingHash(view conflicts.View, keep conflicts.Keep) manifestHash {
+	if keep == conflicts.KeepLocal {
+		return view.RemoteHash
+	}
+	return view.LocalHash
+}
+
+// manifestHash is the content hash type, named here so the printing helpers
+// read as what they are about.
+type manifestHash = manifest.Hash
 
 // printConflict writes the human-readable form of one conflict.
 func printConflict(deps *Deps, v conflicts.View) error {
@@ -291,26 +326,29 @@ func printConflict(deps *Deps, v conflicts.View) error {
 	_, _ = fmt.Fprintf(out, "peer:     %s\n", v.PeerID)
 	_, _ = fmt.Fprintf(out, "detected: %s\n", v.DetectedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(out, "resolved: %s\n", boolWord(v.Resolved))
-	printVersion(deps, "local", v.LocalHash.String(), v.Local)
-	printVersion(deps, "remote", v.RemoteHash.String(), v.Conflict)
+	printVersion(deps, "local", v.LocalHash, v)
+	printVersion(deps, "remote", v.RemoteHash, v)
 	return nil
 }
 
-// printVersion writes one of the two versions of a conflict.
-func printVersion(deps *Deps, name, hash string, file *conflicts.File) {
+// printVersion writes one of the two versions of a conflict and the file that
+// holds it, which is not always the file it started in: a resolution moves a
+// version from the copy back onto the path.
+func printVersion(deps *Deps, name string, hash manifestHash, v conflicts.View) {
 	out := deps.Stdout
-	if hash == "" {
-		hash = "(deleted)"
-	}
-	_, _ = fmt.Fprintf(out, "\n%s version: %s\n", name, hash)
-	if file == nil {
-		_, _ = fmt.Fprintln(out, "  no file at that path")
+	if hash.IsZero() {
+		_, _ = fmt.Fprintf(out, "\n%s version: deleted by the peer\n", name)
 		return
 	}
-	_, _ = fmt.Fprintf(out, "  path:  %s\n", escapeCell(file.Path))
+	_, _ = fmt.Fprintf(out, "\n%s version: %s\n", name, hash)
+	file := v.Holder(hash)
+	if file == nil {
+		_, _ = fmt.Fprintln(out, "  no file holds it any more")
+		return
+	}
+	_, _ = fmt.Fprintf(out, "  file:  %s\n", escapeCell(file.Path))
 	_, _ = fmt.Fprintf(out, "  size:  %d bytes\n", file.Size)
 	_, _ = fmt.Fprintf(out, "  mtime: %s\n", file.ModTime.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(out, "  holds: %s\n", file.Hash)
 }
 
 // printResolution reports what a resolve did.
