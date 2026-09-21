@@ -47,6 +47,33 @@ $ echo "hello from A" > /tmp/a/docs/greeting.txt
 $ bin/syncthis --data-dir /tmp/b/data status
 ```
 
+## Pairing over Tailscale
+
+On a tailnet the devices find each other by name. Check the client first:
+
+```console
+$ bin/syncthis network tailscale detect       # present, running, interface
+$ bin/syncthis network peers                  # the devices on this tailnet
+```
+
+Then run each daemon on its tailnet interface and trust the other side by its
+Tailscale host name:
+
+```console
+laptop$ bin/syncthis daemon run --interface tailscale0 &
+nas$    bin/syncthis daemon run --interface tailscale0 &
+
+laptop$ bin/syncthis peer add nas    --device-id <id of nas>
+nas$    bin/syncthis peer add laptop --device-id <id of laptop>
+```
+
+The name is looked up through the local Tailscale client and the address that
+answers is stored, so no firewall port is opened and no name lookup happens at
+dial time. `syncthis status --json | jq -r .device.id` prints the id each side
+pins. Nothing else in syncthis needs Tailscale: without it, give `peer add` an
+address. The full walkthrough is in
+[docs/CLI.md](docs/CLI.md#pairing-two-devices-over-tailscale).
+
 ## What it does
 
 - One folder id per synchronized directory, the same on every device.
@@ -65,6 +92,8 @@ $ bin/syncthis --data-dir /tmp/b/data status
   the folder at night only, while it keeps scanning and keeps serving.
 - `config export` and `config import` move a whole configuration, folders,
   peers and settings, to another machine; identity keys are never part of it.
+- `network tailscale detect` and `network peers` report what the local
+  Tailscale client knows, and `peer add nas` takes a MagicDNS host name.
 - `sync-plan` prints what a sync would do without doing it.
 - Every command speaks `--json`, and every failure has its own exit code.
 

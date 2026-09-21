@@ -150,6 +150,20 @@ func jsonCases() []jsonCase {
 		{"peer test of an unreachable address", cli.ExitPeerUnreachable, func(t *testing.T) (env, []string) {
 			return initialized(t), []string{"peer", "test", closedPort(t)}
 		}},
+		{"network tailscale detect without tailscale", cli.ExitOK, func(t *testing.T) (env, []string) {
+			withoutTailscale(t)
+			return initialized(t), []string{"network", "tailscale", "detect"}
+		}},
+		{"network peers without tailscale", cli.ExitTailnetUnavailable, func(t *testing.T) (env, []string) {
+			withoutTailscale(t)
+			return initialized(t), []string{"network", "peers"}
+		}},
+		{"network without a subcommand", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"network"}
+		}},
+		{"network tailscale without a subcommand", cli.ExitUsage, func(t *testing.T) (env, []string) {
+			return initialized(t), []string{"network", "tailscale"}
+		}},
 		{"transfer list", cli.ExitOK, func(t *testing.T) (env, []string) {
 			e := withDocs(t)
 			seedTransfer(t, e, transfer.ID("a1"), "big.bin", transfer.StateActive, 4, 2)

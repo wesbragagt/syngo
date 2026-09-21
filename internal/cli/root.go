@@ -92,6 +92,7 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 		newRepairCmd(deps),
 		newDaemonCmd(deps),
 		newPeerCmd(deps),
+		newNetworkCmd(deps),
 		newTransferCmd(deps),
 		newConflictCmd(deps),
 		newSyncPlanCmd(deps),

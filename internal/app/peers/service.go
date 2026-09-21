@@ -36,7 +36,15 @@ type Service struct {
 	clock       ports.Clock
 	identity    ports.Identity
 	defaultPort int
+	// tailnet turns a host name into tailnet addresses. It is nil on a
+	// device with no Tailscale support wired in, and every failure it
+	// reports leaves the host as the user typed it.
+	tailnet ports.TailnetDiscovery
 }
+
+// SetTailnet installs the tailnet lookup used to resolve bare host names
+// before the system resolver is asked. Passing nil turns the lookup off.
+func (s *Service) SetTailnet(t ports.TailnetDiscovery) { s.tailnet = t }
 
 // New returns a peer service. identity is this device, which may not be added
 // as a peer of itself. defaultPort completes addresses given without one; 0
@@ -72,6 +80,9 @@ type AddResult struct {
 	// Accepted reports whether the peer already knows us. It is false
 	// until the peer runs `peer add` against this device as well.
 	Accepted bool
+	// ResolvedFrom is the host name the tailnet turned into the address
+	// that was stored. It is empty when nothing was resolved.
+	ResolvedFrom string
 }
 
 // Add probes the address, checks the identity and stores the peer. The peer
@@ -82,6 +93,7 @@ func (s *Service) Add(ctx context.Context, o AddOptions) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
+	addr, resolvedFrom := s.resolve(ctx, addr)
 
 	probe, err := s.dialer.Probe(ctx, addr)
 	if err != nil {
@@ -123,7 +135,7 @@ func (s *Service) Add(ctx context.Context, o AddOptions) (AddResult, error) {
 	if err := s.store.SaveDevice(ctx, peer); err != nil {
 		return AddResult{}, err
 	}
-	return AddResult{Device: peer, Accepted: probe.Accepted}, nil
+	return AddResult{Device: peer, Accepted: probe.Accepted, ResolvedFrom: resolvedFrom}, nil
 }
 
 // List returns every known peer.
@@ -157,6 +169,9 @@ type TestResult struct {
 	Reason  string
 	Latency time.Duration
 	Err     string
+	// ResolvedFrom is the host name the tailnet turned into Address. It is
+	// empty when nothing was resolved.
+	ResolvedFrom string
 }
 
 // Test connects to a peer, which may be named by device ID or by address, and
@@ -177,7 +192,7 @@ func (s *Service) Test(ctx context.Context, target string) (TestResult, error) {
 		if err != nil {
 			return TestResult{}, err
 		}
-		result.Address = addr
+		result.Address, result.ResolvedFrom = s.resolve(ctx, addr)
 	}
 
 	probe, probeErr := s.dialer.Probe(ctx, result.Address)
@@ -209,6 +224,54 @@ func (s *Service) Test(ctx context.Context, target string) (TestResult, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+// resolve replaces the host of a HOST:PORT address with a tailnet address
+// when the host is a name the tailnet knows. The second result is the host
+// name that was resolved, or empty when the address was left as it was.
+//
+// The resolved address is what gets stored, because tailnet addresses are
+// stable and storing the name would make every dial depend on the system
+// resolver knowing MagicDNS. Any failure, including no Tailscale at all,
+// leaves the host as typed so the dialer can try system DNS.
+func (s *Service) resolve(ctx context.Context, addr string) (string, string) {
+	if s.tailnet == nil {
+		return addr, ""
+	}
+	host, port, ok := splitHostPort(addr)
+	if !ok || host == "" || isIPv4Literal(host) || isIPv6Literal(host) {
+		return addr, ""
+	}
+	ips, err := s.tailnet.Resolve(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return addr, ""
+	}
+	return joinHostPort(ips[0], port), host
+}
+
+// splitHostPort splits an address this service has already completed, so it is
+// either HOST:PORT or [IPv6]:PORT.
+func splitHostPort(addr string) (host, port string, ok bool) {
+	if strings.HasPrefix(addr, "[") {
+		end := strings.LastIndex(addr, "]")
+		if end < 0 || !strings.HasPrefix(addr[end+1:], ":") {
+			return "", "", false
+		}
+		return addr[1:end], addr[end+2:], true
+	}
+	colon := strings.LastIndex(addr, ":")
+	if colon < 0 {
+		return "", "", false
+	}
+	return addr[:colon], addr[colon+1:], true
+}
+
+// joinHostPort writes an address, bracketing an IPv6 host.
+func joinHostPort(host, port string) string {
+	if strings.Contains(host, ":") {
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
 }
 
 // address completes a HOST or HOST:PORT target with the default port. It does

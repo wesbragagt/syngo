@@ -44,6 +44,7 @@ build when a rule is broken.
 | `EventSink` | the daemon, the tests | what happened, as named events |
 | `Limiter` | `tokenbucket` | waiting for a byte budget |
 | `SettingsStore` | `jsonconfig` | the settings in `config.json` that change while the process runs |
+| `TailnetDiscovery` | `tailscalecli` | the local Tailscale client, through `tailscale status --json` |
 
 The application never constructs an adapter. `compose.Build` wires them and
 returns an `App`; every command asks the `App` for the service it needs.

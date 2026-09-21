@@ -22,6 +22,9 @@ type peerView struct {
 	// Accepted reports whether the peer already knows this device. It is
 	// only filled in by `peer add`.
 	Accepted *bool `json:"accepted,omitempty"`
+	// ResolvedFrom is the host name the tailnet turned into Address. It is
+	// absent when the address was used as typed.
+	ResolvedFrom string `json:"resolved_from,omitempty"`
 }
 
 // peerViewOf converts a device into its JSON shape.
@@ -51,6 +54,8 @@ type testView struct {
 	Reason        string  `json:"reason"`
 	LatencyMS     float64 `json:"latency_ms"`
 	Error         *string `json:"error"`
+	// ResolvedFrom is the host name the tailnet turned into Address.
+	ResolvedFrom string `json:"resolved_from,omitempty"`
 }
 
 // testViewOf converts a test result into its JSON shape.
@@ -65,6 +70,7 @@ func testViewOf(r peers.TestResult) testView {
 		Reason:        r.Reason,
 		LatencyMS:     float64(r.Latency.Microseconds()) / 1000,
 		Error:         nonEmpty(r.Err),
+		ResolvedFrom:  r.ResolvedFrom,
 	}
 }
 
@@ -136,10 +142,12 @@ func newPeerAddCmd(deps *Deps) *cobra.Command {
 			if deps.Global.JSON {
 				view := peerViewOf(result.Device)
 				view.Accepted = &result.Accepted
+				view.ResolvedFrom = result.ResolvedFrom
 				return deps.printer().PrintJSON(view)
 			}
-			_, _ = fmt.Fprintf(deps.Stdout, "added peer %s (%s) at %s\n",
-				result.Device.Name, result.Device.ID.Display(), result.Device.Address)
+			_, _ = fmt.Fprintf(deps.Stdout, "added peer %s (%s) at %s%s\n",
+				result.Device.Name, result.Device.ID.Display(), result.Device.Address,
+				viaTailnet(result.ResolvedFrom))
 			if !result.Accepted {
 				_, _ = fmt.Fprintf(deps.Stdout,
 					"the peer has not added this device yet; run `syncthis peer add` there too\n")
@@ -277,10 +285,19 @@ func newPeerTestCmd(deps *Deps) *cobra.Command {
 	}
 }
 
+// viaTailnet names the host the tailnet resolved, or nothing when the address
+// was used as typed.
+func viaTailnet(name string) string {
+	if name == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (%s via tailnet)", name)
+}
+
 // printTestResult writes the human-readable form of a connection test.
 func printTestResult(deps *Deps, r peers.TestResult) {
 	out := deps.Stdout
-	_, _ = fmt.Fprintf(out, "address:       %s\n", r.Address)
+	_, _ = fmt.Fprintf(out, "address:       %s%s\n", r.Address, viaTailnet(r.ResolvedFrom))
 	if r.DeviceID != "" {
 		_, _ = fmt.Fprintf(out, "device id:     %s\n", r.DeviceID.Display())
 	}

@@ -71,7 +71,7 @@ Goal: transfer arbitrary files between two Tailscale devices.
 
 - [x] Define device identity and a pairing protocol.
 - [x] Add a `peer add` CLI command.
-- [ ] Implement Tailscale peer detection through MagicDNS and Tailscale IPs.
+- [x] Implement Tailscale peer detection through MagicDNS and Tailscale IPs.
 - [x] Bind the sync listener to the Tailscale interface only.
 - [x] Verify the expected Tailscale node identity before accepting a device.
 - [x] Implement an authenticated transport session.

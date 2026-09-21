@@ -41,6 +41,7 @@ show the shape of each document; the commands print them indented.
 | 8 | integrity | content did not hash to what was expected, repair found something it cannot fix, a conflict version asked for is no longer on disk, or a resolution would have deleted a file that changed since the conflict was recorded |
 | 9 | confirmation required | a question had to be asked and could not be |
 | 10 | dry run | a dry run finished and something would have changed; 0 when nothing would |
+| 11 | tailnet unavailable | a command that can only answer from the local Tailscale client found none, or found one whose backend is not running |
 
 In `--json` mode a failure is printed on stdout as
 
@@ -557,6 +558,15 @@ configuration change.
 Contacts the device at the address, shows the identity it presents and stores
 it. The port defaults to 22000.
 
+`HOST` may be an address literal, a bare Tailscale host name (`nas`) or a
+MagicDNS name (`nas.tail1234.ts.net`). A host that is not a literal is looked
+up in the tailnet first, through the same `tailscale status --json` the
+`network` commands use; the address that answers is what gets stored, because
+tailnet addresses are stable and storing the name would make every later dial
+depend on the system resolver knowing MagicDNS. When Tailscale is missing, not
+running, or does not know the name, the host is kept as typed and resolved by
+system DNS at dial time.
+
 | Flag | Meaning |
 |---|---|
 | `--device-id ID` | the identity the peer must present; the command fails with exit 7 if it presents another |
@@ -572,9 +582,14 @@ $ syncthis peer add 100.64.0.2:22000 --json --yes
   "verified": true,
   "added_at": "2026-09-21T08:28:28Z",
   "last_seen_at": null,
-  "accepted": false
+  "accepted": false,
+  "resolved_from": "nas"
 }
 ```
+
+`resolved_from` is the host name the tailnet turned into `address`; it is
+absent when the address was used as typed. The text form says it too: `added
+peer nas (ETI3…) at 100.64.0.3:22000 (nas via tailnet)`.
 
 `accepted` says whether the peer already trusts this device. Pairing is done
 when both sides ran `peer add` and both report `accepted: true`.
@@ -591,7 +606,10 @@ Forgets a peer. It asks first.
 ### `syncthis peer test ID|HOST[:PORT]`
 
 Runs the handshake and reports what happened. It exits 7 when the peer cannot
-be reached or refuses this device.
+be reached or refuses this device. A `HOST` that is not an address literal is
+resolved through the tailnet exactly as in `peer add`, and the result carries
+`resolved_from`; a device ID names a peer whose address was already resolved
+when it was added, so nothing is looked up.
 
 ```console
 $ syncthis peer test 100.64.0.2:22000 --json
@@ -610,6 +628,93 @@ $ syncthis peer test 100.64.0.2:22000 --json
 
 `reject_reason` is what the peer answered: `unknown_device`,
 `protocol_version` or `id_mismatch`.
+
+### `syncthis network tailscale detect`
+
+Runs `tailscale status --json` and reports what the local Tailscale client
+said. A device without Tailscale is not a failure: the command prints
+`present: false` and exits 0, because detection asked a question and "no" is an
+answer. The binary is looked up on each call, so installing Tailscale later
+needs no restart, and a device without it never shells out.
+
+```console
+$ syncthis network tailscale detect --json
+{
+  "present": true,
+  "running": true,
+  "backend_state": "Running",
+  "version": "1.80.2",
+  "interface": "tailscale0",
+  "hostname": "laptop",
+  "dns_name": "laptop.tail1234.ts.net",
+  "ips": ["100.64.0.2", "fd7a:115c:a1e0::2"],
+  "magic_dns_suffix": "tail1234.ts.net"
+}
+```
+
+With no Tailscale installed every field is empty or false:
+
+```console
+$ syncthis network tailscale detect --json
+{
+  "present": false, "running": false, "backend_state": "", "version": "",
+  "interface": "", "hostname": "", "dns_name": "", "ips": [],
+  "magic_dns_suffix": ""
+}
+```
+
+`interface` is the interface carrying this device's tailnet address. It is
+empty when Tailscale runs in userspace networking mode, where there is no
+interface to name; the text form prints `userspace networking` there. It is
+the value to pass to `daemon run --interface`.
+
+Text form:
+
+```console
+$ syncthis network tailscale detect
+tailscale:        installed
+version:          1.80.2
+backend state:    Running
+running:          true
+interface:        tailscale0
+hostname:         laptop
+dns name:         laptop.tail1234.ts.net
+ips:              100.64.0.2, fd7a:115c:a1e0::2
+magic dns suffix: tail1234.ts.net
+```
+
+### `syncthis network peers`
+
+Lists the other devices of the tailnet, sorted by host name. These are tailnet
+peers, not syncthis peers: pair one with `peer add`. Unlike `detect` the
+command exits 11 when there is no Tailscale client to ask, or when its backend
+is not running, because the listing that was asked for cannot exist.
+
+```console
+$ syncthis network peers
+HOSTNAME  DNS NAME                 IPS                             ONLINE  OS
+desktop   desktop.tail1234.ts.net  100.64.0.5,fd7a:115c:a1e0::5    true    windows
+nas       nas.tail1234.ts.net      100.64.0.3,fd7a:115c:a1e0::3    true    linux
+phone     phone.tail1234.ts.net    100.64.0.4,fd7a:115c:a1e0::4    false   iOS
+
+$ syncthis network peers --json
+[
+  {
+    "id": "nNAS123CNTRL",
+    "hostname": "nas",
+    "dns_name": "nas.tail1234.ts.net",
+    "ips": ["100.64.0.3"],
+    "online": true,
+    "os": "linux"
+  }
+]
+```
+
+The document `tailscale status --json` prints changes between releases, so it
+is read tolerantly: unknown fields are ignored, `Online` falls back to `Active`
+on clients too old to report it, and the MagicDNS suffix is read from
+`CurrentTailnet` first and the top-level field second. Nothing but these two
+commands and the host name convenience of `peer add` depends on Tailscale.
 
 ### `syncthis pause [FOLDER]` and `syncthis resume [FOLDER]`
 
@@ -970,37 +1075,47 @@ $ syncthis --data-dir /tmp/b/data status --json | jq '.folders[0].files'
 
 Both devices are on the same tailnet and have a `100.64.0.0/10` address.
 
-1. On each device, initialize and add the folder with the same id:
+1. Check that Tailscale is up on each device and note the interface:
+
+   ```console
+   $ syncthis network tailscale detect
+   $ syncthis network peers
+   ```
+
+2. On each device, initialize and add the folder with the same id:
 
    ```console
    $ syncthis init --name laptop
    $ syncthis folder add ~/docs --id docs
    ```
 
-2. Bind the daemon to the tailnet interface on each device. Nothing else on the
+3. Bind the daemon to the tailnet interface on each device. Nothing else on the
    network can reach that address, so no extra flag is needed:
 
    ```console
    $ syncthis daemon run --interface tailscale0
    ```
 
-3. Read each device's ID and tailnet address:
+4. Read each device's ID and tailnet address:
 
    ```console
    $ syncthis status --json | jq -r '.device.id, .daemon.listen'
    ```
 
-4. Trust the other device from each side, pinning the id you just read:
+5. Trust the other device from each side, pinning the id you just read. The
+   host names are the ones `network peers` printed:
 
    ```console
-   laptop$ syncthis peer add 100.64.0.3:22000 --device-id <id of nas>
-   nas$    syncthis peer add 100.64.0.2:22000 --device-id <id of laptop>
+   laptop$ syncthis peer add nas --device-id <id of nas>
+   nas$    syncthis peer add laptop --device-id <id of laptop>
    ```
 
-   Without `--device-id` the command shows the identity the peer presents and
-   asks whether to trust it, which is the same decision made by eye.
+   The name is resolved through the tailnet and the address it answers with is
+   what gets stored, so `peer list` shows `100.64.0.3:22000`. Without
+   `--device-id` the command shows the identity the peer presents and asks
+   whether to trust it, which is the same decision made by eye.
 
-5. Each `peer add` tells the local daemon to dial the new peer at once. Check:
+6. Each `peer add` tells the local daemon to dial the new peer at once. Check:
 
    ```console
    $ syncthis peer test <id of the other device>

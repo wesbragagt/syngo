@@ -18,6 +18,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/localfs"
 	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
 	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
+	"github.com/wesbragagt/syncthis/internal/adapters/tailscalecli"
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/tokenbucket"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
@@ -25,6 +26,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
+	"github.com/wesbragagt/syncthis/internal/app/network"
 	"github.com/wesbragagt/syncthis/internal/app/peers"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/repair"
@@ -95,6 +97,12 @@ type App struct {
 	Conflicts *conflicts.Service
 	// Bundle exports and imports the configuration as one JSON document.
 	Bundle *configbundle.Service
+	// Tailnet answers what the local Tailscale client knows. It is always
+	// wired: the adapter looks the binary up per call, so a device without
+	// Tailscale pays nothing for it.
+	Tailnet ports.TailnetDiscovery
+	// Network reports on the tailnet for the `network` commands.
+	Network *network.Service
 	// Control talks to the daemon owning this data directory. Its calls
 	// fail with ports.ErrDaemonUnavailable when no daemon is running.
 	Control *daemon.Client
@@ -215,6 +223,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 	clock := sysclock.New()
 	hasher := blake3hash.New()
 	settings := jsonconfig.NewStore(dir)
+	tailnet := tailscalecli.New(tailscalecli.ExecRunner{})
 	upload := tokenbucket.New(bandwidth.Rate(cfg.UploadLimit))
 	download := tokenbucket.New(bandwidth.Rate(cfg.DownloadLimit))
 	app := &App{
@@ -234,6 +243,8 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		Transfers: transfers.New(store),
 		Conflicts: conflicts.New(store, fs, hasher),
 		Bundle:    configbundle.New(store, store, settings, fs, clock),
+		Tailnet:   tailnet,
+		Network:   network.New(tailnet),
 		Control:   daemon.NewClient(unixctl.NewClient(ControlSocketPath(dir))),
 	}
 	if identity != nil {
@@ -254,6 +265,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.PeerHandler = handler
 		app.Dialer = dialer
 		app.Peers = peers.New(store, dialer, clock, identity, listenPort(cfg.Listen))
+		app.Peers.SetTailnet(tailnet)
 		app.Planner = syncer.NewPlanner(store, fs, dialer)
 	}
 	return app, nil

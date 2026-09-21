@@ -186,7 +186,15 @@ to the `tailscale0` interface and no other network can reach the peer port. See
 
 **MagicDNS.** Tailscale's name service for a tailnet, which makes a device
 reachable by its hostname. A hostname may be given to `peer add` wherever an
-address is expected.
+address is expected; it is resolved through the local Tailscale client before
+system DNS, and the address that answers is what gets stored. See
+[CLI.md](CLI.md#syncthis-peer-add-hostport).
+
+**Tailnet peer.** A device the local Tailscale client knows about, which
+`network peers` lists with its hostname, MagicDNS name, tailnet addresses and
+online state. It is not a syncthis peer until `peer add` has trusted it on both
+sides: network reachability and folder access are separate decisions. See
+[CLI.md](CLI.md#syncthis-network-peers).
 
 ## Running
 

@@ -27,6 +27,7 @@ const (
 	ExitIntegrity            = 8
 	ExitConfirmationRequired = 9
 	ExitDryRun               = 10
+	ExitTailnetUnavailable   = 11
 )
 
 // ExitCodeError carries the exit code a command should terminate with. The
@@ -84,6 +85,10 @@ func codeOf(err error) int {
 		return ExitDaemonUnavailable
 	case errors.Is(err, ports.ErrPeerUnreachable), errors.Is(err, ports.ErrDeviceMismatch):
 		return ExitPeerUnreachable
+	case errors.Is(err, ports.ErrTailnetUnavailable):
+		// The listing that was asked for cannot exist without a
+		// Tailscale client; 4 or 6 would name the wrong thing missing.
+		return ExitTailnetUnavailable
 	case errors.Is(err, conflicts.ErrVersionGone), errors.Is(err, conflicts.ErrChanged):
 		// Neither file holds the version the user asked to keep any
 		// more, or a file the resolution would have deleted holds
