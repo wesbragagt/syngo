@@ -48,10 +48,44 @@ header is longer than its body is refused the same way.
 | 0x20 | ChunkRequest | client → server | `{"folder_id","path","hash","index","chunk_size"}` |
 | 0x21 | ChunkData | server → client | `{"folder_id","path","index","offset","length","chunk_hash"}` + payload |
 | 0x22 | ChunkError | server → client | `{"folder_id","path","index","reason":…}` |
-| 0xF0 | Error | either | `{"code":"…","message":"…"}`; the connection closes after it |
+| 0xF0 | Error | either | `{"code":"…","message":"…"}` |
 
-Types 0x10 to 0x22 belong to the sync engine. Until it lands, a peer answers
-them with an Error frame and closes.
+### Manifest exchange
+
+`ManifestResponse` carries every entry of the folder, tombstones included, so
+the receiver can tell "never had it" from "deleted". One entry is
+
+```json
+{"path":"sub/a.txt","kind":1,"size":1234,"mtime_ns":1700000000123456789,
+ "mode":420,"hash":"<64 hex>","link_target":"","deleted":false,
+ "modified_by":"<device id>","sequence":7}
+```
+
+`kind` is 1 for a file, 2 for a directory, 3 for a symlink. `hash` is the
+BLAKE3-256 of the contents, empty for directories, symlinks and tombstones.
+The synced hash is local bookkeeping and is never sent.
+
+`ManifestChanged` is the only unsolicited frame. It says a folder moved on; the
+receiver answers it by requesting the manifest again, so a missed notification
+costs nothing but time.
+
+### Chunk exchange
+
+A `ChunkRequest` names the whole-file hash the receiver is downloading. The
+sender serves the chunk only while the file still hashes to it, and refuses
+with `ChunkError{hash_changed}` once the file has moved on, so two halves of
+two versions can never end up in one file. `chunk_hash` is the BLAKE3-256 of
+the payload; the receiver verifies it before the bytes reach the disk.
+
+`reason` is one of `not_found`, `hash_changed`, `folder_unknown`,
+`folder_receive_only` or `paused`.
+
+### Errors
+
+A request the peer refuses for an application reason is answered with an Error
+frame whose `code` is `folder_unknown`, `folder_receive_only` or `paused`, and
+the connection stays up. An Error frame that answers nothing, or one with code
+`bad_request`, ends the connection: the peers no longer agree on the protocol.
 
 ## Handshake
 
