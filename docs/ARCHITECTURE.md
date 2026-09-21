@@ -12,7 +12,9 @@ internal/adapters   one package per technology, each implementing ports
 internal/compose    the composition root: builds an App from a data directory
 internal/cli        cobra commands, one file per command
 internal/arch       the test that enforces the table below
+internal/testutil   test-only helpers shared by test packages, never shipped
 internal/e2e        two daemons in one process, talking over loopback
+internal/e2edocker  N daemons, one container each; opt-in, only _test.go files
 ```
 
 | Package prefix | May import |
@@ -23,6 +25,8 @@ internal/e2e        two daemons in one process, talking over loopback
 | `internal/cli` | `internal/app/...`, `internal/compose`, `internal/domain/...`, cobra |
 | `internal/compose` | everything |
 | `cmd/syncthis` | `internal/cli` |
+| `internal/testutil/...` | `internal/domain/...`, `internal/adapters/...`; imported only by `_test.go` files |
+| `internal/e2edocker` | anything; it is test-only and nothing can import it |
 
 Adapters do not import each other. `tcpwire` takes a `*tls.Certificate` rather
 than reaching for `identityfile`, and `compose` is what hands it over.

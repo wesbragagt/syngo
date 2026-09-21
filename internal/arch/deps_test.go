@@ -232,3 +232,20 @@ func TestCmdImportsOnlyCLI(t *testing.T) {
 		}
 	}
 }
+
+// TestTestutilIsImportedOnlyByTests keeps the test helpers in
+// internal/testutil out of the shipped binary. They are normal packages so
+// that two separate test packages can share them, which means only the import
+// list can say that nothing but a test uses them.
+func TestTestutilIsImportedOnlyByTests(t *testing.T) {
+	for _, f := range loadFiles(t, "internal", "cmd") {
+		if f.isTest || strings.HasPrefix(f.pkgDir, "internal/testutil") {
+			continue
+		}
+		for _, imp := range f.imports {
+			if isInternal(imp) && strings.HasPrefix(localPath(imp), "internal/testutil/") {
+				t.Errorf("%s imports %q outside a test file; test helpers never ship", f.path, imp)
+			}
+		}
+	}
+}
