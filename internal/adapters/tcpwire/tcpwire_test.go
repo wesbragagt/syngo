@@ -599,7 +599,6 @@ func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
 func TestServe_BoundsConcurrentHandshakes(t *testing.T) {
 	server := newIdentity(t, "server")
 	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
-	ln.SetTimeouts(5*time.Second, 5*time.Second)
 
 	const attempts = tcpwire.MaxConcurrentHandshakes + 8
 	for range attempts {
