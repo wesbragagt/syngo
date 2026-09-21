@@ -1175,3 +1175,55 @@ func TestReload_WindowRemovedSyncsAtOnce(t *testing.T) {
 		return len(h.syncer.syncedFolders()) >= 1
 	})
 }
+
+func TestResume_SyncsAtOnce(t *testing.T) {
+	const peerID = device.ID("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+	// An hour of sync interval: only the resume can make the folder sync
+	// before the test gives up.
+	h := startDaemonWithPeers(t, daemon.Config{RescanInterval: time.Hour, SyncInterval: time.Hour},
+		[]device.Device{testPeer(peerID, "nas:22000")}, testFolder("docs", true))
+	// The remote side advertises docs whatever this device does with it:
+	// the pause under test is local.
+	h.dialer.Set("nas:22000", fakes.PeerScript{
+		Probe:   ports.ProbeResult{DeviceID: peerID, Name: "nas", Accepted: true},
+		Handler: staticAnnouncer{folders: []folder.ID{"docs"}},
+	})
+	waitFor(t, "the peer connection", func() bool { return len(h.dialer.Conns()) == 1 })
+	if got := h.syncer.syncedFolders(); len(got) != 0 {
+		t.Fatalf("synced %v, want nothing while the folder is paused", got)
+	}
+
+	if resp := h.daemon.Handle(h.ctx, ports.ControlRequest{Cmd: daemon.CmdResume, FolderID: "docs"}); !resp.OK {
+		t.Fatalf("resume = %+v, want ok", resp)
+	}
+
+	waitFor(t, "a sync cycle right after the resume", func() bool {
+		return len(h.syncer.syncedFolders()) >= 1
+	})
+}
+
+// staticAnnouncer is a ports.PeerHandler that advertises a fixed folder list,
+// so what the local device does with its own folders does not change what the
+// peer says it serves.
+type staticAnnouncer struct {
+	folders []folder.ID
+}
+
+// Hello announces the fixed folder list.
+func (h staticAnnouncer) Hello(context.Context) ports.HelloInfo {
+	info := ports.HelloInfo{DeviceID: "DEVICE", Name: "test", Folders: []ports.FolderAdvert{}}
+	for _, id := range h.folders {
+		info.Folders = append(info.Folders, ports.FolderAdvert{ID: id, Mode: folder.ModeSendReceive})
+	}
+	return info
+}
+
+// Manifest serves nothing.
+func (staticAnnouncer) Manifest(context.Context, device.ID, folder.ID) (manifest.Manifest, error) {
+	return manifest.Manifest{}, errors.New("this fake peer handler serves no manifests")
+}
+
+// Chunk serves nothing.
+func (staticAnnouncer) Chunk(context.Context, device.ID, ports.ChunkRequest) (ports.ChunkData, error) {
+	return ports.ChunkData{}, errors.New("this fake peer handler serves no chunks")
+}

@@ -65,7 +65,9 @@ func (d *Daemon) Pause(ctx context.Context, id folder.ID) error {
 }
 
 // Resume resumes a folder, or every folder when id is empty, and queues a scan
-// so it catches up with what changed while it was paused.
+// so it catches up with what changed while it was paused. It ends with a sync
+// cycle against every connected peer, the way Reload does, so the folder pulls
+// now rather than at the next sync tick.
 func (d *Daemon) Resume(ctx context.Context, id folder.ID) error {
 	if err := d.setPaused(ctx, id, false); err != nil {
 		return err
@@ -73,7 +75,19 @@ func (d *Daemon) Resume(ctx context.Context, id folder.ID) error {
 	if err := d.resumeTransfers(ctx, id); err != nil {
 		return err
 	}
-	return d.Rescan(ctx, id)
+	if err := d.Rescan(ctx, id); err != nil {
+		return err
+	}
+	d.requestSyncFromEveryPeer()
+	return nil
+}
+
+// requestSyncFromEveryPeer asks every running peer loop for a sync cycle as
+// soon as it can run one, instead of at its next tick.
+func (d *Daemon) requestSyncFromEveryPeer() {
+	for _, loop := range d.peersSnapshot() {
+		loop.requestSync()
+	}
 }
 
 // resumeTransfers takes the transfers of the resumed folders out of the paused
@@ -158,9 +172,7 @@ func (d *Daemon) Reload(ctx context.Context) error {
 		return err
 	}
 	d.announceFolders(ctx)
-	for _, loop := range d.peersSnapshot() {
-		loop.requestSync()
-	}
+	d.requestSyncFromEveryPeer()
 	return nil
 }
 
