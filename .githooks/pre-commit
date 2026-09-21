@@ -19,6 +19,8 @@ go vet ./...
 if command -v golangci-lint >/dev/null 2>&1; then
   echo "pre-commit: golangci-lint"
   golangci-lint run ./...
+else
+  echo "warning: golangci-lint not found, skipping"
 fi
 
 echo "pre-commit: go test"

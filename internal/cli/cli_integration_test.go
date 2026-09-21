@@ -244,7 +244,14 @@ func TestFolderAdd_MissingDirAndBadFlags(t *testing.T) {
 		{"no id", []string{"folder", "add", e.folderPath}, cli.ExitUsage},
 		{"bad id", []string{"folder", "add", e.folderPath, "--id", "Docs"}, cli.ExitUsage},
 		{"bad mode", []string{"folder", "add", e.folderPath, "--id", "docs", "--mode", "sideways"}, cli.ExitUsage},
-		{"missing dir", []string{"folder", "add", filepath.Join(e.folderPath, "nope"), "--id", "docs"}, cli.ExitError},
+		{"missing dir", []string{"folder", "add", filepath.Join(e.folderPath, "nope"), "--id", "docs"}, cli.ExitUsage},
+		{"not a directory", []string{"folder", "add", filepath.Join(e.folderPath, "file.txt"), "--id", "docs"}, cli.ExitUsage},
+		{"empty ignore", []string{"folder", "add", e.folderPath, "--id", "docs", "--ignore", ""}, cli.ExitUsage},
+		{"blank ignore", []string{"folder", "add", e.folderPath, "--id", "docs", "--ignore", "   "}, cli.ExitUsage},
+		{"uncompilable ignore", []string{"folder", "add", e.folderPath, "--id", "docs", "--ignore", "/"}, cli.ExitUsage},
+	}
+	if err := os.WriteFile(filepath.Join(e.folderPath, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file.txt: %v", err)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

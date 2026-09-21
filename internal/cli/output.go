@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 )
 
 // Printer writes command output as either a plain table or JSON.
@@ -46,9 +48,25 @@ func (p Printer) Table(headers []string, rows [][]string) error {
 		_, _ = fmt.Fprintln(tw, strings.Join(headers, "\t"))
 	}
 	for _, row := range rows {
-		_, _ = fmt.Fprintln(tw, strings.Join(row, "\t"))
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			cells[i] = escapeCell(cell)
+		}
+		_, _ = fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	return tw.Flush()
+}
+
+// escapeCell quotes a table cell that contains control characters, so a
+// newline or a tab in a file name cannot break the layout. Cells without
+// control characters are printed unchanged.
+func escapeCell(s string) string {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return strconv.Quote(s)
+		}
+	}
+	return s
 }
 
 // printError writes err to w. In JSON mode it is emitted as a JSON object so

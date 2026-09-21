@@ -148,3 +148,25 @@ func TestPrinter_TableJSON(t *testing.T) {
 		t.Fatalf("rows = %v", rows)
 	}
 }
+
+func TestPrinterTable_EscapesControlCharacters(t *testing.T) {
+	var out bytes.Buffer
+	p := cli.Printer{W: &out}
+	if err := p.Table([]string{"TYPE", "PATH"}, [][]string{
+		{"create", "notes/plain.txt"},
+		{"create", "notes/two\nlines.txt"},
+	}); err != nil {
+		t.Fatalf("Table error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("table has %d lines, want 3:\n%s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[1], "notes/plain.txt") {
+		t.Fatalf("a name without control characters must print unchanged: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], `"notes/two\nlines.txt"`) {
+		t.Fatalf("a name with a newline must be escaped: %q", lines[2])
+	}
+}

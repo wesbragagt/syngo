@@ -2,12 +2,15 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/ignore"
 )
 
 // folderView is the JSON shape of one configured folder.
@@ -80,9 +83,15 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return Errorf(ExitUsage, "folder add: %v", err)
 			}
+			if err := checkIgnorePatterns(opts.ignore); err != nil {
+				return Errorf(ExitUsage, "folder add: %v", err)
+			}
 			path, err := filepath.Abs(args[0])
 			if err != nil {
 				return fmt.Errorf("resolve path %q: %w", args[0], err)
+			}
+			if err := checkDirectory(path); err != nil {
+				return Errorf(ExitUsage, "folder add: %v", err)
 			}
 
 			f := folder.Folder{
@@ -128,6 +137,34 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 	f.BoolVar(&opts.noEmptyDirs, "no-empty-dirs", false, "do not keep empty directories")
 	f.StringArrayVar(&opts.ignore, "ignore", nil, "ignore pattern; repeatable")
 	return cmd
+}
+
+// checkDirectory reports whether path can be synchronized: it must exist and
+// be a directory. Symlinks are not followed, matching how the scanner walks.
+func checkDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("path %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path %q is not a directory", path)
+	}
+	return nil
+}
+
+// checkIgnorePatterns rejects --ignore values the pattern parser would drop
+// silently (blank and comment lines) and patterns it cannot compile.
+func checkIgnorePatterns(patterns []string) error {
+	for _, p := range patterns {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			return fmt.Errorf("--ignore %q is not a pattern", p)
+		}
+	}
+	if _, err := ignore.Parse(patterns); err != nil {
+		return err
+	}
+	return nil
 }
 
 // newFolderListCmd builds the "folder list" command.

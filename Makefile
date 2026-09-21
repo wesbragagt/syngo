@@ -12,7 +12,11 @@ fmt:
 lint:
 	@test -z "$$(gofmt -l .)" || (echo "gofmt: files need formatting"; gofmt -l .; exit 1)
 	go vet ./...
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run ./... || true
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "warning: golangci-lint not found, skipping"; \
+	fi
 
 hooks:
 	git config core.hooksPath .githooks
