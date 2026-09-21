@@ -21,6 +21,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/tokenbucket"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
+	"github.com/wesbragagt/syncthis/internal/app/configbundle"
 	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
@@ -92,6 +93,8 @@ type App struct {
 	Transfers *transfers.Service
 	// Conflicts reads and resolves what the puller recorded as diverged.
 	Conflicts *conflicts.Service
+	// Bundle exports and imports the configuration as one JSON document.
+	Bundle *configbundle.Service
 	// Control talks to the daemon owning this data directory. Its calls
 	// fail with ports.ErrDaemonUnavailable when no daemon is running.
 	Control *daemon.Client
@@ -211,6 +214,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 	fs := localfs.New()
 	clock := sysclock.New()
 	hasher := blake3hash.New()
+	settings := jsonconfig.NewStore(dir)
 	upload := tokenbucket.New(bandwidth.Rate(cfg.UploadLimit))
 	download := tokenbucket.New(bandwidth.Rate(cfg.DownloadLimit))
 	app := &App{
@@ -223,12 +227,13 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		Identity:  identity,
 		Events:    events,
 		Logger:    logger,
-		Settings:  jsonconfig.NewStore(dir),
+		Settings:  settings,
 		Upload:    upload,
 		Download:  download,
 		Folders:   folders.New(store, fs, clock),
 		Transfers: transfers.New(store),
 		Conflicts: conflicts.New(store, fs, hasher),
+		Bundle:    configbundle.New(store, store, settings, fs, clock),
 		Control:   daemon.NewClient(unixctl.NewClient(ControlSocketPath(dir))),
 	}
 	if identity != nil {
