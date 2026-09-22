@@ -68,6 +68,13 @@ func (c *Cluster) quiet(devices []int) bool {
 // settle. Without names it covers every device.
 func (c *Cluster) WaitConverged(devices ...int) {
 	c.T.Helper()
+	c.WaitConvergedWithin(convergeTimeout, devices...)
+}
+
+// WaitConvergedWithin is WaitConverged with a deadline of its own, for the
+// tests that move far more than a folder's worth of data.
+func (c *Cluster) WaitConvergedWithin(timeout time.Duration, devices ...int) {
+	c.T.Helper()
 	set := c.indexes(devices)
 	if len(set) < 2 {
 		c.T.Fatalf("convergence needs at least two devices, got %v", set)
@@ -75,7 +82,7 @@ func (c *Cluster) WaitConverged(devices ...int) {
 
 	start := time.Now()
 	var last []string
-	deadline := time.Now().Add(convergeTimeout)
+	deadline := time.Now().Add(timeout)
 	for {
 		last = c.diffAgainstFirst(set)
 		if len(last) == 0 && c.quiet(set) {
@@ -83,7 +90,7 @@ func (c *Cluster) WaitConverged(devices ...int) {
 		}
 		if time.Now().After(deadline) {
 			c.T.Fatalf("devices %v did not converge within %s:\n%s",
-				c.names(set), convergeTimeout, strings.Join(last, "\n"))
+				c.names(set), timeout, strings.Join(last, "\n"))
 		}
 		time.Sleep(pollInterval)
 	}

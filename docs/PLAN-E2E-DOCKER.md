@@ -496,3 +496,29 @@ which failures reach the folder state and for how long (one refused item, or
 only a whole sync cycle that failed), so it is recorded here rather than
 patched. The other two devices converge and are unaffected, which the test
 still asserts.
+
+### KF-5: a scan overtaken by the puller is logged as an error and drops the watch
+
+Scenario 18 (`TestScale_TenThousandSmallFiles`) makes this visible every run.
+While a device pulls ten thousand files, its own scan loses the race with the
+writes the puller is making, and the folder loop reports it:
+
+```
+{"level":"ERROR","msg":"scan folder","folder":"docs",
+ "error":"folder \"docs\" at sequence 4713, scan started from 4708: manifest changed since it was loaded",
+ "paths":[".syncthis","d00", … ]}
+```
+
+Eight such lines in one run of the scenario, on both receivers. The sync is
+unaffected: all three devices converge, the journals empty and the file counts
+agree. Two things are still wrong with it. The level is ERROR for a lost
+optimistic-concurrency race that the next tick retries, which is what an
+operator is asked to watch for; and `folderloop.go` treats it like a folder
+whose root is gone, calling `dropWatch()`, so the device falls back to
+interval scanning until a scan succeeds again.
+
+A fix has to tell `ports.ErrStaleManifest` apart from a scan that really
+failed, at the one place that logs both, and decide whether the retry is
+immediate. Scenario 18 therefore checks the convergence, the journals, the
+partial files and every other error line, and counts these, reporting them
+with a pointer here rather than asserting a clean log.
