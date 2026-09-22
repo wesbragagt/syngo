@@ -53,7 +53,12 @@ var (
 // Cluster defaults. The chunk size is small so a kill lands mid-file, and the
 // intervals are short so a cycle happens within a test.
 const (
-	folderID    = "docs"
+	folderID = "docs"
+	// extraID is a second folder every device keeps in sendreceive mode.
+	// It carries markers: a file that arrives in it proves the device ran
+	// a sync cycle against the peer that wrote it, which is how a test
+	// says something did *not* cross without sleeping and hoping.
+	extraID     = "extra"
 	chunkSize   = 64 << 10
 	rescanEvery = 2 * time.Second
 	syncEvery   = time.Second
@@ -62,6 +67,8 @@ const (
 	containerRoot = "/docs"
 	// containerData is where the identity, the database and the log live.
 	containerData = "/data"
+	// containerExtra is where the second folder is mounted.
+	containerExtra = "/extra"
 )
 
 func envOr(key, fallback string) string {

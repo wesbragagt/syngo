@@ -2,6 +2,8 @@ package e2edocker
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -182,4 +184,59 @@ func lastLines(text string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// Has reports whether a path is present in the device's folder.
+func (d *Device) Has(rel string) bool {
+	d.c.T.Helper()
+	_, err := os.Lstat(filepath.Join(d.HostRoot, rel))
+	switch {
+	case err == nil:
+		return true
+	case os.IsNotExist(err):
+		return false
+	default:
+		d.c.T.Fatalf("%s: stat %s: %v", d.Name, rel, err)
+		return false
+	}
+}
+
+// WaitPresent waits until a path is in the device's folder.
+func (d *Device) WaitPresent(rel string) {
+	d.c.T.Helper()
+	waitFor(d.c.T, rel+" on "+d.Name, convergeTimeout, func() bool { return d.Has(rel) })
+}
+
+// WaitAbsent waits until a path is gone from the device's folder.
+func (d *Device) WaitAbsent(rel string) {
+	d.c.T.Helper()
+	waitFor(d.c.T, rel+" gone from "+d.Name, convergeTimeout, func() bool { return !d.Has(rel) })
+}
+
+// Marker writes a file in the second folder of one device and waits for it in
+// the second folder of another. Its arrival proves the receiving device ran a
+// sync cycle against the writer after the marker was written, which is what a
+// test needs before it can say that something else did not cross. Both
+// devices need ExtraFolder.
+func (c *Cluster) Marker(from, to int, name string) {
+	c.T.Helper()
+	writer, reader := c.Devices[from], c.Devices[to]
+	path := filepath.Join(writer.HostExtra, name)
+	if err := os.WriteFile(path, []byte(name), 0o644); err != nil {
+		c.T.Fatalf("%s: write marker %s: %v", writer.Name, name, err)
+	}
+	waitFor(c.T, "marker "+name+" from "+writer.Name+" on "+reader.Name, convergeTimeout, func() bool {
+		_, err := os.Lstat(filepath.Join(reader.HostExtra, name))
+		return err == nil
+	})
+}
+
+// upTo is the first n+1 device indexes, for a wait that covers the devices
+// that have joined so far.
+func (c *Cluster) upTo(n int) []int {
+	out := make([]int, 0, n+1)
+	for i := 0; i <= n; i++ {
+		out = append(out, i)
+	}
+	return out
 }

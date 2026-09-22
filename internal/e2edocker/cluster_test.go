@@ -3,6 +3,7 @@ package e2edocker
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -62,6 +63,17 @@ type DeviceSpec struct {
 	// NoFolder starts the device with nothing configured, so a test can
 	// add the folder through the CLI while the daemon runs.
 	NoFolder bool
+	// ExtraFolder gives the device a second sendreceive folder at /extra,
+	// which carries the markers a negative assertion needs.
+	ExtraFolder bool
+	// UID and GID are the user the container runs as. Zero means the user
+	// running the test, which keeps the bind mounts readable from the
+	// host; a test that wants devices to disagree about ownership names
+	// its own.
+	UID, GID int
+	// ReadOnlyRoot mounts the synchronized folder read-only, which is a
+	// device that may serve the folder and not write it.
+	ReadOnlyRoot bool
 	// BindIface runs the daemon with --interface eth0 rather than
 	// --allow-public, which is the other way to reach a bindable address.
 	BindIface bool
@@ -95,14 +107,15 @@ type Cluster struct {
 
 // Device is one daemon in one container.
 type Device struct {
-	Index    int
-	Name     string
-	ID       string
-	IP       string
-	Ctr      string
-	HostData string
-	HostRoot string
-	Spec     DeviceSpec
+	Index     int
+	Name      string
+	ID        string
+	IP        string
+	Ctr       string
+	HostData  string
+	HostRoot  string
+	HostExtra string
+	Spec      DeviceSpec
 
 	c *Cluster
 }
@@ -197,12 +210,13 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 	c.T.Helper()
 	dev := &Device{
 		Index: i, Name: spec.Name, Spec: spec, c: c,
-		IP:       fmt.Sprintf("%s.%d", strings.TrimSuffix(c.Subnet, ".0/24"), 10+i),
-		Ctr:      fmt.Sprintf("syncthis-e2e-%s-%s", c.RunID, spec.Name),
-		HostData: filepath.Join(c.tmp, spec.Name, "data"),
-		HostRoot: filepath.Join(c.tmp, spec.Name, "docs"),
+		IP:        fmt.Sprintf("%s.%d", strings.TrimSuffix(c.Subnet, ".0/24"), 10+i),
+		Ctr:       fmt.Sprintf("syncthis-e2e-%s-%s", c.RunID, spec.Name),
+		HostData:  filepath.Join(c.tmp, spec.Name, "data"),
+		HostRoot:  filepath.Join(c.tmp, spec.Name, "docs"),
+		HostExtra: filepath.Join(c.tmp, spec.Name, "extra"),
 	}
-	for _, dir := range []string{dev.HostData, dev.HostRoot} {
+	for _, dir := range []string{dev.HostData, dev.HostRoot, dev.HostExtra} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			c.T.Fatalf("make %s: %v", dir, err)
 		}
@@ -228,13 +242,24 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 	// the host can hash the tree, read .syncthis and delete the temporary
 	// directory afterwards. Commands that need capabilities (iptables,
 	// tc) are execed as root instead.
-	c.d.mustRun("run", "-d", "--name", dev.Ctr, "--user", hostUser(),
-		"--label", "syncthis.e2e=1", "--label", "syncthis.e2e.run="+c.RunID,
+	args := []string{"run", "-d", "--name", dev.Ctr, "--user", dev.user(),
+		"--label", "syncthis.e2e=1", "--label", "syncthis.e2e.run=" + c.RunID,
 		"--network", c.Network, "--ip", dev.IP,
 		"--cap-add", "NET_ADMIN",
-		"-v", dev.HostData+":"+containerData,
-		"-v", dev.HostRoot+":"+containerRoot,
-		image)
+		"-v", dev.HostData + ":" + containerData,
+	}
+	// A read-only root is the shape of a folder the daemon may read and
+	// not write: the mount refuses every write rather than the daemon
+	// choosing not to try.
+	root := dev.HostRoot + ":" + containerRoot
+	if spec.ReadOnlyRoot {
+		root += ":ro"
+	}
+	args = append(args, "-v", root)
+	if spec.ExtraFolder {
+		args = append(args, "-v", dev.HostExtra+":"+containerExtra)
+	}
+	c.d.mustRun(append(args, image)...)
 
 	var identity struct {
 		DeviceID string `json:"device_id"`
@@ -252,6 +277,11 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 		}
 		dev.RunOK(args...)
 	}
+	if spec.ExtraFolder {
+		// The marker folder is sendreceive on every device whatever
+		// the first folder's mode is: its whole purpose is to cross.
+		dev.RunOK("folder", "add", containerExtra, "--id", extraID)
+	}
 	return dev
 }
 
@@ -259,8 +289,19 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 // container was given; the containers themselves run as the host user.
 const rootUser = "0:0"
 
-// hostUser is the uid:gid the containers run as.
+// hostUser is the uid:gid a container runs as unless the test asked for
+// another one: everything the daemon writes on the bind mounts is then owned
+// by whoever runs the test, so the host can hash the tree and delete it
+// afterwards.
 func hostUser() string { return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()) }
+
+// user is the uid:gid this device's container runs as.
+func (d *Device) user() string {
+	if d.Spec.UID == 0 && d.Spec.GID == 0 {
+		return hostUser()
+	}
+	return fmt.Sprintf("%d:%d", d.Spec.UID, d.Spec.GID)
+}
 
 // Device returns one device of the cluster.
 func (c *Cluster) Device(i int) *Device { return c.Devices[i] }
@@ -295,11 +336,27 @@ func (c *Cluster) Close() {
 		c.SaveArtifacts("failed")
 	}
 	for _, dev := range c.Devices {
+		dev.giveMountsBack()
+	}
+	for _, dev := range c.Devices {
 		c.d.quiet("rm", "-f", dev.Ctr)
 	}
 	if c.Network != "" {
 		c.d.quiet("network", "rm", c.Network)
 	}
+}
+
+// giveMountsBack hands the bind mounts of a device that ran as another user
+// back to the user running the test. Without it the files the daemon created
+// belong to a uid the host cannot delete, and t.TempDir fails the test while
+// cleaning up. A container that is already gone is not an error: the test is
+// over either way.
+func (d *Device) giveMountsBack() {
+	if d.Spec.UID == 0 && d.Spec.GID == 0 {
+		return
+	}
+	d.c.d.quiet("exec", "--user", rootUser, d.Ctr,
+		"chown", "-R", hostUser(), containerData, containerRoot)
 }
 
 // Run executes a syncthis command in the container and returns its stdout and
@@ -503,6 +560,56 @@ func (d *Device) WriteFile(rel string, data []byte) {
 	}
 	if err := os.Chmod(path, 0o644); err != nil {
 		d.c.T.Fatalf("%s: chmod %s: %v", d.Name, rel, err)
+	}
+}
+
+// WriteFileAtomic puts a file in the folder in one step: the content is
+// written beside the path and renamed onto it, so a scan either sees the whole
+// new version or the whole old one. A half-written file that is scanned and
+// then finished is a change of a path a peer may already be pulling, which is
+// a different test than the one asking for it.
+func (d *Device) WriteFileAtomic(rel string, data []byte) {
+	d.c.T.Helper()
+	path := filepath.Join(d.HostRoot, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		d.c.T.Fatalf("%s: make parent of %s: %v", d.Name, rel, err)
+	}
+	// The staging directory is inside the folder, so the rename stays on
+	// one filesystem, and inside the state directory, which no scan reads.
+	staging := filepath.Join(d.HostRoot, ".syncthis", "e2e-staging")
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		d.c.T.Fatalf("%s: make %s: %v", d.Name, staging, err)
+	}
+	tmp, err := os.CreateTemp(staging, "write-")
+	if err != nil {
+		d.c.T.Fatalf("%s: stage %s: %v", d.Name, rel, err)
+	}
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if writeErr != nil || closeErr != nil {
+		d.c.T.Fatalf("%s: stage %s: %v %v", d.Name, rel, writeErr, closeErr)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		d.c.T.Fatalf("%s: chmod staged %s: %v", d.Name, rel, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		d.c.T.Fatalf("%s: put %s in place: %v", d.Name, rel, err)
+	}
+}
+
+// WriteFileAs writes a file from inside the container, as the user the
+// container runs as, with the mode given. It is how a test about ownership
+// writes: a file the host created would carry the host's uid whatever the
+// daemon does.
+func (d *Device) WriteFileAs(rel string, data []byte, mode fs.FileMode) {
+	d.c.T.Helper()
+	path := containerRoot + "/" + rel
+	script := fmt.Sprintf("mkdir -p $(dirname %s) && printf %%s %s | base64 -d > %s && chmod %o %s",
+		path, base64.StdEncoding.EncodeToString(data), path, mode.Perm(), path)
+	res := d.c.d.exec(d.Ctr, "", "sh", "-c", script)
+	if res.code != 0 {
+		d.c.T.Fatalf("%s: write %s inside the container: exit %d: %s",
+			d.Name, rel, res.code, strings.TrimSpace(res.stderr))
 	}
 }
 

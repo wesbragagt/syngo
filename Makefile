@@ -37,7 +37,7 @@ e2e-docker-image:
 
 e2e-docker: e2e-docker-image
 	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) \
-	  go test ./internal/e2edocker/ -count=1 -p 1 -timeout 90m -run 'Test[^S]' -v
+	  go test ./internal/e2edocker/ -count=1 -p 1 -timeout 90m -skip TestSoak -v
 
 e2e-docker-soak: e2e-docker-image
 	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) SYNCTHIS_E2E_SOAK_MINUTES=$(MINUTES) \

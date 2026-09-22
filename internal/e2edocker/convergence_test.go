@@ -3,6 +3,7 @@ package e2edocker
 import (
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"testing"
 
@@ -212,5 +213,101 @@ func TestMesh_ThreeWritersOneConflict(t *testing.T) {
 		if rows := dev.Conflicts(); len(rows) == 0 {
 			t.Errorf("%s recorded no conflict over report.md", dev.Name)
 		}
+	}
+}
+
+// TestReload_FolderAddedWhileAllRun configures the folder after the daemons
+// are up and paired, one device at a time. A folder is a thing the running
+// daemon takes on, not a reason to restart it: the pid that was there at the
+// start has to be the pid at the end.
+func TestReload_FolderAddedWhileAllRun(t *testing.T) {
+	c := StartWith(t, ClusterOptions{Devices: []DeviceSpec{
+		{Name: "a", NoFolder: true},
+		{Name: "b", NoFolder: true},
+		{Name: "c", NoFolder: true},
+	}})
+
+	pids := make([]int, len(c.Devices))
+	for i, dev := range c.Devices {
+		pids[i] = dev.DaemonPID()
+		if folders := dev.Status().Folders; len(folders) != 0 {
+			t.Fatalf("%s starts with %d folders, want none", dev.Name, len(folders))
+		}
+	}
+
+	// Each device takes the folder on in turn and writes to it at once, so
+	// the ones that join later have something waiting for them.
+	for i, dev := range c.Devices {
+		dev.RunOK("folder", "add", containerRoot, "--id", folderID)
+		dev.WriteFileAtomic(fmt.Sprintf("%s/joined.bin", dev.Name), payload((i+1)*chunkSize, byte(i)))
+		if i > 0 {
+			c.WaitConverged(c.upTo(i)...)
+		}
+	}
+
+	c.WaitConverged()
+	c.CheckInvariants()
+
+	for i, dev := range c.Devices {
+		if got := dev.DaemonPID(); got != pids[i] {
+			t.Errorf("%s runs as pid %d, want the %d it started as: adding a folder restarted the daemon",
+				dev.Name, got, pids[i])
+		}
+		if folders := dev.Status().Folders; len(folders) != 1 || folders[0].ID != folderID {
+			t.Errorf("%s reports %+v, want the one folder it added", dev.Name, folders)
+		}
+	}
+}
+
+// TestReload_PeerRemovedAndReAdded takes pairings away and puts them back
+// while everything runs. A device that is still reachable through another
+// device keeps up; a device nobody is paired with any more gets nothing and
+// is refused when it is dialled; both come back by being paired again.
+func TestReload_PeerRemovedAndReAdded(t *testing.T) {
+	c := Start(t, 3)
+	a, cc := c.Device(0), c.Device(2)
+
+	a.WriteFileAtomic("seed.bin", payload(chunkSize, 1))
+	c.WaitConverged()
+
+	// A and C forget each other. B is still paired with both, so what A
+	// writes reaches C the long way round.
+	c.Unpair(0, 2)
+	viaB := payload(2*chunkSize, 2)
+	a.WriteFileAtomic("via-b.bin", viaB)
+	c.WaitConverged()
+	if got := cc.ReadFile("via-b.bin"); !equalBytes(got, viaB) {
+		t.Fatalf("c holds via-b.bin as %s, want the relayed %s", hashOf(got), hashOf(viaB))
+	}
+
+	// Now C is paired with nobody and has no way to hear anything.
+	c.Unpair(1, 2)
+	alone := payload(chunkSize+3, 3)
+	a.WriteFileAtomic("while-alone.bin", alone)
+	c.WaitConverged(0, 1)
+	if cc.Has("while-alone.bin") {
+		t.Error("c received a file although it is paired with nobody")
+	}
+
+	// A device that removed a peer refuses it: the address answers, the
+	// identity is not one it knows.
+	out, code := a.Run("peer", "test", fmt.Sprintf("%s:%d", cc.IP, peerPort))
+	if code != 7 {
+		t.Errorf("peer test from a to the unpaired c exited %d, want 7: %s", code, out)
+	}
+	if !strings.Contains(out, "unknown_device") {
+		t.Errorf("peer test from a to the unpaired c does not say why it was refused:\n%s", out)
+	}
+
+	// Paired again, C catches up on everything it missed without being
+	// told what that was.
+	c.Pair(0, 2)
+	c.Pair(1, 2)
+	c.WaitPeersConnected()
+	c.WaitConverged()
+	c.CheckInvariants()
+
+	if got := cc.ReadFile("while-alone.bin"); !equalBytes(got, alone) {
+		t.Errorf("c holds while-alone.bin as %s, want %s", hashOf(got), hashOf(alone))
 	}
 }
