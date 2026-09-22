@@ -94,7 +94,12 @@ type Folder struct {
 	Paused      bool
 	LastScanAt  time.Time
 	LastError   string
-	CreatedAt   time.Time
+	// LastSyncError is what the last sync cycle could not apply locally,
+	// and PendingItems is how many items that was. They are the puller's
+	// half of the folder's health; LastError is the scanner's half.
+	LastSyncError string
+	PendingItems  int
+	CreatedAt     time.Time
 }
 
 // Validate reports whether the folder configuration is usable.

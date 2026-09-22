@@ -206,6 +206,7 @@ func (s *Service) Import(ctx context.Context, b Bundle, o ImportOptions) (Result
 		// configured and when it was last scanned belong to this
 		// device, as do the rows of its files.
 		f.CreatedAt, f.LastScanAt, f.LastError = old.CreatedAt, old.LastScanAt, old.LastError
+		f.LastSyncError, f.PendingItems = old.LastSyncError, old.PendingItems
 		if sameFolder(old, f) {
 			continue
 		}

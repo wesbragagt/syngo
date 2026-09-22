@@ -102,6 +102,12 @@ type FolderStore interface {
 	DeleteFolder(ctx context.Context, id folder.ID) error
 	SetFolderPaused(ctx context.Context, id folder.ID, paused bool) error
 	SetFolderScan(ctx context.Context, id folder.ID, at time.Time, lastError string) error
+	// SetFolderSyncError records what the last sync cycle of a folder
+	// could not apply locally and how many items that was. An empty
+	// message and a zero count mean the cycle applied everything. It is
+	// the puller's half of the folder's health: it never touches the last
+	// error the scanner records, and the scanner never touches this one.
+	SetFolderSyncError(ctx context.Context, id folder.ID, lastError string, pending int) error
 }
 
 // FileStore persists folder contents and the change log.

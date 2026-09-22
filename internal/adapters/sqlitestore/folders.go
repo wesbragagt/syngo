@@ -12,7 +12,8 @@ import (
 
 // folderColumns is the column list shared by the folder queries.
 const folderColumns = `id, path, label, mode, delete_policy, include_hidden, symlink_policy,
-	keep_empty_dirs, paused, last_scan_at, last_error, created_at, sync_windows`
+	keep_empty_dirs, paused, last_scan_at, last_error, created_at, sync_windows,
+	last_sync_error, pending_items`
 
 // SaveFolder inserts or updates a folder and its ignore patterns.
 func (s *Store) SaveFolder(ctx context.Context, f folder.Folder) error {
@@ -28,16 +29,19 @@ func (s *Store) SaveFolder(ctx context.Context, f folder.Folder) error {
 
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO folders (`+folderColumns+`)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET
 				path = excluded.path, label = excluded.label, mode = excluded.mode,
 				delete_policy = excluded.delete_policy, include_hidden = excluded.include_hidden,
 				symlink_policy = excluded.symlink_policy, keep_empty_dirs = excluded.keep_empty_dirs,
 				paused = excluded.paused, last_scan_at = excluded.last_scan_at,
-				last_error = excluded.last_error, sync_windows = excluded.sync_windows`,
+				last_error = excluded.last_error, sync_windows = excluded.sync_windows,
+				last_sync_error = excluded.last_sync_error,
+				pending_items = excluded.pending_items`,
 			string(f.ID), f.Path, f.Label, string(f.Mode), string(f.DeletePolicy), boolToInt(f.IncludeHidden),
 			string(f.Symlinks), boolToInt(f.KeepEmptyDirs), boolToInt(f.Paused), nullTime(f.LastScanAt),
-			f.LastError, f.CreatedAt.UnixNano(), folder.EncodeWindows(f.SyncWindows))
+			f.LastError, f.CreatedAt.UnixNano(), folder.EncodeWindows(f.SyncWindows),
+			f.LastSyncError, f.PendingItems)
 		if err != nil {
 			return asAlreadyExists(err, fmt.Sprintf("save folder %q", f.ID))
 		}
@@ -136,6 +140,18 @@ func (s *Store) SetFolderScan(ctx context.Context, id folder.ID, at time.Time, l
 	return requireRow(res, fmt.Sprintf("folder %q", id))
 }
 
+// SetFolderSyncError records what the last sync cycle could not apply. It
+// leaves last_error alone: that one belongs to the scanner.
+func (s *Store) SetFolderSyncError(ctx context.Context, id folder.ID, lastError string, pending int) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE folders SET last_sync_error = ?, pending_items = ? WHERE id = ?`,
+		lastError, pending, string(id))
+	if err != nil {
+		return fmt.Errorf("set sync error on folder %q: %w", id, err)
+	}
+	return requireRow(res, fmt.Sprintf("folder %q", id))
+}
+
 // ignorePatterns returns a folder's ignore patterns in order.
 func (s *Store) ignorePatterns(ctx context.Context, id folder.ID) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
@@ -179,7 +195,8 @@ func scanFolder(row scanner) (folder.Folder, error) {
 		windows      string
 	)
 	if err := row.Scan(&id, &f.Path, &f.Label, &mode, &deletePolicy, &hidden, &symlinks,
-		&keepEmpty, &paused, &lastScan, &f.LastError, &createdAt, &windows); err != nil {
+		&keepEmpty, &paused, &lastScan, &f.LastError, &createdAt, &windows,
+		&f.LastSyncError, &f.PendingItems); err != nil {
 		return folder.Folder{}, err
 	}
 	syncWindows, err := folder.DecodeWindows(windows)

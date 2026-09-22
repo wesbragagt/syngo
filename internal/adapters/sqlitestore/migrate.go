@@ -8,7 +8,7 @@ import (
 )
 
 // schemaVersion is the version every migration set adds up to.
-const schemaVersion = 5
+const schemaVersion = 6
 
 //go:embed migrations/*.sql
 var migrations embed.FS
@@ -21,6 +21,7 @@ var migrationFiles = []string{
 	"migrations/003_conflict_reason.sql",
 	"migrations/004_sync_windows.sql",
 	"migrations/005_version.sql",
+	"migrations/006_sync_error.sql",
 }
 
 // migrate brings a database up to schemaVersion. It is a no-op when the

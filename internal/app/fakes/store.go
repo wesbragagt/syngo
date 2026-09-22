@@ -129,6 +129,14 @@ func (s *Store) SetFolderScan(_ context.Context, id folder.ID, at time.Time, las
 	})
 }
 
+// SetFolderSyncError records what the last sync cycle could not apply.
+func (s *Store) SetFolderSyncError(_ context.Context, id folder.ID, lastError string, pending int) error {
+	return s.updateFolder(id, func(f *folder.Folder) {
+		f.LastSyncError = lastError
+		f.PendingItems = pending
+	})
+}
+
 // updateFolder applies fn to a stored folder.
 func (s *Store) updateFolder(id folder.ID, fn func(*folder.Folder)) error {
 	s.mu.Lock()

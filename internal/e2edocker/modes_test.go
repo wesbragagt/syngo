@@ -168,8 +168,6 @@ func TestModes_DeletePolicyNeverOnOneSpoke(t *testing.T) {
 // to report rather than a reason to stop: the daemon stays up, the other two
 // devices carry on, and the folder says what is wrong with it.
 func TestModes_ReadOnlyRootIsReportedNotFatal(t *testing.T) {
-	t.Skip("known: a folder whose root cannot be written reports itself idle with no error, " +
-		"and the files it could not write are in no journal; see Known failures in docs/PLAN-E2E-DOCKER.md")
 	c := StartWith(t, ClusterOptions{Devices: []DeviceSpec{
 		{Name: "a"},
 		{Name: "b"},
@@ -199,8 +197,18 @@ func TestModes_ReadOnlyRootIsReportedNotFatal(t *testing.T) {
 	if !report.Daemon.Running {
 		t.Fatal("the daemon of c stopped over a folder it cannot write")
 	}
-	if got := report.Transfers.Failed + report.Transfers.Pending + report.Transfers.Active; got == 0 {
-		t.Errorf("c has no transfer to show for five files it cannot write: %+v", report.Transfers)
+	// The work it could not do is counted, either as journal rows or as
+	// the items the folder still owes; a root that refuses even the temp
+	// directory leaves no journal row to count.
+	pending := 0
+	for _, f := range report.Folders {
+		if f.ID == folderID {
+			pending = f.PendingChanges
+		}
+	}
+	if got := report.Transfers.Failed + report.Transfers.Pending + report.Transfers.Active + pending; got == 0 {
+		t.Errorf("c has nothing to show for five files it cannot write: %+v, pending_changes %d",
+			report.Transfers, pending)
 	}
 	if len(cc.Tree()) != 0 {
 		t.Errorf("c wrote into a read-only mount: %v", cc.Tree())

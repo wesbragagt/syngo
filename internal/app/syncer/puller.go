@@ -50,6 +50,9 @@ type Summary struct {
 	Conflicts int
 	Failed    int
 	Bytes     int64
+	// Failure is the first thing the cycle could not apply locally, nil
+	// when Failed is zero. It is what the folder reports as its error.
+	Failure error
 }
 
 // Puller fetches from a peer what this device is missing, one folder at a
@@ -190,8 +193,10 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		}
 	}
 	if err := p.pullAll(ctx, conn, f, pulls, &summary); err != nil {
+		p.recordOutcome(ctx, f, summary, false)
 		return summary, err
 	}
+	p.recordOutcome(ctx, f, summary, true)
 
 	p.log.Debug("folder sync finished", "folder", f.ID, "peer", peer.Short(),
 		"pulled", summary.Pulled, "deleted", summary.Deleted, "modes", summary.Modes,
@@ -404,12 +409,36 @@ func (p *Puller) recordAgreement(ctx context.Context, id folder.ID, item syncpla
 func (p *Puller) itemFailed(f folder.Folder, peer device.ID, item syncplan.Item,
 	cause error, summary *Summary) {
 	summary.Failed++
+	if summary.Failure == nil {
+		summary.Failure = fmt.Errorf("%s %s: %w", item.Action.String(), item.Path, cause)
+	}
 	p.log.Warn("plan item not applied", "folder", f.ID, "path", item.Path,
 		"action", item.Action.String(), "error", cause)
 	p.publish("sync.item_failed", map[string]any{
 		"folder_id": string(f.ID), "path": item.Path, "action": item.Action.String(),
 		"peer_id": string(peer), "error": cause.Error(),
 	})
+}
+
+// recordOutcome stores on the folder what this cycle could not apply, so a
+// folder nothing can be written into says so instead of reporting itself
+// idle. A cycle that ended early, because the connection or the store went
+// away, only records failures it already collected: it must not clear a
+// record it did not get far enough to disprove.
+func (p *Puller) recordOutcome(ctx context.Context, f folder.Folder, summary Summary, complete bool) {
+	if ctx.Err() != nil || (!complete && summary.Failed == 0) {
+		return
+	}
+	message := ""
+	if summary.Failed > 0 {
+		message = fmt.Sprintf("%d of the last sync's items were not applied", summary.Failed)
+		if summary.Failure != nil {
+			message = summary.Failure.Error()
+		}
+	}
+	if err := p.store.SetFolderSyncError(ctx, f.ID, message, summary.Failed); err != nil && ctx.Err() == nil {
+		p.log.Warn("sync outcome not recorded", "folder", f.ID, "error", err)
+	}
 }
 
 // pullAll downloads the files of a plan, at most Concurrency at a time. A
@@ -464,10 +493,22 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 			case isPerFile(err):
 				mu.Lock()
 				summary.Failed++
+				if summary.Failure == nil {
+					summary.Failure = fmt.Errorf("pull %s: %w", item.Path, err)
+				}
 				mu.Unlock()
 				p.log.Warn("file not pulled", "folder", f.ID, "path", item.Path, "error", err)
 			default:
 				mu.Lock()
+				if localFailure(err) {
+					// The folder itself is what could not be
+					// written, which is worth reporting even
+					// though it ends the cycle.
+					summary.Failed++
+					if summary.Failure == nil {
+						summary.Failure = fmt.Errorf("pull %s: %w", item.Path, err)
+					}
+				}
 				if fatalErr == nil {
 					fatalErr = err
 					cancel()
@@ -965,6 +1006,15 @@ func isPerFile(err error) bool {
 	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath) ||
 		errors.Is(err, ErrDirNotEmpty) || errors.Is(err, ErrTooManyChunks) ||
 		errors.Is(err, ErrUnsafePath)
+}
+
+// localFailure reports whether a failure is about this device's filesystem
+// rather than the peer or the store. Every filesystem call returns its failure
+// as a *fs.PathError; a peer that refuses a chunk and a store that is gone do
+// not.
+func localFailure(err error) bool {
+	var pathErr *fs.PathError
+	return errors.As(err, &pathErr)
 }
 
 // isFileReplace reports whether an item replaces another kind with a file,

@@ -40,6 +40,9 @@ type FileSystem struct {
 	// renameFailures are destinations the next Rename refuses, so a test
 	// can see what a caller does when an install cannot be completed.
 	renameFailures map[string]error
+	// readOnly are the subtrees no write reaches, which is a mount a
+	// device may read and not write.
+	readOnly []string
 }
 
 // NewFileSystem returns an empty filesystem containing only "/".
@@ -52,6 +55,26 @@ func NewFileSystem() *FileSystem {
 	}
 	fsys.nodes["/"] = &node{mode: fs.ModeDir | 0o755, modTime: fsys.modTime, inode: fsys.newInode()}
 	return fsys
+}
+
+// MakeReadOnly refuses every write to root and everything under it, the way
+// a read-only mount does. Reads are unaffected.
+func (f *FileSystem) MakeReadOnly(root string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.readOnly = append(f.readOnly, clean(root))
+}
+
+// refuse reports the error a write to p owes to a read-only subtree, or nil
+// when p may be written. The caller must hold f.mu.
+func (f *FileSystem) refuse(op, p string) error {
+	p = clean(p)
+	for _, root := range f.readOnly {
+		if p == root || strings.HasPrefix(p, childPrefix(root)) {
+			return &fs.PathError{Op: op, Path: p, Err: errors.New("read-only file system")}
+		}
+	}
+	return nil
 }
 
 // newInode returns the next inode number. The caller need not hold the lock
@@ -247,6 +270,9 @@ func (f *FileSystem) Symlink(target, p string) error {
 	if _, ok := f.nodes[p]; ok {
 		return fmt.Errorf("symlink %s: %w", p, fs.ErrExist)
 	}
+	if err := f.refuse("symlink", p); err != nil {
+		return err
+	}
 	f.mkdirAll(path.Dir(p), 0o755)
 	f.nodes[p] = &node{mode: fs.ModeSymlink | 0o777, target: target, modTime: f.modTime, inode: f.newInode()}
 	return nil
@@ -256,6 +282,9 @@ func (f *FileSystem) Symlink(target, p string) error {
 func (f *FileSystem) MkdirAll(p string, perm fs.FileMode) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.refuse("mkdir", p); err != nil {
+		return err
+	}
 	f.mkdirAll(clean(p), perm)
 	return nil
 }
@@ -265,6 +294,9 @@ func (f *FileSystem) MkdirAll(p string, perm fs.FileMode) error {
 func (f *FileSystem) CreateTemp(dir, pattern string) (ports.TempFile, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.refuse("createtemp", dir); err != nil {
+		return nil, err
+	}
 	f.tempSeq++
 	name := strings.Replace(pattern, "*", fmt.Sprintf("%d", f.tempSeq), 1)
 	if !strings.Contains(pattern, "*") {
@@ -292,6 +324,9 @@ func (f *FileSystem) Rename(oldPath, newPath string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	oldPath, newPath = clean(oldPath), clean(newPath)
+	if err := f.refuse("rename", newPath); err != nil {
+		return err
+	}
 	if err, ok := f.renameFailures[newPath]; ok {
 		delete(f.renameFailures, newPath)
 		return err
@@ -342,6 +377,9 @@ func (f *FileSystem) Remove(p string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p = clean(p)
+	if err := f.refuse("remove", p); err != nil {
+		return err
+	}
 	n, ok := f.nodes[p]
 	if !ok {
 		return notExist("remove", p)

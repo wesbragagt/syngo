@@ -480,7 +480,13 @@ running daemon, in bytes per second, `0` for unlimited and for no daemon.
 `conflicts.unresolved` counts the paths both sides changed that nobody has
 decided about yet; `conflict list` shows them. `folders[].state` is `idle`,
 `scanning`, `syncing`, `paused`, `scheduled` or `error`; `scheduled` is a
-folder outside its [sync windows](#sync-windows). `folders[].sync_windows`
+folder outside its [sync windows](#sync-windows). A folder is in `error` when
+its last scan could not read something or its last sync cycle could not apply
+something, and `folders[].error` is that failure, the scan one first.
+`folders[].pending_changes` is how many items the last sync cycle could not
+apply: a folder whose root is read-only reports every item it was offered
+there, with the reason in `folders[].error`, and it goes back to zero on the
+first cycle that applies everything. `folders[].sync_windows`
 lists them in canonical form, `folders[].in_window` says whether the folder is
 open now, and `folders[].next_window` is when it opens next, or `null` when it
 is open already or has no window. Times

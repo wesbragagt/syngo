@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syncthis/internal/compose"
 )
 
 // scanOutput is the JSON shape `scan --json` prints.
@@ -380,5 +382,44 @@ func TestRepair_RefusesAMissingRoot(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "a.txt") {
 		t.Fatalf("repair output = %q, want the still recorded a.txt", stdout)
+	}
+}
+
+// TestStatus_SyncFailureIsReportedOnTheFolder is the reporting half of a
+// folder whose contents cannot be written: what the puller recorded has to
+// reach `status`, as the folder's state, its error and its pending count,
+// without disturbing what the scanner records.
+func TestStatus_SyncFailureIsReportedOnTheFolder(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+	if code, _, stderr := e.run("", "scan", "docs"); code != cli.ExitOK {
+		t.Fatalf("scan exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	ctx := context.Background()
+	app, err := compose.Build(ctx, compose.Options{DataDir: e.dataDir})
+	if err != nil {
+		t.Fatalf("open the data directory: %v", err)
+	}
+	if err := app.Store.SetFolderSyncError(ctx, "docs", "mkdir /docs/offered: read-only file system", 3); err != nil {
+		t.Fatalf("record sync error: %v", err)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("close the data directory: %v", err)
+	}
+
+	folder := folderStatus(t, e)
+	if folder["state"] != "error" {
+		t.Errorf("folder state = %v, want error", folder["state"])
+	}
+	message, _ := folder["error"].(string)
+	if !strings.Contains(message, "read-only file system") {
+		t.Errorf("folder error = %v, want the failure that was recorded", folder["error"])
+	}
+	if pending, ok := folder["pending_changes"].(float64); !ok || int(pending) != 3 {
+		t.Errorf("pending_changes = %v, want 3", folder["pending_changes"])
+	}
+	if folder["last_scan_at"] == nil {
+		t.Error("the sync failure hid the scan that did succeed")
 	}
 }

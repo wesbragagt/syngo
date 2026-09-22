@@ -52,22 +52,23 @@ func (s *Service) Report(ctx context.Context, live *LiveInfo) (Report, error) {
 			nextWindow = rfc3339(next)
 		}
 		report.Folders = append(report.Folders, Folder{
-			ID:           string(f.ID),
-			Path:         f.Path,
-			Label:        f.Label,
-			Mode:         string(f.Mode),
-			DeletePolicy: string(f.DeletePolicy),
-			Paused:       f.Paused,
-			State:        folderState(f, inWindow, live),
-			Files:        stats.Files,
-			Dirs:         stats.Dirs,
-			Symlinks:     stats.Symlinks,
-			Bytes:        stats.Bytes,
-			LastScanAt:   rfc3339(f.LastScanAt),
-			Error:        nonEmpty(f.LastError),
-			SyncWindows:  f.SyncWindows.Strings(),
-			InWindow:     inWindow,
-			NextWindow:   nextWindow,
+			ID:             string(f.ID),
+			Path:           f.Path,
+			Label:          f.Label,
+			Mode:           string(f.Mode),
+			DeletePolicy:   string(f.DeletePolicy),
+			Paused:         f.Paused,
+			State:          folderState(f, inWindow, live),
+			Files:          stats.Files,
+			Dirs:           stats.Dirs,
+			Symlinks:       stats.Symlinks,
+			Bytes:          stats.Bytes,
+			LastScanAt:     rfc3339(f.LastScanAt),
+			PendingChanges: f.PendingItems,
+			Error:          nonEmpty(folderError(f)),
+			SyncWindows:    f.SyncWindows.Strings(),
+			InWindow:       inWindow,
+			NextWindow:     nextWindow,
 		})
 	}
 
@@ -135,13 +136,23 @@ func folderState(f folder.Folder, inWindow bool, live *LiveInfo) string {
 	switch {
 	case f.Paused:
 		return StatePaused
-	case f.LastError != "":
+	case folderError(f) != "":
 		return StateError
 	case !inWindow:
 		return StateScheduled
 	default:
 		return StateIdle
 	}
+}
+
+// folderError is what is wrong with a folder: what the last scan could not
+// read, or what the last sync cycle could not apply. The scan failure comes
+// first, because a folder that cannot be read is why a sync applies nothing.
+func folderError(f folder.Folder) string {
+	if f.LastError != "" {
+		return f.LastError
+	}
+	return f.LastSyncError
 }
 
 // transfersSection counts transfers by state and lists them.

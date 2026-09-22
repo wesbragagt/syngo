@@ -240,3 +240,66 @@ func TestMigrate_4To5_KeepsFilesAndGivesThemAnEmptyVersion(t *testing.T) {
 		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
 	}
 }
+
+// writeVersion5DB creates a database holding the first five migrations plus
+// one folder, which is what a device upgrading to the folder health columns
+// starts from, and returns its path.
+func writeVersion5DB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	for version := 1; version <= 5; version++ {
+		script, err := sqlitestore.MigrationSQL(version)
+		if err != nil {
+			t.Fatalf("read migration %d: %v", version, err)
+		}
+		if _, err := db.ExecContext(ctx, script); err != nil {
+			t.Fatalf("apply migration %d: %v", version, err)
+		}
+	}
+	for _, stmt := range []string{
+		`INSERT INTO schema_version (version) VALUES (5)`,
+		`INSERT INTO folders (id, path, label, mode, delete_policy, include_hidden, symlink_policy,
+			keep_empty_dirs, paused, last_error, created_at)
+		 VALUES ('docs', '/srv/docs', '', 'sendreceive', 'propagate', 0, 'store', 1, 0, 'a scan failure', 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare version 5 database: %v", err)
+		}
+	}
+	return path
+}
+
+func TestMigrate_5To6_KeepsFoldersAndLeavesTheSyncErrorEmpty(t *testing.T) {
+	ctx := context.Background()
+	path := writeVersion5DB(t)
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	f, err := store.GetFolder(ctx, folder.ID("docs"))
+	if err != nil {
+		t.Fatalf("folder after the migration: %v", err)
+	}
+	if f.Path != "/srv/docs" || f.LastError != "a scan failure" {
+		t.Fatalf("folder = %+v, want the row written before the migration", f)
+	}
+	// A folder that predates the columns has no sync failure on record;
+	// the scan failure it does carry is the scanner's and stays put.
+	if f.LastSyncError != "" || f.PendingItems != 0 {
+		t.Fatalf("sync error = %q with %d pending items, want neither", f.LastSyncError, f.PendingItems)
+	}
+	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
+	}
+}

@@ -1212,3 +1212,68 @@ func TestSync_StalePeerManifestChangesNothing(t *testing.T) {
 		t.Fatalf("version = %q, want it unchanged", got)
 	}
 }
+
+// TestSync_ReadOnlyRootIsRecordedOnTheFolder is a device whose folder root it
+// may not write: nothing the peer offers can land, and a folder that can
+// synchronize nothing has to say so rather than report itself idle.
+func TestSync_ReadOnlyRootIsRecordedOnTheFolder(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "offered/f0.bin", payload(chunkSize, 3))
+
+	d, conn := newDest(t, src.server)
+	d.fs.MakeReadOnly(d.folder.Path)
+
+	// The cycle may end early, because the first write that fails is the
+	// temp directory every download needs; what it recorded is the point.
+	summary, _ := d.puller.SyncFolder(context.Background(), conn, d.folder)
+	if summary.Failed == 0 {
+		t.Fatalf("summary = %+v, want the items it could not apply counted", summary)
+	}
+
+	stored, gerr := d.store.GetFolder(context.Background(), d.folder.ID)
+	if gerr != nil {
+		t.Fatalf("get folder: %v", gerr)
+	}
+	if stored.LastSyncError == "" {
+		t.Fatal("the folder reports no sync error after a cycle that applied nothing")
+	}
+	if !strings.Contains(stored.LastSyncError, "read-only file system") {
+		t.Errorf("the folder's sync error does not name the failure: %q", stored.LastSyncError)
+	}
+	if stored.PendingItems != summary.Failed {
+		t.Errorf("the folder reports %d pending items, want %d", stored.PendingItems, summary.Failed)
+	}
+	if stored.LastError != "" {
+		t.Errorf("the puller wrote the scanner's last error: %q", stored.LastError)
+	}
+}
+
+// TestSync_CycleThatAppliedEverythingClearsTheFolderError is the other half of
+// the rule: the puller clears what it recorded, and only that.
+func TestSync_CycleThatAppliedEverythingClearsTheFolderError(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "ok.bin", payload(chunkSize, 5))
+
+	d, conn := newDest(t, src.server)
+	ctx := context.Background()
+	if err := d.store.SetFolderSyncError(ctx, d.folder.ID, "read-only file system", 4); err != nil {
+		t.Fatalf("seed sync error: %v", err)
+	}
+	if err := d.store.SetFolderScan(ctx, d.folder.ID, d.clock.Now(), "2 entries were skipped"); err != nil {
+		t.Fatalf("seed scan error: %v", err)
+	}
+
+	d.sync(t, conn)
+
+	stored, err := d.store.GetFolder(ctx, d.folder.ID)
+	if err != nil {
+		t.Fatalf("get folder: %v", err)
+	}
+	if stored.LastSyncError != "" || stored.PendingItems != 0 {
+		t.Errorf("a clean cycle left %q and %d pending items behind",
+			stored.LastSyncError, stored.PendingItems)
+	}
+	if stored.LastError != "2 entries were skipped" {
+		t.Errorf("the puller cleared the scanner's last error: %q", stored.LastError)
+	}
+}

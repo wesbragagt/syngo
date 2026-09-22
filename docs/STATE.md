@@ -95,7 +95,7 @@ holds it open.
 
 ### Migrations
 
-The schema is at version 5. `Open` reads `schema_version`, applies every
+The schema is at version 6. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
@@ -105,6 +105,7 @@ migration above it in one transaction and records the new version:
 | 3 | `003_conflict_reason.sql` | `conflicts.reason` |
 | 4 | `004_sync_windows.sql` | `folders.sync_windows` |
 | 5 | `005_version.sql` | `files.version`, the version vector of the entry |
+| 6 | `006_sync_error.sql` | `folders.last_sync_error`, `folders.pending_items` |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,
@@ -119,6 +120,23 @@ spans in the device's local time, separated by commas, for example
 which is what every row written before the column existed means. Outside its
 windows a folder still scans and still serves; only the pull waits. See
 [CLI.md](CLI.md#sync-windows).
+
+Two columns say what is wrong with a folder, and they have one owner each.
+`last_error` belongs to the scanner: what the last scan could not read, empty
+when it read everything. `last_sync_error` and `pending_items` belong to the
+puller: what the last sync cycle could not apply locally and how many items
+that was, empty and zero when the cycle applied everything. Neither owner
+writes or clears the other's column, so a folder whose root cannot be written
+reports that even though its scans succeed, and a folder with unreadable
+entries keeps saying so while its downloads land. `status` reports the scan
+failure first, because a folder that cannot be read is why a sync applies
+nothing, and `pending_changes` in the report is `pending_items`.
+
+A cycle that ended early, because the peer or the store went away, records the
+failures it already collected and clears nothing: it did not get far enough to
+disprove what was there. When two peers share a folder, their cycles are
+serialized by the puller's per-folder gate and the last one to finish is what
+the folder reports.
 
 ### files
 

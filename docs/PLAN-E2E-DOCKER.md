@@ -365,8 +365,9 @@ docker ps -a --filter label=syncthis.e2e -q | wc -l      # 0 after a run
 - /home/wesbragagt/dev/syncthing/internal/compose/compose.go (`Init` preserves a pre-written `config.json`, which the bootstrap relies on)
 ## 10. Known failures
 
-KF-1, KF-2 and KF-3 are fixed; their scenarios run unskipped. What they were
-and how they were fixed is `docs/PLAN-3.md`, in one line each:
+KF-1, KF-2, KF-3 and KF-4 are fixed; their scenarios run unskipped. What they
+were and how they were fixed is `docs/PLAN-3.md`, in one line each, and
+`docs/STATE.md` for the folder health columns:
 
 - **KF-1**, a transfer whose source changed mid-flight stayed `failed`
   forever, so the journal never emptied (`TestMesh_ConcurrentDisjointEditsConverge`,
@@ -381,38 +382,15 @@ and how they were fixed is `docs/PLAN-3.md`, in one line each:
   (`TestOffline_LongAbsenceCatchesUp`,
   `TestOffline_StaleRejoinKeepsTheNewerVersion`). The single `synced_hash`
   baseline is gone; two versions are ordered by their version vectors.
+- **KF-4**, a folder whose root cannot be written reported itself idle with no
+  error (`TestModes_ReadOnlyRootIsReportedNotFatal`). The puller now records
+  what a cycle could not apply in `folders.last_sync_error` and
+  `folders.pending_items`, which `status` reports as the folder's state, its
+  `error` and its `pending_changes`. The scanner keeps `last_error` and
+  neither owner clears the other's column.
 
-What remains is KF-4 and KF-5. Neither invariant is loosened: the read-only
-scenario carries a `t.Skip` that points here, and the scale scenario asserts
+What remains is KF-5. No invariant is loosened: the scale scenario asserts
 everything it can and counts the rest.
-
-### KF-4: a folder whose root cannot be written reports itself idle
-
-Scenario 14 (`TestModes_ReadOnlyRootIsReportedNotFatal`). One device of a
-three-device mesh has `/docs` mounted read-only; the other two write five
-files.
-
-Expected: the device reports `status.folders[0].state == "error"` with a
-non-null `error`, and the work it could not do is somewhere in its journal
-(`transfers.failed`, `pending` or `active` above zero).
-
-Observed: the daemon stays up, which is right, and says nothing is wrong. The
-folder is `"state": "idle"`, `"error": null`, `"pending_changes": 0`, and
-`transfers` is all zeros with an empty `items`. The only trace is in the log,
-at WARN, repeated every sync cycle:
-
-```
-{"level":"WARN","msg":"plan item not applied","folder":"docs","path":"offered",
- "action":"mkdir","error":"create directory /docs/offered: mkdir /docs/offered: read-only file system"}
-{"level":"WARN","msg":"folder sync failed","folder":"docs","peer":"PZKB5FX","error":"context canceled"}
-```
-
-So a device that can synchronize nothing at all looks healthy to `status`, and
-a user has no way to find out but to read the log. The fix is a decision about
-which failures reach the folder state and for how long (one refused item, or
-only a whole sync cycle that failed), so it is recorded here rather than
-patched. The other two devices converge and are unaffected, which the test
-still asserts.
 
 ### KF-5: a scan overtaken by the puller is logged as an error and drops the watch
 
