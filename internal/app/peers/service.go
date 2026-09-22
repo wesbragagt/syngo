@@ -198,7 +198,7 @@ func (s *Service) Test(ctx context.Context, target string) (TestResult, error) {
 	probe, probeErr := s.dialer.Probe(ctx, result.Address)
 	if probeErr != nil {
 		result.Reason = reasonOf(probeErr)
-		result.Err = probeErr.Error()
+		result.Err = messageOf(probeErr)
 		return result, nil
 	}
 
@@ -405,6 +405,17 @@ func confirm(ask func(device.ID, string) (bool, error), id device.ID, name strin
 }
 
 // reasonOf turns a connection failure into the short token reported to users.
+// messageOf is the failure without the stage a ConnectError names: the reason
+// is reported beside it, and callers print the two together, so keeping the
+// prefix would print it twice.
+func messageOf(err error) string {
+	var connErr *ports.ConnectError
+	if errors.As(err, &connErr) && connErr.Err != nil {
+		return connErr.Err.Error()
+	}
+	return err.Error()
+}
+
 func reasonOf(err error) string {
 	var rejected *ports.RejectedError
 	if errors.As(err, &rejected) {

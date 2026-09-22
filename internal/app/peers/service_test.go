@@ -195,6 +195,31 @@ func TestTest_ReportsRejectReason(t *testing.T) {
 	}
 }
 
+// TestTest_ProtocolVersionMismatchIsARejection covers the reason a version
+// mismatch gets: the handshake did not break, the connection was refused for a
+// protocol reason, whichever of the two sides noticed it.
+func TestTest_ProtocolVersionMismatchIsARejection(t *testing.T) {
+	f := newFixture(t, ports.ProbeResult{DeviceID: peerID})
+	f.dialer.Set("nas:22000", fakes.PeerScript{Err: &ports.ConnectError{
+		Stage: ports.StageHandshake,
+		Err: &ports.RejectedError{
+			Reason: "protocol_version",
+			Detail: "peer speaks protocol version 1, want 2",
+		},
+	}})
+
+	result, err := f.service.Test(context.Background(), "nas")
+	if err != nil {
+		t.Fatalf("Test error: %v", err)
+	}
+	if result.Reason != "rejected:protocol_version" {
+		t.Fatalf("reason = %q, want rejected:protocol_version", result.Reason)
+	}
+	if result.Err != "peer speaks protocol version 1, want 2" {
+		t.Fatalf("error = %q, want it without the stage prefix the reason already carries", result.Err)
+	}
+}
+
 func TestTest_UnreachableReportsDialStage(t *testing.T) {
 	f := newFixture(t, ports.ProbeResult{DeviceID: peerID})
 

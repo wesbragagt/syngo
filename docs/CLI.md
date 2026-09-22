@@ -658,7 +658,9 @@ $ syncthis peer test 100.64.0.2:22000 --json
 ```
 
 `reject_reason` is what the peer answered: `unknown_device`,
-`protocol_version` or `id_mismatch`.
+`protocol_version` or `id_mismatch`. A peer speaking another protocol version
+is `reason: rejected:protocol_version` whichever side noticed the mismatch,
+not a broken handshake: the connection got far enough to compare versions.
 
 ### `syncthis network tailscale detect`
 

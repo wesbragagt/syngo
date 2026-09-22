@@ -53,14 +53,24 @@ func (e *ConnectError) Unwrap() error { return e.Err }
 // Is reports that every connection failure is a peer that cannot be reached.
 func (e *ConnectError) Is(target error) bool { return target == ErrPeerUnreachable }
 
-// RejectedError reports that a peer refused the connection after the Hello
-// exchange. Reason is a protocol reason such as "unknown_device".
+// RejectedError reports that the connection was refused after the Hello
+// exchange, by the peer or by this side. Reason is a protocol reason such as
+// "unknown_device".
 type RejectedError struct {
 	Reason string
+	// Detail says what this side found wrong, and is set only when this
+	// side is the one refusing. It replaces the message about a peer that
+	// refused us, which would name the wrong side.
+	Detail string
 }
 
 // Error implements the error interface.
-func (e *RejectedError) Error() string { return "peer rejected the connection: " + e.Reason }
+func (e *RejectedError) Error() string {
+	if e.Detail != "" {
+		return e.Detail
+	}
+	return "peer rejected the connection: " + e.Reason
+}
 
 // Is reports that a rejection is also a peer that cannot be reached, so
 // callers that only care about the outcome can test one sentinel.

@@ -60,8 +60,15 @@ func exchangeHello(conn net.Conn, local ports.HelloInfo, peerID device.ID) (port
 	}
 	if header.ProtocolVersion != ProtocolVersion {
 		_ = writeRejected(conn, ReasonProtocolVersion)
-		return ports.HelloInfo{}, fmt.Errorf("peer speaks protocol version %d, want %d",
-			header.ProtocolVersion, ProtocolVersion)
+		// The refusal is this side's, and it is the same outcome as the
+		// peer refusing us for the same reason, so it carries the same
+		// protocol reason: callers report rejected:protocol_version
+		// either way instead of a bare "handshake".
+		return ports.HelloInfo{}, &ports.RejectedError{
+			Reason: ReasonProtocolVersion,
+			Detail: fmt.Sprintf("peer speaks protocol version %d, want %d",
+				header.ProtocolVersion, ProtocolVersion),
+		}
 	}
 	hello, err := fromWireHello(header)
 	if err != nil {
