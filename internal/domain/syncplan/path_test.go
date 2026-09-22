@@ -16,7 +16,7 @@ func TestPlan_SkipsPathsOutsideTheFolder(t *testing.T) {
 	}
 	for _, p := range hostile {
 		t.Run(p, func(t *testing.T) {
-			remote := manifestOf(file(p, "v1", ""))
+			remote := manifestOf(file(p, "v1", vec("A:1")))
 			item := only(t, syncplan.Plan(manifestOf(), remote, testFolder()))
 			if item.Action != syncplan.ActionNone || item.Reason != syncplan.ReasonInvalidPath {
 				t.Fatalf("item = %s/%s, want none/%s", item.Action, item.Reason, syncplan.ReasonInvalidPath)
@@ -26,7 +26,7 @@ func TestPlan_SkipsPathsOutsideTheFolder(t *testing.T) {
 }
 
 func TestPlan_SkipsATombstoneOutsideTheFolder(t *testing.T) {
-	remote := manifestOf(tombstone("../escape.txt"))
+	remote := manifestOf(tombstone("../escape.txt", vec("A:1")))
 	item := only(t, syncplan.Plan(manifestOf(), remote, testFolder()))
 	if item.Action != syncplan.ActionNone || item.Reason != syncplan.ReasonInvalidPath {
 		t.Fatalf("item = %s/%s, want none/%s", item.Action, item.Reason, syncplan.ReasonInvalidPath)
@@ -48,7 +48,7 @@ func TestPlan_SkipsASymlinkLeavingTheFolder(t *testing.T) {
 }
 
 func TestPlan_KeepsValidUnicodePaths(t *testing.T) {
-	remote := manifestOf(file("documentos/café/résumé.txt", "v1", ""))
+	remote := manifestOf(file("documentos/café/résumé.txt", "v1", vec("A:1")))
 	item := only(t, syncplan.Plan(manifestOf(), remote, testFolder()))
 	if item.Action != syncplan.ActionPull {
 		t.Fatalf("item = %s/%s, want pull", item.Action, item.Reason)

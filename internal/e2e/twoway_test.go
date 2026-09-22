@@ -481,3 +481,78 @@ func TestTwoWay_ResolvingWithAnEditedCopyIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestTwoWay_StaleRestartDoesNotRollBack is KF-3 with two devices: a node that
+// was down while the other wrote twice takes the latest version and neither
+// side calls it a conflict, because every version came from one device.
+func TestTwoWay_StaleRestartDoesNotRollBack(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendReceive)
+	b := startNode(t, "b", folder.ModeSendReceive)
+	writeFile(t, a, "notes.txt", []byte("the version both sides had"))
+	pair(t, a, b)
+	waitTreeEqual(t, a, b)
+
+	b.Stop()
+	writeFile(t, a, "notes.txt", []byte("the first edit made while b was down"))
+	writeFile(t, a, "notes.txt", []byte("the second edit made while b was down"))
+	b.Restart()
+
+	waitConverged(t, a, b)
+	for _, n := range []*node{a, b} {
+		files := contentsOf(t, n)
+		if len(files) != 1 || files["notes.txt"] != "the second edit made while b was down" {
+			t.Fatalf("%s holds %v, want only the latest version", n.name, files)
+		}
+		if rows := conflictsOf(t, n); len(rows) != 0 {
+			t.Fatalf("%s reports %+v, want no conflict: one device wrote every version",
+				n.name, rows)
+		}
+	}
+
+	// The stale node does not push its old version back afterwards.
+	time.Sleep(settle)
+	if diff := treeDiff(t, a.Root, b.Root); len(diff) != 0 {
+		t.Fatalf("the trees drifted apart again:\n%s", join(diff))
+	}
+	if got := contentsOf(t, a)["notes.txt"]; got != "the second edit made while b was down" {
+		t.Fatalf("notes.txt on a = %q, want the latest version to stay", got)
+	}
+}
+
+// TestTwoWay_DeletionSurvivesAStalePeer covers the other half of KF-3: a node
+// that still holds a file the other deleted while it was down must take the
+// deletion, not re-create the file on the device that deleted it.
+func TestTwoWay_DeletionSurvivesAStalePeer(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendReceive)
+	b := startNode(t, "b", folder.ModeSendReceive)
+	writeFile(t, a, "gone.txt", []byte("what both sides had"))
+	writeFile(t, a, "kept.txt", []byte("what stays"))
+	pair(t, a, b)
+	waitTreeEqual(t, a, b)
+
+	b.Stop()
+	if err := os.Remove(filepath.Join(a.Root, "gone.txt")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	b.Restart()
+
+	waitConverged(t, a, b)
+	for _, n := range []*node{a, b} {
+		files := contentsOf(t, n)
+		if len(files) != 1 || files["kept.txt"] != "what stays" {
+			t.Fatalf("%s holds %v, want the deletion applied on both sides", n.name, files)
+		}
+		if rows := conflictsOf(t, n); len(rows) != 0 {
+			t.Fatalf("%s reports %+v, want no conflict: the file was untouched on b",
+				n.name, rows)
+		}
+	}
+
+	// The deleted file does not come back from the node that was away.
+	time.Sleep(settle)
+	for _, n := range []*node{a, b} {
+		if files := contentsOf(t, n); len(files) != 1 {
+			t.Fatalf("%s holds %v again, want the file to stay deleted", n.name, files)
+		}
+	}
+}

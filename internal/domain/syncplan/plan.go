@@ -159,13 +159,13 @@ func decide(local, remote *manifest.Entry, f folder.Folder) Item {
 	}
 
 	if remote.Deleted {
-		return remoteDeleted(item, local, f)
+		return remoteDeleted(item, local, remote, f)
 	}
 	if local != nil && !local.Deleted && local.Kind != remote.Kind {
 		if remote.Kind == manifest.KindSymlink && f.Symlinks != folder.SymlinkStore {
 			return with(item, ActionNone, ReasonSymlinkPolicy)
 		}
-		return kindChanged(item, local)
+		return kindChanged(item, local, remote)
 	}
 	switch remote.Kind {
 	case manifest.KindDir:
@@ -187,37 +187,37 @@ func decide(local, remote *manifest.Entry, f folder.Folder) Item {
 	}
 }
 
-// remoteFile decides what to do with a file the peer has.
+// remoteFile decides what to do with a file the peer has. Two live versions
+// are ordered by their version vectors alone: the one that dominates is the
+// newer one, and two that neither dominate were written independently, which
+// is a conflict.
 func remoteFile(item Item, local, remote *manifest.Entry) Item {
 	switch {
-	case local == nil || local.Deleted:
+	case local == nil:
+		return with(item, ActionPull, ReasonMissing)
+	case local.Deleted:
+		// A deletion made after the peer's version keeps the path
+		// deleted; the peer takes the tombstone itself. Anything else,
+		// a concurrent deletion included, keeps the content: a file
+		// that comes back can be deleted again, one that is gone is
+		// gone.
+		if local.Version.Compare(remote.Version) == manifest.After {
+			return with(item, ActionNone, ReasonLocalNewer)
+		}
 		return with(item, ActionPull, ReasonMissing)
 	case local.Kind == manifest.KindFile && local.Hash == remote.Hash:
 		return sameContent(item, local, remote)
-	case local.Kind == manifest.KindFile && local.Hash == local.SyncedHash:
-		// The local copy is still the one both sides agreed on, so the
-		// remote version is the newer one.
+	}
+	switch local.Version.Compare(remote.Version) {
+	case manifest.Before:
 		return with(item, ActionPull, ReasonRemoteNewer)
-	case local.Kind == manifest.KindFile && remote.Hash == local.SyncedHash:
-		// Only the local side moved on; the peer will pull it.
-		return with(item, ActionNone, ReasonLocalNewer)
-	case local.Kind == manifest.KindFile && remote.SyncedHash == local.Hash:
-		// The peer's version was made on top of the version this side
-		// holds, so it is the newer one and nothing is lost by taking
-		// it. Only the local baseline is behind, which happens when the
-		// peer edited the file before this side recorded that both had
-		// agreed on it.
-		return with(item, ActionPull, ReasonRemoteNewer)
-	case local.Kind == manifest.KindFile && remote.ModifiedBy != "" &&
-		remote.ModifiedBy == local.ModifiedBy:
-		// The same device wrote both versions, so they are not two
-		// independent edits. Reaching this point means the local
-		// version is not the one the peer sent back, and a version this
-		// side pulled would have matched its own baseline above; what
-		// is left is an unconfirmed local change whose earlier version
-		// travelled to the peer. The peer pulls the newer one.
+	case manifest.After:
 		return with(item, ActionNone, ReasonLocalNewer)
 	default:
+		// Concurrent, and Equal with different content: the second only
+		// happens for rows that predate version vectors, where the
+		// empty vector says nothing about which version came first.
+		// Keeping both is the only answer that loses nothing.
 		return with(item, ActionConflict, ReasonBothModified)
 	}
 }
@@ -229,13 +229,9 @@ func sameContent(item Item, local, remote *manifest.Entry) Item {
 	localMode, remoteMode := perm(local.Mode), perm(remote.Mode)
 	switch {
 	case remoteMode == 0 || localMode == remoteMode:
-		// In sync. The caller records the hash and the mode both sides
-		// now agree on, which is the baseline the rules below use.
-		return with(item, ActionNone, ReasonInSync)
-	case local.Hash != local.SyncedHash:
-		// The content agreement is not recorded yet. Recording it comes
-		// first; the mode is decided once there is a baseline to judge
-		// it against.
+		// In sync. The caller merges the two version vectors, so the
+		// shared history of the path is recorded even though nothing
+		// moves, and records the mode as the new baseline.
 		return with(item, ActionNone, ReasonInSync)
 	case local.SyncedMode == 0:
 		// No baseline: the entry predates mode tracking, so which side
@@ -251,30 +247,47 @@ func sameContent(item Item, local, remote *manifest.Entry) Item {
 
 // kindChanged decides what to do with a path that is a file on one side and a
 // directory or a symlink on the other. The local entry is only replaced when
-// it holds nothing the peer does not have: a locally modified file is a
-// conflict, because replacing it would lose the change.
-func kindChanged(item Item, local *manifest.Entry) Item {
-	if local.Kind == manifest.KindFile && local.Hash != local.SyncedHash {
-		return with(item, ActionConflict, ReasonReplaceVsModify)
+// the peer's version was made on top of it: a file changed independently of
+// the replacement is a conflict, because replacing it would lose the change.
+func kindChanged(item Item, local, remote *manifest.Entry) Item {
+	if local.Kind != manifest.KindFile {
+		// Directories and symlinks carry no content of their own, so
+		// there is nothing a replacement could lose.
+		return with(item, ActionReplace, ReasonKindChanged)
 	}
-	return with(item, ActionReplace, ReasonKindChanged)
+	switch local.Version.Compare(remote.Version) {
+	case manifest.After:
+		return with(item, ActionNone, ReasonLocalNewer)
+	case manifest.Concurrent:
+		return with(item, ActionConflict, ReasonReplaceVsModify)
+	default:
+		return with(item, ActionReplace, ReasonKindChanged)
+	}
 }
 
 // perm returns the permission bits of a stored mode.
 func perm(mode uint32) uint32 { return mode & 0o7777 }
 
-// remoteDeleted decides what to do with a path the peer deleted.
-func remoteDeleted(item Item, local *manifest.Entry, f folder.Folder) Item {
+// remoteDeleted decides what to do with a path the peer deleted. A file only
+// follows the deletion when the deletion was made on top of the version this
+// side holds; a local change the peer never saw is a conflict, never a loss.
+func remoteDeleted(item Item, local, remote *manifest.Entry, f folder.Folder) Item {
 	switch {
 	case local == nil || local.Deleted:
 		return Item{Path: item.Path, Local: local, Remote: item.Remote}
 	case f.DeletePolicy == folder.DeleteNever:
 		return with(item, ActionNone, ReasonDeletePolicyNever)
-	case local.Kind != manifest.KindFile || local.Hash == local.SyncedHash:
-		// Directories and symlinks carry no hash, so they follow the
-		// peer; a file only follows it when it is unchanged since the
-		// last time both sides agreed.
+	case local.Kind != manifest.KindFile:
+		// Directories and symlinks hold nothing a deletion could lose;
+		// a directory that still has content is kept by the installer,
+		// not by the plan.
 		return with(item, ActionDelete, ReasonRemoteDeleted)
+	}
+	switch local.Version.Compare(remote.Version) {
+	case manifest.Before:
+		return with(item, ActionDelete, ReasonRemoteDeleted)
+	case manifest.After:
+		return with(item, ActionNone, ReasonLocalNewer)
 	default:
 		return with(item, ActionConflict, ReasonDeleteVsModify)
 	}

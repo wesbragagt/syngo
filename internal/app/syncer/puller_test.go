@@ -80,8 +80,10 @@ func (d *dest) content(t *testing.T, rel string) []byte {
 	return data
 }
 
-// record stores a local entry the way a scan would, and writes the file.
-func (d *dest) record(t *testing.T, rel string, data []byte, synced manifest.Hash) manifest.Entry {
+// record stores a local entry the way a scan would, and writes the file. The
+// version is the one the local history of the path carries, which is what the
+// plan orders against the peer's.
+func (d *dest) record(t *testing.T, rel string, data []byte, v manifest.Version) manifest.Entry {
 	t.Helper()
 	full := d.folder.Path + "/" + rel
 	d.fs.AddFile(full, data, 0o644)
@@ -91,7 +93,8 @@ func (d *dest) record(t *testing.T, rel string, data []byte, synced manifest.Has
 	}
 	e := manifest.Entry{
 		Path: rel, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime, Mode: 0o644,
-		Hash: d.hasher.SumBytes(data), SyncedHash: synced, SyncedMode: 0o644, Inode: info.Inode,
+		Hash: d.hasher.SumBytes(data), Version: v, SyncedMode: 0o644, Inode: info.Inode,
+		SyncedHash: d.hasher.SumBytes(data),
 	}
 	if err := d.store.UpsertEntries(context.Background(), d.folder.ID, []manifest.Entry{e}); err != nil {
 		t.Fatalf("record %s: %v", rel, err)
@@ -498,26 +501,6 @@ func TestSync_HashChangedOnSenderFailsCleanly(t *testing.T) {
 	}
 }
 
-func TestSync_SetsSyncedHashWhenInSync(t *testing.T) {
-	src := newSource(t, folder.ModeSendReceive)
-	data := []byte("identical on both sides")
-	entry := src.addFile(t, "a.txt", data)
-
-	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", data, manifest.Hash{})
-
-	if summary := d.sync(t, conn); summary.Pulled != 0 {
-		t.Fatalf("summary = %+v, want nothing pulled", summary)
-	}
-	stored, err := d.store.GetFile(context.Background(), d.folder.ID, "a.txt")
-	if err != nil {
-		t.Fatalf("stored entry: %v", err)
-	}
-	if stored.SyncedHash != entry.Hash {
-		t.Fatalf("synced hash = %s, want %s", stored.SyncedHash, entry.Hash)
-	}
-}
-
 func TestSync_LocalChangeIsNeverOverwritten(t *testing.T) {
 	// Which version keeps the path depends on the content, so the local
 	// change is followed through both outcomes: it is either still at the
@@ -534,7 +517,7 @@ func TestSync_LocalChangeIsNeverOverwritten(t *testing.T) {
 			src.addFile(t, "a.txt", []byte("the peer's version"))
 
 			d, conn := newDest(t, src.server)
-			d.record(t, "a.txt", tc.local, d.hasher.SumBytes([]byte("the version both sides had")))
+			d.record(t, "a.txt", tc.local, vector(t, "DEST:1"))
 
 			summary := d.sync(t, conn)
 			if summary.Conflicts != 1 || summary.Pulled != 0 {
@@ -573,8 +556,8 @@ func TestSync_DeleteIsPropagatedOnlyWhenTheLocalCopyIsUnchanged(t *testing.T) {
 	}
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "gone.txt", unchanged, d.hasher.SumBytes(unchanged))
-	d.record(t, "edited.txt", []byte("edited locally"), d.hasher.SumBytes(edited))
+	d.record(t, "gone.txt", unchanged, vector(t, "SOURCE:1"))
+	d.record(t, "edited.txt", []byte("edited locally"), vector(t, "SOURCE:1,DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Deleted != 1 || summary.Conflicts != 1 {
@@ -745,7 +728,10 @@ func (s *source) addDir(t *testing.T, rel string) {
 	t.Helper()
 	full := s.folder.Path + "/" + rel
 	s.fs.AddDir(full, 0o755)
-	e := manifest.Entry{Path: rel, Kind: manifest.KindDir, Mode: 0o755}
+	e := manifest.Entry{
+		Path: rel, Kind: manifest.KindDir, Mode: 0o755,
+		ModifiedBy: sourceID, Version: manifest.Version{}.Bump(sourceID),
+	}
 	if err := s.store.UpsertEntries(context.Background(), s.folder.ID, []manifest.Entry{e}); err != nil {
 		t.Fatalf("record %s: %v", rel, err)
 	}
@@ -775,7 +761,7 @@ func TestSync_FileTurnedIntoADirectoryIsReplaced(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	old := []byte("what used to be there")
-	local := d.record(t, "f", old, d.hasher.SumBytes(old))
+	local := d.record(t, "f", old, vector(t, "SOURCE:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Failed != 0 || summary.Conflicts != 0 {
@@ -814,8 +800,9 @@ func TestSync_LocallyModifiedFileIsNotReplacedByADirectory(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	mine := []byte("the version the user is editing")
-	// The local file moved on since the last agreement with the peer.
-	d.record(t, "f", mine, d.hasher.SumBytes([]byte("what both sides had")))
+	// The local file was changed here while the peer replaced it, so
+	// neither version was made on top of the other.
+	d.record(t, "f", mine, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Conflicts != 1 || summary.Dirs != 0 {
@@ -839,7 +826,7 @@ func TestSync_DirectoryTurnedIntoAFileIsReplaced(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	d.recordDir(t, "sub")
-	d.record(t, "sub/inner.txt", []byte("gone upstream"), d.hasher.SumBytes([]byte("gone upstream")))
+	d.record(t, "sub/inner.txt", []byte("gone upstream"), vector(t, "SOURCE:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Failed != 0 {
@@ -867,7 +854,7 @@ func TestSync_DirectoryHoldingLocalOnlyFilesIsKept(t *testing.T) {
 	d, conn := newDest(t, src.server)
 	d.recordDir(t, "sub")
 	mine := []byte("only this side has it")
-	d.record(t, "sub/mine.txt", mine, d.hasher.SumBytes(mine))
+	d.record(t, "sub/mine.txt", mine, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Failed != 1 || summary.Pulled != 0 {
@@ -889,11 +876,11 @@ func TestSync_DirectoryHoldingLocalOnlyFilesIsKept(t *testing.T) {
 func TestSync_ModeChangeIsAppliedWithoutATransfer(t *testing.T) {
 	src := newSource(t, folder.ModeSendReceive)
 	data := []byte("identical on both sides")
-	entry := src.addFile(t, "a.txt", data)
+	src.addFile(t, "a.txt", data)
 	src.chmod(t, "a.txt", 0o700)
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", data, entry.Hash)
+	d.record(t, "a.txt", data, vector(t, "SOURCE:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Modes != 1 || summary.Pulled != 0 || summary.Bytes != 0 {
@@ -928,12 +915,12 @@ func TestSync_ModeChangeIsAppliedWithoutATransfer(t *testing.T) {
 func TestSync_ModeChangeIsNotAppliedToALocallyModifiedFile(t *testing.T) {
 	src := newSource(t, folder.ModeSendReceive)
 	shared := []byte("what both sides had")
-	entry := src.addFile(t, "a.txt", shared)
+	src.addFile(t, "a.txt", shared)
 	src.chmod(t, "a.txt", 0o700)
 
 	d, conn := newDest(t, src.server)
 	mine := []byte("the version the user is editing")
-	d.record(t, "a.txt", mine, entry.Hash)
+	d.record(t, "a.txt", mine, vector(t, "SOURCE:1,DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Modes != 0 || summary.Pulled != 0 {
@@ -964,7 +951,7 @@ func TestSync_OneItemThatCannotBeAppliedDoesNotStopTheCycle(t *testing.T) {
 	d.recordDir(t, "gone")
 	// A file only this side knows about keeps the directory from going.
 	mine := []byte("only this side has it")
-	d.record(t, "gone/mine.txt", mine, d.hasher.SumBytes(mine))
+	d.record(t, "gone/mine.txt", mine, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Failed != 1 {
@@ -1060,7 +1047,7 @@ func TestSync_DeleteAdoptsTheTombstoneVersion(t *testing.T) {
 	}
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "gone.txt", data, d.hasher.SumBytes(data))
+	d.record(t, "gone.txt", data, vector(t, "SOURCE:1"))
 
 	if summary := d.sync(t, conn); summary.Deleted != 1 {
 		t.Fatalf("summary = %+v, want one deletion", summary)
@@ -1080,17 +1067,13 @@ func TestSync_DeleteAdoptsTheTombstoneVersion(t *testing.T) {
 }
 
 func TestSync_InSyncAdoptsTheMergedVersion(t *testing.T) {
-	ctx := context.Background()
 	src := newSource(t, folder.ModeSendReceive)
 	data := []byte("identical on both sides")
 	src.addFile(t, "a.txt", data)
 	src.setVersion(t, "a.txt", peerID, vector(t, "SOURCE:1"))
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", data, manifest.Hash{})
-	if err := d.store.SetVersion(ctx, d.folder.ID, "a.txt", vector(t, "DEST:1")); err != nil {
-		t.Fatalf("set version: %v", err)
-	}
+	d.record(t, "a.txt", data, vector(t, "DEST:1"))
 
 	if summary := d.sync(t, conn); summary.Pulled != 0 {
 		t.Fatalf("summary = %+v, want nothing pulled", summary)
@@ -1099,5 +1082,29 @@ func TestSync_InSyncAdoptsTheMergedVersion(t *testing.T) {
 	// ends up with the merge and a third device is ordered against it.
 	if got := d.storedVersion(t, "a.txt"); !got.Equals(vector(t, "DEST:1,SOURCE:1")) {
 		t.Fatalf("version = %q, want the merge of both", got)
+	}
+}
+
+// TestSync_StalePeerManifestChangesNothing is KF-3 seen from the device that
+// stayed: a peer that was away announces a version this side has written past,
+// and nothing on disk or in the manifest may move for it.
+func TestSync_StalePeerManifestChangesNothing(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", []byte("the version the peer still has"))
+	src.setVersion(t, "a.txt", sourceID, vector(t, "SOURCE:1"))
+
+	d, conn := newDest(t, src.server)
+	mine := []byte("the version written while the peer was away")
+	d.record(t, "a.txt", mine, vector(t, "SOURCE:2"))
+
+	summary := d.sync(t, conn)
+	if summary.Pulled != 0 || summary.Conflicts != 0 || summary.Failed != 0 {
+		t.Fatalf("summary = %+v, want an untouched folder", summary)
+	}
+	if got := d.content(t, "a.txt"); string(got) != string(mine) {
+		t.Fatalf("a.txt = %q, want the newer local version", got)
+	}
+	if got := d.storedVersion(t, "a.txt"); !got.Equals(vector(t, "SOURCE:2")) {
+		t.Fatalf("version = %q, want it unchanged", got)
 	}
 }

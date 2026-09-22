@@ -55,14 +55,13 @@ func theConflict(t *testing.T, d *dest) ports.ConflictRecord {
 func TestConflict_LocalVersionThatLosesIsKeptAsACopy(t *testing.T) {
 	ctx := context.Background()
 	hasher := fakes.NewHasher()
-	base := []byte("what both sides had")
 	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
 
 	src := newSource(t, folder.ModeSendReceive)
 	src.addFile(t, "a.txt", remote)
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", local, hasher.SumBytes(base))
+	d.record(t, "a.txt", local, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Conflicts != 1 || summary.Pulled != 0 {
@@ -114,14 +113,13 @@ func TestConflict_LocalVersionThatLosesIsKeptAsACopy(t *testing.T) {
 
 func TestConflict_LocalVersionThatKeepsThePathIsUntouched(t *testing.T) {
 	hasher := fakes.NewHasher()
-	base := []byte("what both sides had")
 	local, remote := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
 
 	src := newSource(t, folder.ModeSendReceive)
 	src.addFile(t, "a.txt", remote)
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", local, hasher.SumBytes(base))
+	d.record(t, "a.txt", local, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Conflicts != 1 || summary.Pulled != 0 {
@@ -155,9 +153,9 @@ func TestConflict_CopyNameThatIsTakenGetsACounter(t *testing.T) {
 	src.addFile(t, "a.txt", remote)
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", local, hasher.SumBytes([]byte("what both sides had")))
+	d.record(t, "a.txt", local, vector(t, "DEST:1"))
 	taken := conflict.Name("a.txt", d.clock.Now(), peerID)
-	d.record(t, taken, []byte("an older conflict copy"), hasher.SumBytes([]byte("an older conflict copy")))
+	d.record(t, taken, []byte("an older conflict copy"), vector(t, "DEST:1"))
 
 	d.sync(t, conn)
 
@@ -186,7 +184,7 @@ func TestConflict_PeerDeletedALocallyChangedFile(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	local := []byte("edited here after the peer deleted it")
-	d.record(t, "a.txt", local, hasher.SumBytes(agreed))
+	d.record(t, "a.txt", local, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Conflicts != 1 || summary.Deleted != 0 {
@@ -219,7 +217,7 @@ func TestConflict_PeerReplacedALocallyChangedFileByADirectory(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	local := []byte("the version the user is editing")
-	d.record(t, "f", local, hasher.SumBytes([]byte("what both sides had")))
+	d.record(t, "f", local, vector(t, "DEST:1"))
 
 	summary := d.sync(t, conn)
 	if summary.Conflicts != 1 || summary.Dirs != 0 {
@@ -249,7 +247,7 @@ func TestConflict_LocalFileChangedDuringTheDownloadIsNotMovedAside(t *testing.T)
 	src.addFile(t, "a.txt", remote)
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", local, hasher.SumBytes([]byte("what both sides had")))
+	d.record(t, "a.txt", local, vector(t, "DEST:1"))
 	// The file on disk moves on after the plan was made, which the stored
 	// entry does not describe any more.
 	edited := []byte("edited while the download ran, longer than before")
@@ -275,14 +273,13 @@ func TestConflict_LocalFileChangedDuringTheDownloadIsNotMovedAside(t *testing.T)
 func TestConflict_FailedInstallPutsTheLocalVersionBack(t *testing.T) {
 	ctx := context.Background()
 	hasher := fakes.NewHasher()
-	base := []byte("what both sides had")
 	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
 
 	src := newSource(t, folder.ModeSendReceive)
 	src.addFile(t, "a.txt", remote)
 
 	d, conn := newDest(t, src.server)
-	before := d.record(t, "a.txt", local, hasher.SumBytes(base))
+	before := d.record(t, "a.txt", local, vector(t, "DEST:1"))
 	d.fs.FailNextRenameTo(d.folder.Path+"/a.txt", errors.New("no space left on device"))
 
 	if _, err := d.puller.SyncFolder(ctx, conn, d.folder); err == nil {
@@ -318,7 +315,6 @@ func TestConflict_FailedInstallPutsTheLocalVersionBack(t *testing.T) {
 func TestConflict_KeepBothRecordsTheMergedVersionAndANewCopy(t *testing.T) {
 	ctx := context.Background()
 	hasher := fakes.NewHasher()
-	base := []byte("what both sides had")
 	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
 
 	src := newSource(t, folder.ModeSendReceive)
@@ -326,10 +322,7 @@ func TestConflict_KeepBothRecordsTheMergedVersionAndANewCopy(t *testing.T) {
 	src.setVersion(t, "a.txt", peerID, vector(t, "BASE:1,SOURCE:1"))
 
 	d, conn := newDest(t, src.server)
-	d.record(t, "a.txt", local, hasher.SumBytes(base))
-	if err := d.store.SetVersion(ctx, d.folder.ID, "a.txt", vector(t, "BASE:1,DEST:1")); err != nil {
-		t.Fatalf("set version: %v", err)
-	}
+	d.record(t, "a.txt", local, vector(t, "BASE:1,DEST:1"))
 	if err := d.store.UpsertEntries(ctx, d.folder.ID, []manifest.Entry{localEntry(t, d, "a.txt", "DEST")}); err != nil {
 		t.Fatalf("record the author: %v", err)
 	}

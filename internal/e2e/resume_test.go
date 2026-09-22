@@ -155,6 +155,29 @@ func TestResume_SenderRestartFinishesTheTransfer(t *testing.T) {
 	if report.Transfers.Failed != 0 {
 		t.Fatalf("transfers = %+v, want none failed after the sender came back", report.Transfers)
 	}
+	// A finished transfer leaves nothing behind: the journal is empty, not
+	// merely free of rows that count as failures.
+	if rows := transfersOf(t, b); len(rows) != 0 {
+		t.Fatalf("%s still journals %+v, want an empty transfer list", b.name, rows)
+	}
+}
+
+// transferRow is one row of `transfer list --json`.
+type transferRow struct {
+	ID    string `json:"id"`
+	Path  string `json:"path"`
+	State string `json:"state"`
+}
+
+// transfersOf returns the download journal a node reports.
+func transfersOf(t *testing.T, n *node) []transferRow {
+	t.Helper()
+	out := cliOK(t, n, "transfer", "list", "--json")
+	var rows []transferRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("transfer list on %s is not json: %v\n%s", n.name, err, out)
+	}
+	return rows
 }
 
 func TestResume_MissingPartialFileStartsTheTransferOver(t *testing.T) {

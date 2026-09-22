@@ -9,6 +9,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/syncer"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
@@ -25,6 +26,9 @@ func testFolder(id folder.ID, paused bool) folder.Folder {
 		KeepEmptyDirs: true, Paused: paused,
 	}
 }
+
+// sourceID is the device the source fixtures write as.
+const sourceID = device.ID("SOURCE")
 
 // source is a device that serves a folder to its peers.
 type source struct {
@@ -59,9 +63,14 @@ func (s *source) addFile(t *testing.T, rel string, data []byte) manifest.Entry {
 	if err != nil {
 		t.Fatalf("lstat %s: %v", full, err)
 	}
+	prev, err := s.store.GetFile(context.Background(), s.folder.ID, rel)
+	if err != nil && !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("stored %s: %v", rel, err)
+	}
 	e := manifest.Entry{
 		Path: rel, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime,
 		Mode: 0o644, Hash: s.hasher.SumBytes(data), Inode: info.Inode,
+		ModifiedBy: sourceID, Version: prev.Version.Bump(sourceID),
 	}
 	if err := s.store.UpsertEntries(context.Background(), s.folder.ID, []manifest.Entry{e}); err != nil {
 		t.Fatalf("record %s: %v", rel, err)
