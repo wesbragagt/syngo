@@ -22,6 +22,10 @@ type Settings struct {
 	LogLevel       string
 	UploadLimit    bandwidth.Rate
 	DownloadLimit  bandwidth.Rate
+	// TextMerge turns on the three-way merge of text files. It is off by
+	// default: with it off, two concurrent edits of one file always keep
+	// both versions, which is the behaviour of every earlier version.
+	TextMerge bool
 }
 
 // SettingsStore reads and writes the device-wide settings.

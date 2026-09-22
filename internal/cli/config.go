@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,7 @@ type configView struct {
 	LogLevel       string `json:"log_level"`
 	UploadLimit    int64  `json:"upload_limit"`
 	DownloadLimit  int64  `json:"download_limit"`
+	TextMerge      bool   `json:"text_merge"`
 }
 
 // configViewOf describes settings the way the command prints them.
@@ -37,6 +39,7 @@ func configViewOf(s ports.Settings) configView {
 		LogLevel:       s.LogLevel,
 		UploadLimit:    int64(s.UploadLimit),
 		DownloadLimit:  int64(s.DownloadLimit),
+		TextMerge:      s.TextMerge,
 	}
 }
 
@@ -88,6 +91,7 @@ func newConfigSetCmd(deps *Deps) *cobra.Command {
 		listen         string
 		iface          string
 		logLevel       string
+		textMerge      bool
 	)
 
 	cmd := &cobra.Command{
@@ -99,7 +103,7 @@ func newConfigSetCmd(deps *Deps) *cobra.Command {
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !anyChanged(cmd, "upload-limit", "download-limit", "rescan-interval",
-				"sync-interval", "listen", "interface", "log-level") {
+				"sync-interval", "listen", "interface", "log-level", "text-merge") {
 				return Errorf(ExitUsage, "%s: expected at least one setting to change", cmd.CommandPath())
 			}
 
@@ -117,6 +121,7 @@ func newConfigSetCmd(deps *Deps) *cobra.Command {
 				uploadLimit: uploadLimit, downloadLimit: downloadLimit,
 				rescanInterval: rescanInterval, syncInterval: syncInterval,
 				listen: listen, iface: iface, logLevel: logLevel,
+				textMerge: textMerge,
 			}); err != nil {
 				return err
 			}
@@ -140,6 +145,8 @@ func newConfigSetCmd(deps *Deps) *cobra.Command {
 	cmd.Flags().StringVar(&listen, "listen", "", "address peers connect to")
 	cmd.Flags().StringVar(&iface, "interface", "", "network interface to bind the first IPv4 address of")
 	cmd.Flags().StringVar(&logLevel, "log-level", "", "log level the daemon starts with: debug|info|warn|error")
+	cmd.Flags().BoolVar(&textMerge, "text-merge", false,
+		"merge concurrent edits of a text file instead of keeping both versions")
 	return cmd
 }
 
@@ -152,6 +159,7 @@ type configFlags struct {
 	listen         string
 	iface          string
 	logLevel       string
+	textMerge      bool
 }
 
 // applyFlags validates the flags that were given and writes them into
@@ -199,6 +207,9 @@ func applyFlags(cmd *cobra.Command, settings *ports.Settings, f configFlags) err
 		}
 		settings.LogLevel = f.logLevel
 	}
+	if cmd.Flags().Changed("text-merge") {
+		settings.TextMerge = f.textMerge
+	}
 	return nil
 }
 
@@ -236,6 +247,7 @@ func printConfig(deps *Deps, s ports.Settings) error {
 		{"log_level", s.LogLevel},
 		{"upload_limit", s.UploadLimit.String()},
 		{"download_limit", s.DownloadLimit.String()},
+		{"text_merge", strconv.FormatBool(s.TextMerge)},
 	}
 	for _, line := range lines {
 		if _, err := fmt.Fprintf(deps.Stdout, "%s = %s\n", line[0], line[1]); err != nil {

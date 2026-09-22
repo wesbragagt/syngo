@@ -73,6 +73,13 @@ type Config struct {
 	// measurement pins it to compare two settings. Values outside the
 	// pipeline's own bounds are held inside them rather than refused.
 	ChunkPipeline int `json:"chunk_pipeline"`
+	// TextMerge turns on the three-way merge of text files: two devices
+	// that edited different regions of one text file while apart end up
+	// with one file holding both edits instead of a keep-both conflict.
+	// It is off by default, because it is the one setting that resolves a
+	// divergence without asking, and because it costs a stored copy of
+	// every small text file to have the version to merge against.
+	TextMerge bool `json:"text_merge"`
 }
 
 // Default returns the configuration used when none has been written yet.
@@ -181,6 +188,7 @@ func toSettings(c Config) ports.Settings {
 		LogLevel:       c.LogLevel,
 		UploadLimit:    bandwidth.Rate(c.UploadLimit),
 		DownloadLimit:  bandwidth.Rate(c.DownloadLimit),
+		TextMerge:      c.TextMerge,
 	}
 }
 
@@ -195,4 +203,5 @@ func applySettings(c *Config, s ports.Settings) {
 	c.LogLevel = s.LogLevel
 	c.UploadLimit = int64(s.UploadLimit)
 	c.DownloadLimit = int64(s.DownloadLimit)
+	c.TextMerge = s.TextMerge
 }

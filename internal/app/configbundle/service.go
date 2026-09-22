@@ -420,6 +420,7 @@ func settingsOf(s ports.Settings) Settings {
 		MaxFileSize: s.MaxFileSize, RescanInterval: s.RescanInterval.String(),
 		SyncInterval: s.SyncInterval.String(), LogLevel: s.LogLevel,
 		UploadLimit: int64(s.UploadLimit), DownloadLimit: int64(s.DownloadLimit),
+		TextMerge: s.TextMerge,
 	}
 }
 
@@ -458,6 +459,6 @@ func parseSettings(s Settings, validateListen ports.ValidateListen) (ports.Setti
 		Listen: s.Listen, Interface: s.Interface, ChunkSize: s.ChunkSize,
 		MaxFileSize: s.MaxFileSize, RescanInterval: rescan, SyncInterval: sync,
 		LogLevel: s.LogLevel, UploadLimit: bandwidth.Rate(s.UploadLimit),
-		DownloadLimit: bandwidth.Rate(s.DownloadLimit),
+		DownloadLimit: bandwidth.Rate(s.DownloadLimit), TextMerge: s.TextMerge,
 	}, nil
 }

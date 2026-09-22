@@ -29,7 +29,10 @@ type Store struct {
 	floors    map[device.ID]uint64
 	transfers map[transfer.ID]transfer.Transfer
 	// chunks is the chunk index: folder, then path, then the chunk list.
-	chunks    map[folder.ID]map[string][]transfer.Chunk
+	chunks map[folder.ID]map[string][]transfer.Chunk
+	// bases is the merge base history: folder, then path, then the
+	// candidates in the order they were saved, oldest first.
+	bases     map[folder.ID]map[string][]ports.MergeBase
 	conflicts []ports.ConflictRecord
 	changeSeq int64
 	closed    bool
@@ -47,6 +50,7 @@ func NewStore() *Store {
 		floors:    make(map[device.ID]uint64),
 		transfers: make(map[transfer.ID]transfer.Transfer),
 		chunks:    make(map[folder.ID]map[string][]transfer.Chunk),
+		bases:     make(map[folder.ID]map[string][]ports.MergeBase),
 	}
 }
 
@@ -751,6 +755,41 @@ func (s *Store) IndexedPaths(_ context.Context, id folder.ID) (map[string]struct
 	out := make(map[string]struct{}, len(s.chunks[id]))
 	for path := range s.chunks[id] {
 		out[path] = struct{}{}
+	}
+	return out, nil
+}
+
+// SaveMergeBase records one merge base candidate, keeping the newest
+// ports.MergeBaseHistory of a path. Saving content that is already there
+// refreshes it rather than adding a second row, exactly as the real store.
+func (s *Store) SaveMergeBase(_ context.Context, b ports.MergeBase) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bases[b.FolderID] == nil {
+		s.bases[b.FolderID] = make(map[string][]ports.MergeBase)
+	}
+	kept := make([]ports.MergeBase, 0, ports.MergeBaseHistory)
+	for _, existing := range s.bases[b.FolderID][b.Path] {
+		if existing.Hash != b.Hash {
+			kept = append(kept, existing)
+		}
+	}
+	kept = append(kept, b)
+	if len(kept) > ports.MergeBaseHistory {
+		kept = kept[len(kept)-ports.MergeBaseHistory:]
+	}
+	s.bases[b.FolderID][b.Path] = kept
+	return nil
+}
+
+// MergeBases returns the candidates of a path, newest first.
+func (s *Store) MergeBases(_ context.Context, id folder.ID, path string) ([]ports.MergeBase, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := s.bases[id][path]
+	out := make([]ports.MergeBase, 0, len(stored))
+	for i := len(stored) - 1; i >= 0; i-- {
+		out = append(out, stored[i])
 	}
 	return out, nil
 }

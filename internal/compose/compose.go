@@ -26,6 +26,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/conflicts"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
 	"github.com/wesbragagt/syncthis/internal/app/folders"
+	"github.com/wesbragagt/syncthis/internal/app/mergebase"
 	"github.com/wesbragagt/syncthis/internal/app/network"
 	"github.com/wesbragagt/syncthis/internal/app/peers"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
@@ -120,6 +121,10 @@ type App struct {
 	Puller *syncer.Puller
 	// Planner answers what a sync would do, without doing it.
 	Planner *syncer.Planner
+	// MergeBases keeps the content a three-way merge merges against. It is
+	// nil unless the text_merge setting is on, which is what leaves every
+	// conflict keeping both versions.
+	MergeBases *mergebase.Recorder
 }
 
 // Build opens the data directory and wires the application. It does not create
@@ -253,6 +258,15 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.Scan = scan.New(fs, app.Hasher, store, clock, identity, events, cfg.ChunkSize, logger)
 		app.Repair = repair.New(fs, app.Hasher, store, clock, identity)
 
+		// The merge base history is only kept while the text merge
+		// setting is on, so a device that leaves it off writes nothing
+		// and every conflict keeps both versions as before.
+		if cfg.TextMerge {
+			bases := mergebase.New(store, fs, app.Hasher, clock, logger)
+			app.Scan.SetMergeBases(bases)
+			app.MergeBases = bases
+		}
+
 		handler := syncer.New(store, fs, app.Hasher, identity, cfg.ChunkSize, logger)
 		handler.SetUploadLimiter(upload)
 		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, identity, events,
@@ -260,6 +274,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 				ChunkSize: cfg.ChunkSize, Download: download,
 				ChunkPipeline: cfg.ChunkPipeline,
 			}, logger)
+		app.Puller.SetMergeBases(app.MergeBases)
 		// The Hello is built per connection because the folder list
 		// changes while the process runs, and per peer because it
 		// names only the folders that peer is authorized for.

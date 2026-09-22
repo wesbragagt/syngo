@@ -257,6 +257,42 @@ type ChunkStore interface {
 	IndexedPaths(ctx context.Context, id folder.ID) (map[string]struct{}, error)
 }
 
+// MergeBase is a whole version of a text file this device once held, kept so
+// that a later divergence on that path can be merged against it. It is what
+// the three-way merge calls the base: the version two concurrent edits both
+// descend from.
+//
+// Nothing writes one unless the text merge setting is on, so a device that
+// never turned it on stores none of this.
+type MergeBase struct {
+	FolderID folder.ID
+	Path     string
+	// Version is the vector the path carried when this content was
+	// recorded. It is what makes a candidate usable: a base has to be
+	// dominated by both of the versions being merged.
+	Version manifest.Version
+	Hash    manifest.Hash
+	Content []byte
+	SavedAt time.Time
+}
+
+// MergeBaseHistory is how many versions of one path are kept as merge base
+// candidates. More than one is needed because the local device writes a new
+// version of its own as soon as the user edits the file, and the version the
+// peer diverged from is the one before that.
+const MergeBaseHistory = 4
+
+// MergeBaseStore keeps the recent versions of a text file's content, as merge
+// base candidates. Only the newest MergeBaseHistory of a path are kept.
+type MergeBaseStore interface {
+	// SaveMergeBase records one version's content, dropping the oldest
+	// rows of that path beyond MergeBaseHistory.
+	SaveMergeBase(ctx context.Context, b MergeBase) error
+	// MergeBases returns the candidates of a path, newest first. A path
+	// with none returns an empty slice rather than an error.
+	MergeBases(ctx context.Context, id folder.ID, path string) ([]MergeBase, error)
+}
+
 // ConflictStore persists detected conflicts.
 type ConflictStore interface {
 	SaveConflict(ctx context.Context, c ConflictRecord) error
@@ -278,5 +314,6 @@ type MetadataStore interface {
 	TransferStore
 	ChunkStore
 	ConflictStore
+	MergeBaseStore
 	Close() error
 }

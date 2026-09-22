@@ -40,6 +40,7 @@ type Settings struct {
 	LogLevel       string `json:"log_level"`
 	UploadLimit    int64  `json:"upload_limit"`
 	DownloadLimit  int64  `json:"download_limit"`
+	TextMerge      bool   `json:"text_merge"`
 }
 
 // Folder is one synchronized folder, in the shape `folder add` prints.

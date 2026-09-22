@@ -11,6 +11,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/wesbragagt/syncthis/internal/app/mergebase"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
@@ -77,7 +78,12 @@ type Puller struct {
 	// in memory across every file it is downloading.
 	pipeline *pipeline.Limiter
 	budget   *pipeline.Budget
-	log      *slog.Logger
+	// bases keeps the content a three-way merge needs to merge against.
+	// It is nil unless the text merge setting is on, and nil is what makes
+	// every conflict keep both versions, as it did before the setting
+	// existed.
+	bases *mergebase.Recorder
+	log   *slog.Logger
 
 	// resumed remembers the transfers whose partial file this process has
 	// already re-verified, so the check happens once per transfer and not
@@ -98,6 +104,7 @@ type PullStore interface {
 	Store
 	ports.ConflictStore
 	ports.CounterStore
+	ports.MergeBaseStore
 }
 
 // PullerConfig tunes a puller. Zero fields take the defaults.
@@ -149,6 +156,11 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 		gates:   make(map[folder.ID]chan struct{}),
 	}
 }
+
+// SetMergeBases turns the three-way merge of text files on, by handing the
+// puller the history it merges against. A nil recorder, which is what a device
+// with the setting off holds, leaves every conflict keeping both versions.
+func (p *Puller) SetMergeBases(r *mergebase.Recorder) { p.bases = r }
 
 // SyncFolder brings one folder in line with what the peer has: it asks for the
 // peer's manifest, plans against the local one and applies the plan. Only the
@@ -708,6 +720,10 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		if err := p.record(ctx, f.ID, a); err != nil {
 			return 0, err
 		}
+		// What arrived is the version this device and the peer now
+		// agree on, so it is the base a later divergence on this path
+		// is merged against.
+		p.bases.Remember(ctx, f, recorded(a))
 		// The download is the one moment this device knows how a file
 		// is cut without reading it: every chunk was verified against
 		// the hash the sender announced. Indexing here is what lets the
@@ -822,9 +838,11 @@ func (p *Puller) installLocal(ctx context.Context, f folder.Folder, peer device.
 	if err != nil {
 		return err
 	}
-	if err := p.record(ctx, f.ID, fromRemote(entry, item, peer)); err != nil {
+	a := fromRemote(entry, item, peer)
+	if err := p.record(ctx, f.ID, a); err != nil {
 		return err
 	}
+	p.bases.Remember(ctx, f, recorded(a))
 	p.log.Info("file taken from a local copy", "folder", f.ID, "path", item.Path,
 		"source", source.from, "bytes_saved", source.bytes)
 	p.publish("transfer.local_copy", map[string]any{
@@ -840,6 +858,14 @@ func (p *Puller) installLocal(ctx context.Context, f folder.Folder, peer device.
 func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
 	item syncplan.Item, t transfer.Transfer) ([]arrived, error) {
 	if item.Action == syncplan.ActionConflict {
+		merged, err := p.tryMerge(ctx, f, peer, item, t)
+		if err == nil {
+			return merged, nil
+		}
+		// Every reason not to merge ends here, at the keep-both this
+		// device would have done without the setting at all.
+		p.log.Debug("conflict not merged, keeping both versions", "folder", f.ID,
+			"path", item.Path, "reason", err)
 		return p.keepBoth(ctx, f, peer, item, t)
 	}
 	expect := item.Local

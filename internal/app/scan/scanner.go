@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/app/mergebase"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/chunker"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
@@ -35,8 +36,18 @@ type Scanner struct {
 	// chunks is how files are cut for the chunk index. The scan is what
 	// reads a file's bytes, so it is where the cutting costs nothing extra.
 	chunks chunker.Config
-	log    *slog.Logger
+	// bases keeps the content of every small text file this scan records,
+	// so a later divergence on that path has a version to merge against.
+	// It is nil unless the text merge setting is on, and then nothing is
+	// kept and nothing is written.
+	bases *mergebase.Recorder
+	log   *slog.Logger
 }
+
+// SetMergeBases makes the scan keep the content of the text files it records,
+// which is what the three-way merge later merges against. A nil recorder, the
+// state of a device with the setting off, keeps nothing.
+func (s *Scanner) SetMergeBases(r *mergebase.Recorder) { s.bases = r }
 
 // New returns a scanner. chunkSize is the average chunk size this device cuts
 // with; zero takes the default. log may be nil.
@@ -188,6 +199,12 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 			// row, in order, starting at the base.
 			result.Sequence = base + uint64(len(write.Upserts)+len(write.Deleted))
 			s.raiseFloor(ctx, write)
+			// The versions this scan wrote are what a peer will
+			// diverge from, so their content is kept as the base a
+			// later merge runs against.
+			for _, e := range write.Upserts {
+				s.bases.Remember(ctx, f, e)
+			}
 			return nil
 		}
 		if !errors.Is(err, ports.ErrStaleManifest) || attempt >= persistRetries {
