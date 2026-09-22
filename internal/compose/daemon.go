@@ -15,6 +15,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
 	"github.com/wesbragagt/syncthis/internal/app/daemon"
+	"github.com/wesbragagt/syncthis/internal/app/network"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
 )
@@ -89,6 +90,13 @@ type DaemonOptions struct {
 	UploadLimit, DownloadLimit *bandwidth.Rate
 	// Ready, when not nil, is closed once the daemon is serving requests.
 	Ready chan<- struct{}
+	// Binder replaces how the peer port is bound. It is nil in every real
+	// run, where the TCP binder is used; a test sets it to take the listen
+	// address away and give it back without touching the machine.
+	Binder ports.Binder
+	// HoldCheck overrides how often the bound address is checked for still
+	// being configured on this machine.
+	HoldCheck time.Duration
 }
 
 // RunDaemon claims the data directory, binds the control socket and runs the
@@ -125,21 +133,23 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 	a.Logger.Info("peer listener bound", "address", listener.Addr())
 
 	d := daemon.New(cfg, daemon.Deps{
-		Settings: &pinnedSettings{base: a.Settings, upload: o.UploadLimit, download: o.DownloadLimit},
-		Upload:   a.Upload,
-		Download: a.Download,
-		Store:    a.Store,
-		Clock:    a.Clock,
-		Watcher:  fsnotifywatch.New(a.Logger),
-		Scanner:  a.Scan,
-		Repair:   a.Repair,
-		Status:   a.Status,
-		Control:  server,
-		Listener: listener,
-		Peers:    a.PeerHandler,
-		Dialer:   a.Dialer,
-		Syncer:   a.Puller,
-		Log:      a.Logger,
+		Settings:    &pinnedSettings{base: a.Settings, upload: o.UploadLimit, download: o.DownloadLimit},
+		Upload:      a.Upload,
+		Download:    a.Download,
+		Store:       a.Store,
+		Clock:       a.Clock,
+		Watcher:     fsnotifywatch.New(a.Logger),
+		Scanner:     a.Scan,
+		Repair:      a.Repair,
+		Status:      a.Status,
+		Control:     server,
+		Listener:    listener,
+		ListenState: listener.State,
+		Paths:       a.Network,
+		Peers:       a.PeerHandler,
+		Dialer:      a.Dialer,
+		Syncer:      a.Puller,
+		Log:         a.Logger,
 	})
 	if o.Ready != nil {
 		go func() {
@@ -153,10 +163,13 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 	return d.Run(ctx)
 }
 
-// listenPeers binds the port peers connect to. The address comes from the run
-// options, else from the configuration; an interface name replaces its host
-// with the interface's first IPv4 address.
-func (a *App) listenPeers(o DaemonOptions) (*tcpwire.Listener, error) {
+// listenPeers binds the port peers connect to and keeps it bound. The address
+// comes from the run options, else from the configuration; an interface name
+// replaces its host with the interface's first IPv4 address. The returned
+// listener binds again by itself whenever the address goes away, which is what
+// a Tailscale client restarting under the daemon, a renumbered interface or a
+// link that drops and returns look like from here.
+func (a *App) listenPeers(o DaemonOptions) (*network.Rebinder, error) {
 	listen := a.Config.Listen
 	if o.Listen != "" {
 		listen = o.Listen
@@ -166,11 +179,16 @@ func (a *App) listenPeers(o DaemonOptions) (*tcpwire.Listener, error) {
 		iface = o.Interface
 	}
 
-	addr, err := tcpwire.ResolveListen(listen, iface, o.AllowPublic)
-	if err != nil {
-		return nil, err
+	binder := o.Binder
+	if binder == nil {
+		binder = tcpwire.NewBinder(a.Identity.TLSCertificate(), listen, iface, o.AllowPublic, a.Logger)
 	}
-	return tcpwire.Listen(a.Identity.TLSCertificate(), addr, a.Logger)
+	return network.Bind(binder, network.RebinderConfig{
+		HoldCheck: o.HoldCheck,
+		Interface: iface,
+		Clock:     a.Clock,
+		Log:       a.Logger,
+	})
 }
 
 // listenControl binds the control socket, replacing one left behind by a dead

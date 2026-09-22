@@ -193,3 +193,29 @@ type Listener interface {
 	// without waiting for it to hang up.
 	RetainDevices(ids []device.ID)
 }
+
+// BoundListener is a Listener that owns a bound socket, so whoever bound it
+// can give it back.
+type BoundListener interface {
+	Listener
+	// Close releases the socket. Serve returns shortly after.
+	Close() error
+}
+
+// Binder binds the port peers connect to. It is what lets the application
+// rebind after the address it was listening on went away, without knowing
+// anything about sockets or interfaces.
+type Binder interface {
+	// Resolve returns the address to bind now. It is asked before every
+	// bind, so an interface that came back with another address is bound
+	// at its new one.
+	Resolve() (string, error)
+	// Bind binds addr. The first bind a daemon makes decides whether it
+	// starts at all, so its error is reported as it is; every later one is
+	// a condition to wait out, whatever it says.
+	Bind(addr string) (BoundListener, error)
+	// Held reports whether addr is still configured on this machine. A
+	// listening socket survives the interface under it disappearing, so
+	// this is the only way to notice that nothing can reach it any more.
+	Held(addr string) bool
+}

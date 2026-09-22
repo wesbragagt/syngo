@@ -36,6 +36,53 @@ type nodeJSON struct {
 	// a node is Active.
 	Online *bool `json:"Online"`
 	Active bool  `json:"Active"`
+	// CurAddr is the direct endpoint traffic is using right now, empty
+	// when there is none.
+	CurAddr string `json:"CurAddr"`
+	// Relay is the DERP region traffic falls back to, empty when the
+	// client names none.
+	Relay string `json:"Relay"`
+}
+
+// ParsePaths reads the same document and reports how traffic reaches each
+// other node, sorted by host name. A node is direct when the client names a
+// current endpoint for it, relay when it names a DERP region instead, and
+// unknown otherwise, with the reason spelled out. Nothing is ever inferred
+// from a field the client did not set.
+func ParsePaths(raw []byte) ([]ports.TailnetPath, error) {
+	var doc statusJSON
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("%w: reading tailscale status: %v", ports.ErrTailnetUnavailable, err)
+	}
+
+	paths := make([]ports.TailnetPath, 0, len(doc.Peer))
+	for _, peer := range doc.Peer {
+		paths = append(paths, pathOf(peer))
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		if paths[i].Node.HostName != paths[j].Node.HostName {
+			return paths[i].Node.HostName < paths[j].Node.HostName
+		}
+		return paths[i].Node.ID < paths[j].Node.ID
+	})
+	return paths, nil
+}
+
+// pathOf classifies one node.
+func pathOf(n nodeJSON) ports.TailnetPath {
+	path := ports.TailnetPath{Node: nodeOf(n), Active: n.Active}
+	switch {
+	case n.CurAddr != "":
+		path.Kind = ports.TailnetPathDirect
+		path.Endpoint = n.CurAddr
+	case n.Relay != "":
+		path.Kind = ports.TailnetPathRelay
+		path.Relay = n.Relay
+	default:
+		path.Kind = ports.TailnetPathUnknown
+		path.Reason = "the local Tailscale client reports neither a direct endpoint nor a relay for this node"
+	}
+	return path
 }
 
 // Parse reads the document `tailscale status --json` prints. It returns this

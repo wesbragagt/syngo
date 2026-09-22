@@ -60,7 +60,7 @@ func newNetworkCmd(deps *Deps) *cobra.Command {
 			return deps.help(cmd)
 		},
 	}
-	cmd.AddCommand(newNetworkTailscaleCmd(deps), newNetworkPeersCmd(deps))
+	cmd.AddCommand(newNetworkTailscaleCmd(deps), newNetworkPeersCmd(deps), newNetworkPathCmd(deps))
 	return cmd
 }
 
@@ -185,6 +185,90 @@ func newNetworkPeersCmd(deps *Deps) *cobra.Command {
 			}
 			return deps.printer().Table([]string{"HOSTNAME", "DNS NAME", "IPS", "ONLINE", "OS"}, rows)
 		},
+	}
+}
+
+// peerPathView is the JSON shape of one row of `network path`.
+type peerPathView struct {
+	PeerID  string `json:"peer_id"`
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	// Kind is "direct", "relay" or "unknown".
+	Kind     string `json:"kind"`
+	Endpoint string `json:"endpoint"`
+	Relay    string `json:"relay"`
+	Active   bool   `json:"active"`
+	// Reason says why the kind is unknown, and is null otherwise.
+	Reason *string `json:"reason"`
+}
+
+// newNetworkPathCmd builds the "network path" command.
+func newNetworkPathCmd(deps *Deps) *cobra.Command {
+	return &cobra.Command{
+		Use:   "path",
+		Short: "Report whether each peer is reached directly or through a DERP relay",
+		Long: "path asks the local Tailscale client how traffic reaches every configured\n" +
+			"peer: peer-to-peer, or through a DERP relay. Nothing is guessed. A peer the\n" +
+			"client cannot describe is reported as kind unknown with the reason, and the\n" +
+			"command exits 11 when there is no client to ask at all.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			app, err := deps.app(cmd.Context(), true)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = app.Close() }()
+
+			devices, err := app.Store.ListDevices(cmd.Context())
+			if err != nil {
+				return err
+			}
+			paths, err := app.Network.PeerPaths(cmd.Context(), devices)
+			if err != nil {
+				return err
+			}
+
+			views := make([]peerPathView, 0, len(devices))
+			for _, d := range devices {
+				path := paths[d.ID]
+				views = append(views, peerPathView{
+					PeerID: string(d.ID), Name: d.Name, Address: d.Address,
+					Kind: string(path.Kind), Endpoint: path.Endpoint, Relay: path.Relay,
+					Active: path.Active, Reason: nonEmpty(path.Reason),
+				})
+			}
+			if deps.Global.JSON {
+				return deps.printer().PrintJSON(views)
+			}
+			if len(views) == 0 {
+				_, err := fmt.Fprintln(deps.Stdout, "no peers configured")
+				return err
+			}
+
+			rows := make([][]string, 0, len(views))
+			for _, v := range views {
+				rows = append(rows, []string{
+					v.Name, v.Address, v.Kind, pathDetail(v),
+					strconv.FormatBool(v.Active),
+				})
+			}
+			return deps.printer().Table([]string{"PEER", "ADDRESS", "PATH", "DETAIL", "ACTIVE"}, rows)
+		},
+	}
+}
+
+// pathDetail is the one column that says what the kind is based on: the direct
+// endpoint, the relay region, or why nothing is known.
+func pathDetail(v peerPathView) string {
+	switch {
+	case v.Endpoint != "":
+		return v.Endpoint
+	case v.Relay != "":
+		return "DERP " + v.Relay
+	case v.Reason != nil:
+		return *v.Reason
+	default:
+		return ""
 	}
 }
 

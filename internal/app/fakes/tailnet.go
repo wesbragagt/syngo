@@ -20,6 +20,9 @@ type Tailnet struct {
 	// the fake behave as a device without Tailscale.
 	err      error
 	resolves int
+	// paths is what Paths reports; nil means every peer is reported as
+	// unknown, which is what a client that says nothing looks like.
+	paths []ports.TailnetPath
 }
 
 // NewTailnet returns a running tailnet with the given peers, self named
@@ -105,6 +108,44 @@ func (t *Tailnet) Resolve(_ context.Context, name string) ([]string, error) {
 		}
 	}
 	return nil, fmt.Errorf("%w: no tailnet node named %q", ports.ErrNotFound, name)
+}
+
+// SetPaths replaces what Paths reports.
+func (t *Tailnet) SetPaths(paths ...ports.TailnetPath) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.paths = paths
+}
+
+// TailnetDirectPath is a convenience for a node reached peer-to-peer.
+func TailnetDirectPath(node ports.TailnetNode, endpoint string) ports.TailnetPath {
+	return ports.TailnetPath{Node: node, Kind: ports.TailnetPathDirect, Endpoint: endpoint, Active: true}
+}
+
+// TailnetRelayPath is a convenience for a node reached through a DERP relay.
+func TailnetRelayPath(node ports.TailnetNode, region string) ports.TailnetPath {
+	return ports.TailnetPath{Node: node, Kind: ports.TailnetPathRelay, Relay: region, Active: true}
+}
+
+// Paths returns the configured paths, or one unknown path per peer.
+func (t *Tailnet) Paths(context.Context) ([]ports.TailnetPath, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.err != nil {
+		return nil, t.err
+	}
+	if t.paths != nil {
+		return append([]ports.TailnetPath(nil), t.paths...), nil
+	}
+	out := make([]ports.TailnetPath, 0, len(t.peers))
+	for _, peer := range t.peers {
+		out = append(out, ports.TailnetPath{
+			Node: peer, Kind: ports.TailnetPathUnknown,
+			Reason: "the fake tailnet was not told which path this node uses",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Node.HostName < out[j].Node.HostName })
+	return out, nil
 }
 
 // Resolves reports how many times Resolve was called.

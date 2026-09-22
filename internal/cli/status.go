@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,34 @@ func newStatusCmd(deps *Deps) *cobra.Command {
 	}
 }
 
+// printListener writes the one line that says how the peer port is bound, and
+// a second one when it has lost its address at some point: that is what an
+// operator needs to see after a Tailscale restart or a suspend.
+func printListener(out io.Writer, l status.Listener) {
+	bound := "bound"
+	if !l.Bound {
+		bound = "not bound, rebinding"
+	}
+	iface := l.Interface
+	if iface == "" {
+		iface = "no interface configured"
+	}
+	_, _ = fmt.Fprintf(out, "listener: %s on %s (%s)\n", bound, l.Address, iface)
+	if l.LostAt == nil && l.Failures == 0 {
+		return
+	}
+	lost := "never"
+	if l.LostAt != nil {
+		lost = *l.LostAt
+	}
+	reason := "none"
+	if l.Error != nil {
+		reason = *l.Error
+	}
+	_, _ = fmt.Fprintf(out, "          last lost %s, rebinds %d, failed attempts %d, last error: %s\n",
+		lost, l.Rebinds, l.Failures, reason)
+}
+
 // printStatus writes the human-readable status output.
 func printStatus(deps *Deps, r status.Report) error {
 	out := deps.Stdout
@@ -48,6 +77,7 @@ func printStatus(deps *Deps, r status.Report) error {
 	_, _ = fmt.Fprintf(out, "datadir: %s\n", r.Device.DataDir)
 	if r.Daemon.Running {
 		_, _ = fmt.Fprintf(out, "daemon:  running (pid %d, listening on %s)\n", r.Daemon.PID, r.Daemon.Listen)
+		printListener(out, r.Daemon.Listener)
 	} else {
 		_, _ = fmt.Fprintln(out, "daemon:  not running")
 	}
@@ -75,9 +105,9 @@ func printStatus(deps *Deps, r status.Report) error {
 	} else {
 		rows := make([][]string, 0, len(r.Peers))
 		for _, p := range r.Peers {
-			rows = append(rows, []string{p.ID, p.Name, p.Address, strconv.FormatBool(p.Connected)})
+			rows = append(rows, []string{p.ID, p.Name, p.Address, p.State, p.Path.Kind})
 		}
-		if err := (Printer{W: out}).Table([]string{"PEER", "NAME", "ADDRESS", "CONNECTED"}, rows); err != nil {
+		if err := (Printer{W: out}).Table([]string{"PEER", "NAME", "ADDRESS", "STATE", "PATH"}, rows); err != nil {
 			return err
 		}
 	}

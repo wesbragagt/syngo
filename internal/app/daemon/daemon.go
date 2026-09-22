@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/app/network"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/repair"
 	"github.com/wesbragagt/syncthis/internal/app/scan"
@@ -23,7 +24,17 @@ const (
 	DefaultRescanInterval = 10 * time.Minute
 	DefaultDebounce       = 500 * time.Millisecond
 	DefaultSyncInterval   = 30 * time.Second
+	// DefaultPathInterval is how often the local Tailscale client is asked
+	// which path each peer is reached over. It is read on a timer rather
+	// than per request so a status call never waits for the client.
+	DefaultPathInterval = 30 * time.Second
 )
+
+// PathProbe reports how traffic reaches each of the given devices.
+// *network.Service implements it.
+type PathProbe interface {
+	PeerPaths(ctx context.Context, devices []device.Device) (map[device.ID]ports.TailnetPath, error)
+}
 
 // Scanner scans a folder; *scan.Scanner implements it.
 type Scanner interface {
@@ -62,6 +73,9 @@ type Config struct {
 	// SyncInterval is how often a connected peer is asked what changed on
 	// its side, on top of the change notifications it sends.
 	SyncInterval time.Duration
+	// PathInterval is how often the local Tailscale client is asked which
+	// path each peer is reached over; zero means DefaultPathInterval.
+	PathInterval time.Duration
 	// PID is the process id to report in status. The application layer has
 	// no access to the process itself, so the composition root fills it in.
 	PID int
@@ -120,6 +134,13 @@ type Deps struct {
 	// Syncer pulls folder contents from connected peers. A nil syncer
 	// leaves the daemon watching folders without synchronizing them.
 	Syncer Syncer
+	// ListenState reports how the peer port is bound and what it has been
+	// through. A nil function leaves the listener section of the status
+	// report at what Config.Listen says.
+	ListenState func() network.ListenState
+	// Paths reports how traffic reaches each peer, read from the local
+	// Tailscale client. A nil probe leaves every path unknown.
+	Paths PathProbe
 	// Settings is where the runtime settings are re-read from on start and
 	// on reload. A nil store leaves the limits as they were wired.
 	Settings ports.SettingsStore
@@ -143,6 +164,7 @@ type Daemon struct {
 	states     map[folder.ID]string
 	peers      map[device.ID]*peerLoop
 	peerStates map[device.ID]status.PeerLive
+	peerPaths  map[device.ID]status.PathLive
 	cancel     context.CancelFunc
 }
 
@@ -159,6 +181,7 @@ func New(cfg Config, d Deps) *Daemon {
 		states:     make(map[folder.ID]string),
 		peers:      make(map[device.ID]*peerLoop),
 		peerStates: make(map[device.ID]status.PeerLive),
+		peerPaths:  make(map[device.ID]status.PathLive),
 	}
 }
 
@@ -205,6 +228,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.applySettings(ctx); err != nil {
 		d.deps.Log.Error("load settings", "error", err)
 	}
+	var paths sync.WaitGroup
+	if d.deps.Paths != nil {
+		paths.Add(1)
+		go func() {
+			defer paths.Done()
+			d.watchPaths(ctx)
+		}()
+	}
 	d.readyOnce.Do(func() { close(d.ready) })
 	d.deps.Log.Info("daemon started", "folders", d.loopCount(), "rescan_interval", d.cfg.rescanInterval())
 
@@ -221,6 +252,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			control.Wait()
 			listener.Wait()
+			paths.Wait()
 			d.deps.Log.Info("daemon stopped")
 			return nil
 		case <-ticker.C:
@@ -443,9 +475,16 @@ func (d *Daemon) live() *status.LiveInfo {
 	for id, state := range d.peerStates {
 		peers[string(id)] = state
 	}
+	for id, state := range peers {
+		if path, ok := d.peerPaths[device.ID(id)]; ok {
+			state.Path = path
+			peers[id] = state
+		}
+	}
 	info := &status.LiveInfo{
 		PID:          d.cfg.PID,
-		Listen:       d.cfg.Listen,
+		Listen:       d.listenAddress(),
+		Listener:     d.listenerSection(),
 		StartedAt:    d.startedAt,
 		Peers:        peers,
 		FolderStates: states,
@@ -457,6 +496,104 @@ func (d *Daemon) live() *status.LiveInfo {
 		info.DownloadLimit = d.deps.Download.Rate()
 	}
 	return info
+}
+
+// listenAddress is the address peers connect to: the one the listener is bound
+// to when there is one, else what the run was configured with.
+func (d *Daemon) listenAddress() string {
+	if d.deps.ListenState == nil {
+		return d.cfg.Listen
+	}
+	if addr := d.deps.ListenState().Address; addr != "" {
+		return addr
+	}
+	return d.cfg.Listen
+}
+
+// listenerSection reports how the peer port is bound. Without a listener that
+// can rebind, the daemon only knows that it asked for an address, so that is
+// all it says.
+func (d *Daemon) listenerSection() status.Listener {
+	if d.deps.ListenState == nil {
+		return status.Listener{Bound: d.deps.Listener != nil, Address: d.cfg.Listen}
+	}
+	state := d.deps.ListenState()
+	return status.Listener{
+		Bound:     state.Bound,
+		Address:   state.Address,
+		Interface: state.Interface,
+		BoundAt:   rfc3339(state.BoundAt),
+		LostAt:    rfc3339(state.LostAt),
+		Rebinds:   state.Rebinds,
+		Failures:  state.Failures,
+		Error:     nonEmpty(state.Error),
+	}
+}
+
+// rfc3339 formats a time as an RFC3339 UTC string, or nil if it is zero.
+func rfc3339(t time.Time) *string {
+	if t.IsZero() {
+		return nil
+	}
+	s := t.UTC().Format(time.RFC3339)
+	return &s
+}
+
+// nonEmpty returns a pointer to s, or nil when s is empty.
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// watchPaths asks the local Tailscale client which path each peer is reached
+// over, now and on every tick. A client that cannot answer leaves every path
+// unknown with the reason, which is what status then reports: nothing here
+// ever guesses a path.
+func (d *Daemon) watchPaths(ctx context.Context) {
+	interval := d.cfg.PathInterval
+	if interval <= 0 {
+		interval = DefaultPathInterval
+	}
+	d.refreshPaths(ctx)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.refreshPaths(ctx)
+		}
+	}
+}
+
+// refreshPaths reads the path of every known peer once.
+func (d *Daemon) refreshPaths(ctx context.Context) {
+	devices, err := d.deps.Store.ListDevices(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			d.deps.Log.Debug("load devices for path diagnostics", "error", err)
+		}
+		return
+	}
+	paths, err := d.deps.Paths.PeerPaths(ctx, devices)
+	if err != nil {
+		d.deps.Log.Debug("read tailnet paths", "error", err)
+	}
+	now := d.deps.Clock.Now()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.peerPaths = make(map[device.ID]status.PathLive, len(paths))
+	for id, path := range paths {
+		d.peerPaths[id] = status.PathLive{
+			Kind: string(path.Kind), Endpoint: path.Endpoint, Relay: path.Relay,
+			Active: path.Active, Reason: path.Reason, ObservedAt: now,
+		}
+	}
 }
 
 // applySettings re-reads the runtime settings and hands the limits to the

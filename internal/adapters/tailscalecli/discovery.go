@@ -111,19 +111,46 @@ func (d *Discovery) Resolve(ctx context.Context, name string) ([]string, error) 
 	return nil, fmt.Errorf("%w: no tailnet node named %q", ports.ErrNotFound, name)
 }
 
-// fetch runs the status command once and parses it.
-func (d *Discovery) fetch(ctx context.Context) (ports.TailnetStatus, []ports.TailnetNode, error) {
+// Paths reports how traffic reaches each other node of the tailnet. A backend
+// that is not running has no paths to describe, so the listing is refused
+// rather than answered from a stale network map.
+func (d *Discovery) Paths(ctx context.Context) ([]ports.TailnetPath, error) {
+	raw, err := d.status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	status, _, err := Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if !status.Running {
+		return nil, notRunning(status)
+	}
+	return ParsePaths(raw)
+}
+
+// status runs `tailscale status --json` once and returns what it printed.
+func (d *Discovery) status(ctx context.Context) ([]byte, error) {
 	path, err := d.runner.LookPath(d.binary)
 	if err != nil {
-		return ports.TailnetStatus{}, nil, ports.ErrTailnetNotInstalled
+		return nil, ports.ErrTailnetNotInstalled
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	raw, err := d.runner.Run(ctx, path, "status", "--json")
 	if err != nil {
-		return ports.TailnetStatus{}, nil, fmt.Errorf("%w: %s status --json: %v",
+		return nil, fmt.Errorf("%w: %s status --json: %v",
 			ports.ErrTailnetUnavailable, d.binary, err)
+	}
+	return raw, nil
+}
+
+// fetch runs the status command once and parses it.
+func (d *Discovery) fetch(ctx context.Context) (ports.TailnetStatus, []ports.TailnetNode, error) {
+	raw, err := d.status(ctx)
+	if err != nil {
+		return ports.TailnetStatus{}, nil, err
 	}
 
 	status, peers, err := Parse(raw)

@@ -7,15 +7,16 @@ import (
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syncthis/internal/domain/backoff"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
-// Backoff bounds for reconnecting to a peer.
-const (
-	peerBackoffMin = time.Second
-	peerBackoffMax = 30 * time.Second
-)
+// peerBackoff bounds how often an unreachable peer is dialled again. It never
+// waits less than a second and never longer than half a minute, so a peer that
+// is down costs two dials a minute and a peer that comes back is picked up
+// within one.
+var peerBackoff = backoff.Policy{Min: time.Second, Max: 30 * time.Second}
 
 // DefaultPeerPingInterval is how often a connected peer is pinged, which both
 // keeps the connection alive and measures the latency status reports.
@@ -68,7 +69,8 @@ func (l *peerLoop) stop() {
 // run dials the peer, keeps the connection alive and retries with backoff.
 func (l *peerLoop) run(ctx context.Context) {
 	log := l.daemon.deps.Log.With("peer", l.peer.ID.Short(), "address", l.peer.Address)
-	backoff := peerBackoffMin
+	failures := 0
+	l.daemon.setPeerState(l.peer.ID, &status.PeerLive{State: status.PeerConnecting})
 
 	for ctx.Err() == nil {
 		conn, err := l.daemon.deps.Dialer.Dial(ctx, l.peer.Address, l.peer.ID)
@@ -76,18 +78,23 @@ func (l *peerLoop) run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Debug("peer unreachable", "error", err, "retry_in", backoff)
-			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{Error: err.Error()})
+			failures++
+			wait := peerBackoff.Wait(failures)
+			log.Debug("peer unreachable", "error", err, "attempts", failures, "retry_in", wait)
+			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{
+				State:       status.PeerUnreachable,
+				Error:       err.Error(),
+				NextRetryAt: l.daemon.deps.Clock.Now().Add(wait),
+			})
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(backoff):
+			case <-time.After(wait):
 			}
-			backoff = min(backoff*2, peerBackoffMax)
 			continue
 		}
 
-		backoff = peerBackoffMin
+		failures = 0
 		log.Info("peer connected")
 		l.serve(ctx, conn)
 		log.Info("peer disconnected")
@@ -121,7 +128,8 @@ func (l *peerLoop) serve(ctx context.Context, conn ports.PeerConn) {
 		case <-conn.Done():
 			// The read loop ended, so the peer is gone now rather
 			// than at the next ping or sync tick.
-			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{Error: "connection closed"})
+			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{
+				State: status.PeerConnecting, Error: "connection closed"})
 			return
 		case id := <-conn.Notifications():
 			if !l.syncCheck(ctx, conn, id, log) {
@@ -228,7 +236,8 @@ func (l *peerLoop) ping(ctx context.Context, conn ports.PeerConn, log *slog.Logg
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Debug("peer ping failed", "error", err)
-			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{Error: err.Error()})
+			l.daemon.setPeerState(l.peer.ID, &status.PeerLive{
+				State: status.PeerConnecting, Error: err.Error()})
 		}
 		return false
 	}
@@ -238,7 +247,8 @@ func (l *peerLoop) ping(ctx context.Context, conn ports.PeerConn, log *slog.Logg
 
 // seen records that the peer answered, in the report and in the database.
 func (l *peerLoop) seen(ctx context.Context, latency time.Duration) {
-	l.daemon.setPeerState(l.peer.ID, &status.PeerLive{Connected: true, Latency: latency})
+	l.daemon.setPeerState(l.peer.ID, &status.PeerLive{
+		Connected: true, State: status.PeerConnected, Latency: latency})
 	if err := l.daemon.deps.Store.TouchDevice(ctx, l.peer.ID, l.daemon.deps.Clock.Now()); err != nil && ctx.Err() == nil {
 		l.daemon.deps.Log.Debug("recording peer contact", "peer", l.peer.ID.Short(), "error", err)
 	}

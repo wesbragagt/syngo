@@ -63,4 +63,46 @@ type TailnetDiscovery interface {
 	// Resolve turns a host name or MagicDNS name into tailnet addresses,
 	// IPv4 first. It reports ErrNotFound when the tailnet has no such node.
 	Resolve(ctx context.Context, name string) ([]string, error)
+	// Paths reports how traffic reaches each other node of the tailnet,
+	// sorted by host name. A node the client describes neither with a
+	// direct endpoint nor with a relay is reported as unknown with a
+	// reason; nothing is inferred from anything else.
+	Paths(ctx context.Context) ([]TailnetPath, error)
+}
+
+// TailnetPathKind is how traffic reaches a tailnet node.
+type TailnetPathKind string
+
+// Path kinds. Nothing is ever guessed: a client that does not say reports
+// TailnetPathUnknown with a reason.
+const (
+	// TailnetPathDirect is a peer-to-peer connection: the local client
+	// reports a current direct endpoint for the node.
+	TailnetPathDirect TailnetPathKind = "direct"
+	// TailnetPathRelay is traffic carried by a DERP relay.
+	TailnetPathRelay TailnetPathKind = "relay"
+	// TailnetPathUnknown is every case the local client cannot answer.
+	TailnetPathUnknown TailnetPathKind = "unknown"
+)
+
+// TailnetPath is how this device reaches one tailnet node, as the local
+// Tailscale client describes it.
+type TailnetPath struct {
+	// Node is the node the path leads to. It is the zero value when the
+	// path belongs to a peer the local client knows nothing about.
+	Node TailnetNode
+	// Kind is direct, relay or unknown.
+	Kind TailnetPathKind
+	// Endpoint is the direct address traffic uses, set only when Kind is
+	// direct.
+	Endpoint string
+	// Relay is the DERP region traffic falls back to, set only when Kind
+	// is relay.
+	Relay string
+	// Active reports whether the local client saw traffic to the node
+	// recently. A path that is not active is still reported as what the
+	// client says it is; the flag says how fresh that is.
+	Active bool
+	// Reason says why Kind is unknown. It is empty otherwise.
+	Reason string
 }

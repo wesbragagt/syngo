@@ -84,11 +84,21 @@ func (s *Service) Report(ctx context.Context, live *LiveInfo) (Report, error) {
 			Verified:   d.Verified,
 			LastSeenAt: rfc3339(d.LastSeenAt),
 		}
+		peer.State = PeerUnknown
+		peer.Path = Path{Kind: PathUnknown, Reason: nonEmpty(
+			"no daemon is running, so no path to this peer has been read from the local Tailscale client")}
 		if live != nil {
 			if state, ok := live.Peers[string(d.ID)]; ok {
 				peer.Connected = state.Connected
 				peer.LatencyMS = float64(state.Latency.Microseconds()) / 1000
 				peer.Error = nonEmpty(state.Error)
+				peer.State = peerState(state)
+				peer.NextRetryAt = rfc3339(state.NextRetryAt)
+				peer.Path = pathOf(state.Path)
+			} else {
+				peer.State = PeerConnecting
+				peer.Path = Path{Kind: PathUnknown, Reason: nonEmpty(
+					"the daemon has not dialled this peer yet, so nothing knows its path")}
 			}
 		}
 		report.Peers = append(report.Peers, peer)
@@ -109,6 +119,31 @@ func (s *Service) Report(ctx context.Context, live *LiveInfo) (Report, error) {
 	return report, nil
 }
 
+// peerState returns the state to report for a peer a daemon knows about.
+func peerState(live PeerLive) string {
+	if live.State != "" {
+		return live.State
+	}
+	if live.Connected {
+		return PeerConnected
+	}
+	return PeerUnreachable
+}
+
+// pathOf renders one path observation. A path nothing was ever read for is
+// unknown with the reason, never a guess.
+func pathOf(live PathLive) Path {
+	if live.Kind == "" {
+		return Path{Kind: PathUnknown, Reason: nonEmpty(
+			"the local Tailscale client has not been asked about this peer yet")}
+	}
+	return Path{
+		Kind: live.Kind, Endpoint: live.Endpoint, Relay: live.Relay,
+		Active: live.Active, Reason: nonEmpty(live.Reason),
+		ObservedAt: rfc3339(live.ObservedAt),
+	}
+}
+
 // daemonSection reports what is known about the daemon.
 func daemonSection(live *LiveInfo) Daemon {
 	if live == nil {
@@ -118,6 +153,7 @@ func daemonSection(live *LiveInfo) Daemon {
 		Running:       true,
 		PID:           live.PID,
 		Listen:        live.Listen,
+		Listener:      live.Listener,
 		StartedAt:     rfc3339(live.StartedAt),
 		UploadLimit:   int64(live.UploadLimit),
 		DownloadLimit: int64(live.DownloadLimit),
