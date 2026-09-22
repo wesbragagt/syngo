@@ -566,50 +566,33 @@ func (d *Device) DaemonExits() []int {
 }
 
 // WriteFile puts a file in the folder, from the host side of the bind mount.
+//
+// The content is written beside the path and renamed onto it, so a scan sees
+// either the whole new version or the whole old one. A half-written file that
+// is scanned and then finished is a version a peer may already be pulling
+// when it changes, which is a failure of the test rather than of the product.
+// The staged name starts with a dot, which no folder of this suite
+// synchronizes, and it exists only until the rename.
 func (d *Device) WriteFile(rel string, data []byte) {
 	d.c.T.Helper()
 	path := filepath.Join(d.HostRoot, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		d.c.T.Fatalf("%s: make parent of %s: %v", d.Name, rel, err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		d.c.T.Fatalf("%s: write %s: %v", d.Name, rel, err)
-	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		d.c.T.Fatalf("%s: chmod %s: %v", d.Name, rel, err)
-	}
-}
-
-// WriteFileAtomic puts a file in the folder in one step: the content is
-// written beside the path and renamed onto it, so a scan either sees the whole
-// new version or the whole old one. A half-written file that is scanned and
-// then finished is a change of a path a peer may already be pulling, which is
-// a different test than the one asking for it.
-func (d *Device) WriteFileAtomic(rel string, data []byte) {
-	d.c.T.Helper()
-	path := filepath.Join(d.HostRoot, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		d.c.T.Fatalf("%s: make parent of %s: %v", d.Name, rel, err)
-	}
-	// The staging directory is inside the folder, so the rename stays on
-	// one filesystem, and inside the state directory, which no scan reads.
-	staging := filepath.Join(d.HostRoot, ".syncthis", "e2e-staging")
-	if err := os.MkdirAll(staging, 0o755); err != nil {
-		d.c.T.Fatalf("%s: make %s: %v", d.Name, staging, err)
-	}
-	tmp, err := os.CreateTemp(staging, "write-")
+	staged, err := os.CreateTemp(dir, ".e2e-write-")
 	if err != nil {
 		d.c.T.Fatalf("%s: stage %s: %v", d.Name, rel, err)
 	}
-	_, writeErr := tmp.Write(data)
-	closeErr := tmp.Close()
+	_, writeErr := staged.Write(data)
+	closeErr := staged.Close()
 	if writeErr != nil || closeErr != nil {
 		d.c.T.Fatalf("%s: stage %s: %v %v", d.Name, rel, writeErr, closeErr)
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(staged.Name(), 0o644); err != nil {
 		d.c.T.Fatalf("%s: chmod staged %s: %v", d.Name, rel, err)
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := os.Rename(staged.Name(), path); err != nil {
 		d.c.T.Fatalf("%s: put %s in place: %v", d.Name, rel, err)
 	}
 }

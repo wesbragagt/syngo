@@ -36,11 +36,11 @@ func TestStar_HubRelaysBetweenSpokes(t *testing.T) {
 	}
 
 	fromB := payload(3*chunkSize, 11)
-	b.WriteFileAtomic("from-b.bin", fromB)
+	b.WriteFile("from-b.bin", fromB)
 	c.WaitConverged()
 
 	fromC := payload(2*chunkSize+7, 22)
-	cc.WriteFileAtomic("from-c.bin", fromC)
+	cc.WriteFile("from-c.bin", fromC)
 	c.WaitConverged()
 	c.CheckInvariants()
 
@@ -67,14 +67,14 @@ func TestModes_SendOnlyHubReceiveOnlySpokes(t *testing.T) {
 	})
 	hub, b, cc := c.Device(0), c.Device(1), c.Device(2)
 
-	hub.WriteFileAtomic("published/one.bin", payload(2*chunkSize, 1))
-	hub.WriteFileAtomic("published/two.bin", payload(chunkSize+5, 2))
+	hub.WriteFile("published/one.bin", payload(2*chunkSize, 1))
+	hub.WriteFile("published/two.bin", payload(chunkSize+5, 2))
 	c.WaitConverged()
 
 	// The spoke writes a file of its own. The marker proves both the hub
 	// and the other spoke ran a cycle involving b afterwards, so the file
 	// is missing because a receive-only folder never served it.
-	b.WriteFileAtomic("local-only.bin", payload(chunkSize, 3))
+	b.WriteFile("local-only.bin", payload(chunkSize, 3))
 	c.Marker(1, 0, "cycle-ran-on-the-hub.txt")
 	c.Marker(0, 2, "cycle-ran-on-c.txt")
 	if hub.Has("local-only.bin") {
@@ -128,8 +128,8 @@ func TestModes_DeletePolicyNeverOnOneSpoke(t *testing.T) {
 	})
 	hub, b, cc := c.Device(0), c.Device(1), c.Device(2)
 
-	hub.WriteFileAtomic("keep.txt", payload(chunkSize, 7))
-	hub.WriteFileAtomic("other.txt", payload(1000, 8))
+	hub.WriteFile("keep.txt", payload(chunkSize, 7))
+	hub.WriteFile("other.txt", payload(1000, 8))
 	c.WaitConverged()
 
 	hub.Remove("keep.txt")
@@ -178,7 +178,7 @@ func TestModes_ReadOnlyRootIsReportedNotFatal(t *testing.T) {
 	a, cc := c.Device(0), c.Device(2)
 
 	for i := 0; i < 5; i++ {
-		a.WriteFileAtomic(fmt.Sprintf("offered/f%d.bin", i), payload(chunkSize+i, byte(i)))
+		a.WriteFile(fmt.Sprintf("offered/f%d.bin", i), payload(chunkSize+i, byte(i)))
 	}
 
 	// The two writable devices are unaffected by the third.

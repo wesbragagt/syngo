@@ -217,7 +217,7 @@ func (c *Cluster) soakRound(random *rand.Rand, live map[string][]byte, chaos soa
 				case o.renamed != "":
 					dev.Rename(o.path, o.renamed)
 				default:
-					dev.WriteFileAtomic(o.path, o.content)
+					dev.WriteFile(o.path, o.content)
 				}
 			}
 		}()

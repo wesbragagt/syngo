@@ -54,7 +54,7 @@ func TestScale_TenThousandSmallFiles(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < files; i++ {
 		size := 100 + i%1901
-		a.WriteFileAtomic(fmt.Sprintf("d%02d/f%05d.bin", i%smallFileDirs, i), payload(size, byte(i)))
+		a.WriteFile(fmt.Sprintf("d%02d/f%05d.bin", i%smallFileDirs, i), payload(size, byte(i)))
 	}
 	t.Logf("wrote %d files on %s in %s", files, a.Name, time.Since(start).Round(time.Millisecond))
 
@@ -217,11 +217,7 @@ func TestScale_LargeFileUnderRateLimitWithKill(t *testing.T) {
 // of it.
 func writeBigFile(t *testing.T, dev *Device, rel string, mib int) {
 	t.Helper()
-	staging := filepath.Join(dev.HostRoot, ".syncthis", "e2e-staging")
-	if err := os.MkdirAll(staging, 0o755); err != nil {
-		t.Fatalf("%s: make %s: %v", dev.Name, staging, err)
-	}
-	tmp, err := os.CreateTemp(staging, "big-")
+	tmp, err := os.CreateTemp(dev.HostRoot, ".e2e-big-")
 	if err != nil {
 		t.Fatalf("%s: stage %s: %v", dev.Name, rel, err)
 	}

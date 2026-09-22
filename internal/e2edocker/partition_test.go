@@ -281,7 +281,7 @@ func TestNetem_LatencyAndLoss(t *testing.T) {
 						dev.Remove(ch.path)
 						continue
 					}
-					dev.WriteFileAtomic(ch.path, ch.content)
+					dev.WriteFile(ch.path, ch.content)
 				}
 			}()
 		}

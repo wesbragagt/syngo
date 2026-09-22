@@ -28,7 +28,7 @@ func TestClock_MtimeSkewDoesNotDriveDecisions(t *testing.T) {
 	past := time.Now().AddDate(-3, 0, 0).Truncate(time.Second)
 
 	fromA := payload(2*chunkSize, 1)
-	a.WriteFileAtomic("f.bin", fromA)
+	a.WriteFile("f.bin", fromA)
 	a.Touch("f.bin", future)
 	c.WaitConverged()
 	if got := b.ModTime("f.bin"); absDuration(got.Sub(future)) > time.Second {
@@ -39,7 +39,7 @@ func TestClock_MtimeSkewDoesNotDriveDecisions(t *testing.T) {
 	// dated three years ago, because that is the newer version of the
 	// file and the dates are not what says so.
 	fromB := payload(3*chunkSize+11, 2)
-	b.WriteFileAtomic("f.bin", fromB)
+	b.WriteFile("f.bin", fromB)
 	b.Touch("f.bin", past)
 	c.WaitConverged()
 	c.CheckInvariants()
@@ -59,11 +59,11 @@ func TestClock_MtimeSkewDoesNotDriveDecisions(t *testing.T) {
 	skewed := payload(chunkSize+5, 3)
 	fresh := payload(chunkSize+9, 4)
 	fromLog := a.LogSize()
-	a.WriteFileAtomic("both.bin", skewed)
+	a.WriteFile("both.bin", skewed)
 	a.Touch("both.bin", future)
 	a.WaitScanRecorded(fromLog)
 	fromLog = b.LogSize()
-	b.WriteFileAtomic("both.bin", fresh)
+	b.WriteFile("both.bin", fresh)
 	b.WaitScanRecorded(fromLog)
 
 	c.Heal()

@@ -239,7 +239,7 @@ func TestReload_FolderAddedWhileAllRun(t *testing.T) {
 	// the ones that join later have something waiting for them.
 	for i, dev := range c.Devices {
 		dev.RunOK("folder", "add", containerRoot, "--id", folderID)
-		dev.WriteFileAtomic(fmt.Sprintf("%s/joined.bin", dev.Name), payload((i+1)*chunkSize, byte(i)))
+		dev.WriteFile(fmt.Sprintf("%s/joined.bin", dev.Name), payload((i+1)*chunkSize, byte(i)))
 		if i > 0 {
 			c.WaitConverged(c.upTo(i)...)
 		}
@@ -267,14 +267,14 @@ func TestReload_PeerRemovedAndReAdded(t *testing.T) {
 	c := Start(t, 3)
 	a, cc := c.Device(0), c.Device(2)
 
-	a.WriteFileAtomic("seed.bin", payload(chunkSize, 1))
+	a.WriteFile("seed.bin", payload(chunkSize, 1))
 	c.WaitConverged()
 
 	// A and C forget each other. B is still paired with both, so what A
 	// writes reaches C the long way round.
 	c.Unpair(0, 2)
 	viaB := payload(2*chunkSize, 2)
-	a.WriteFileAtomic("via-b.bin", viaB)
+	a.WriteFile("via-b.bin", viaB)
 	c.WaitConverged()
 	if got := cc.ReadFile("via-b.bin"); !equalBytes(got, viaB) {
 		t.Fatalf("c holds via-b.bin as %s, want the relayed %s", hashOf(got), hashOf(viaB))
@@ -283,7 +283,7 @@ func TestReload_PeerRemovedAndReAdded(t *testing.T) {
 	// Now C is paired with nobody and has no way to hear anything.
 	c.Unpair(1, 2)
 	alone := payload(chunkSize+3, 3)
-	a.WriteFileAtomic("while-alone.bin", alone)
+	a.WriteFile("while-alone.bin", alone)
 	c.WaitConverged(0, 1)
 	if cc.Has("while-alone.bin") {
 		t.Error("c received a file although it is paired with nobody")
