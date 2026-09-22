@@ -9,11 +9,17 @@ import (
 	"github.com/wesbragagt/syncthis/internal/bench/report"
 )
 
-// mutationSettleDelay is how long applyMutationSet's changes are given to
-// reach the scanner and start a transfer before the recovery test kills a
-// node. It is short on purpose: the point is to catch a transfer in flight,
-// not to wait for it to finish.
-const mutationSettleDelay = 300 * time.Millisecond
+// recoveryObserveTimeout bounds how long the recovery test waits for a real
+// transfer to be actively in progress on b after the mutation set is
+// applied. It exists to catch a kill mid-transfer, not to guarantee one:
+// when nothing is observed moving within this bound, no daemon is killed and
+// RecoveryTime is left unmeasured rather than reporting a plain restart as a
+// recovery.
+const recoveryObserveTimeout = 10 * time.Second
+
+// recoveryObservePoll is how often the recovery test checks for an active
+// transfer while it waits.
+const recoveryObservePoll = 10 * time.Millisecond
 
 // runLAN runs the "lan" scenario entirely in this process, over loopback,
 // unattended.
@@ -90,32 +96,48 @@ func runLAN(ctx context.Context, cfg Config) (Outcome, error) {
 	}
 	_ = mutations
 
-	// Kill b mid-transfer, restart it and measure how long recovery takes:
-	// the run's answer to "kill one daemon mid-transfer, restart it, and
-	// measure the time until the folders converge again."
-	select {
-	case <-time.After(mutationSettleDelay):
-	case <-ctx.Done():
-		return Outcome{}, ctx.Err()
-	}
-	bytesBeforeRestart := b.events.Bytes()
-	b.stop()
-	b, err = startNode(ctx, "b", dataDirB, rootB, nodeOptions{})
+	// Recovery is only measured when a real transfer was caught actively in
+	// progress on b: the run's answer to "kill one daemon mid-transfer,
+	// restart it, and measure the time until the folders converge again."
+	// A mutation set small enough to finish syncing before this wait
+	// returns is not a failure; it just means there is nothing to recover
+	// from and no recovery number to report.
+	observed, err := waitActiveTransfer(ctx, b, recoveryObserveTimeout, recoveryObservePoll)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("restart b: %w", err)
+		return Outcome{}, fmt.Errorf("watching b for an active transfer: %w", err)
 	}
-	defer b.stop()
-	// b's data directory persists its identity, its trust of a and its
-	// folder configuration, so a restart needs none of that redone.
 
-	recoveryStart := time.Now()
-	if err := waitConverged(ctx, a, b, cfg.ConvergeTimeout, cfg.PollInterval); err != nil {
-		return Outcome{}, fmt.Errorf("convergence after recovery: %w", err)
+	var recoveryTime time.Duration
+	bytesTransferred := a.events.Bytes()
+	if observed {
+		bytesBeforeRestart := b.events.Bytes()
+		b.stop()
+		b, err = startNode(ctx, "b", dataDirB, rootB, nodeOptions{})
+		if err != nil {
+			return Outcome{}, fmt.Errorf("restart b: %w", err)
+		}
+		defer b.stop()
+		// b's data directory persists its identity, its trust of a and its
+		// folder configuration, so a restart needs none of that redone.
+
+		recoveryStart := time.Now()
+		if err := waitConverged(ctx, a, b, cfg.ConvergeTimeout, cfg.PollInterval); err != nil {
+			return Outcome{}, fmt.Errorf("convergence after recovery: %w", err)
+		}
+		recoveryTime = time.Since(recoveryStart)
+		bytesTransferred += bytesBeforeRestart + b.events.Bytes()
+	} else {
+		unmeasured.note("recovery_time_ns", fmt.Sprintf(
+			"no transfer was observed actively in progress on b within %s of applying the mutation "+
+				"set, so no kill was timed to hit one; the mutation set finished syncing before a "+
+				"recovery could be measured", recoveryObserveTimeout))
+		if err := waitConverged(ctx, a, b, cfg.ConvergeTimeout, cfg.PollInterval); err != nil {
+			return Outcome{}, fmt.Errorf("convergence after the mutation set: %w", err)
+		}
+		bytesTransferred += b.events.Bytes()
 	}
-	recoveryTime := time.Since(recoveryStart)
 
 	after := readResourceSample()
-	bytesTransferred := a.events.Bytes() + bytesBeforeRestart + b.events.Bytes()
 
 	result := report.Result{
 		Name:             cfg.Name,
@@ -128,5 +150,5 @@ func runLAN(ctx context.Context, cfg Config) (Outcome, error) {
 	}
 	applyResourceDelta(&result, before, after, &unmeasured)
 
-	return writeResult(cfg, result, unmeasured)
+	return writeResult(cfg, result, unmeasured, observed)
 }

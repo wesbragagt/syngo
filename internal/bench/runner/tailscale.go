@@ -98,5 +98,5 @@ func runTailscale(ctx context.Context, cfg Config) (Outcome, error) {
 	}
 	applyResourceDelta(&result, before, after, &unmeasured)
 
-	return writeResult(cfg, result, unmeasured)
+	return writeResult(cfg, result, unmeasured, false)
 }

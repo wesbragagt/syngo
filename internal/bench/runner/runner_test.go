@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,10 +201,43 @@ func TestRun_LAN(t *testing.T) {
 	if result.ConvergenceTime <= 0 {
 		t.Errorf("convergence_time_ns = %d, want > 0", result.ConvergenceTime)
 	}
-	if result.RecoveryTime <= 0 {
-		t.Errorf("recovery_time_ns = %d, want > 0: the recovery test should have measured it", result.RecoveryTime)
-	}
 	if result.BytesTransferred <= 0 {
 		t.Errorf("bytes_transferred = %d, want > 0", result.BytesTransferred)
 	}
+
+	// The recovery number is only trustworthy when the run actually caught a
+	// transfer in flight before it killed a node. Either that happened, in
+	// which case RecoveryTime must be positive and nothing calls it
+	// unmeasured, or it did not, in which case RecoveryTime must stay zero
+	// and the reason must be on record. A run that reports a positive
+	// RecoveryTime without having observed a transfer, or that reports zero
+	// without explaining why, is the bug this test exists to catch.
+	notedUnmeasured := hasUnmeasured(outcome.Unmeasured, "recovery_time_ns")
+	switch {
+	case outcome.RecoveryObserved:
+		if result.RecoveryTime <= 0 {
+			t.Errorf("RecoveryObserved = true but recovery_time_ns = %d, want > 0", result.RecoveryTime)
+		}
+		if notedUnmeasured {
+			t.Errorf("RecoveryObserved = true but recovery_time_ns is also marked unmeasured: %v", outcome.Unmeasured)
+		}
+	case !outcome.RecoveryObserved:
+		if result.RecoveryTime != 0 {
+			t.Errorf("RecoveryObserved = false but recovery_time_ns = %d, want 0: a kill was never timed to hit a transfer",
+				result.RecoveryTime)
+		}
+		if !notedUnmeasured {
+			t.Errorf("RecoveryObserved = false but nothing explains why recovery_time_ns is 0: %v", outcome.Unmeasured)
+		}
+	}
+}
+
+// hasUnmeasured reports whether unmeasured carries a line for field.
+func hasUnmeasured(unmeasured []string, field string) bool {
+	for _, line := range unmeasured {
+		if strings.HasPrefix(line, field+":") {
+			return true
+		}
+	}
+	return false
 }

@@ -99,10 +99,23 @@ scenario lan, name baseline, took 11s
 ```
 
 Fields a `lan` run fills in: `convergence_time_ns`, `bytes_transferred`,
-`recovery_time_ns`, and, on Linux and macOS, `cpu_seconds` and
-`peak_memory_bytes`. `disk_writes` is read from `/proc/self/io` on Linux; it
-is a real number, but a temporary directory backed by tmpfs can report zero
-because nothing was ever written to a block device.
+and, on Linux and macOS, `cpu_seconds` and `peak_memory_bytes`. `disk_writes`
+is read from `/proc/self/io` on Linux; it is a real number, but a temporary
+directory backed by tmpfs can report zero because nothing was ever written to
+a block device.
+
+`recovery_time_ns` means the time from restarting a killed daemon until the
+folder converges again, measured only when the kill actually landed on a
+daemon with a transfer in progress. After the mutation set, the run polls b
+for up to 10s for `status.Transfers.Active > 0`; only once that is true does
+it kill b, restart it, and start the recovery clock. When nothing is caught
+moving within that window — a plausible outcome for a small corpus, since
+loopback can finish a mutation's transfer before the daemon is even killed —
+no daemon is killed, `recovery_time_ns` stays `0`, and the run prints an
+`unmeasured: recovery_time_ns: ...` line explaining why. A `0` without that
+line, or a positive number without a kill having actually hit a transfer in
+flight, would be a plain restart mislabeled as a recovery; the runner never
+reports one.
 
 ### Tailscale direct and Tailscale DERP
 

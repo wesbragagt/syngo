@@ -177,6 +177,11 @@ type Outcome struct {
 	Result     report.Result
 	ResultPath string
 	Unmeasured Unmeasured
+	// RecoveryObserved reports whether the lan scenario saw a real transfer
+	// actively in progress before it killed a node to measure recovery. It
+	// is false whenever RecoveryTime was left at zero because nothing was
+	// caught in flight, and always false outside the lan scenario.
+	RecoveryObserved bool
 }
 
 // Run executes cfg's scenario end to end and writes one result to

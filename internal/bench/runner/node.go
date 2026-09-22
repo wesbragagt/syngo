@@ -203,3 +203,13 @@ func pickDuration(v, fallback time.Duration) time.Duration {
 	}
 	return v
 }
+
+// hasActiveTransfer reports whether n's status shows at least one transfer
+// actively in progress, as opposed to merely queued.
+func (n *node) hasActiveTransfer(ctx context.Context) (bool, error) {
+	report, err := n.status(ctx)
+	if err != nil {
+		return false, err
+	}
+	return report.Transfers.Active > 0, nil
+}

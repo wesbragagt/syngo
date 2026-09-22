@@ -125,3 +125,28 @@ func mutationTargets(files []fixture.FileResult, seed int64) []fixture.FileResul
 	}
 	return out
 }
+
+// waitActiveTransfer polls n until its status shows an active transfer, or
+// the timeout expires. It reports whether one was observed, so a caller can
+// tell "the kill really hit a transfer in flight" from "nothing was moving,
+// so there is nothing to recover from and no recovery number to report."
+func waitActiveTransfer(ctx context.Context, n *node, timeout, poll time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		active, err := n.hasActiveTransfer(ctx)
+		if err != nil {
+			return false, err
+		}
+		if active {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}

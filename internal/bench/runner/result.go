@@ -41,7 +41,9 @@ func applyResourceDelta(result *report.Result, before, after resourceSample, unm
 }
 
 // writeResult saves result to cfg.ResultsDir and returns the Outcome.
-func writeResult(cfg Config, result report.Result, unmeasured Unmeasured) (Outcome, error) {
+// recoveryObserved reports whether a real transfer was seen in flight before
+// a node was killed to measure RecoveryTime; see Outcome.RecoveryObserved.
+func writeResult(cfg Config, result report.Result, unmeasured Unmeasured, recoveryObserved bool) (Outcome, error) {
 	writer, err := report.NewWriter(cfg.ResultsDir)
 	if err != nil {
 		return Outcome{}, err
@@ -50,5 +52,5 @@ func writeResult(cfg Config, result report.Result, unmeasured Unmeasured) (Outco
 	if err != nil {
 		return Outcome{}, fmt.Errorf("write result: %w", err)
 	}
-	return Outcome{Result: result, ResultPath: path, Unmeasured: unmeasured}, nil
+	return Outcome{Result: result, ResultPath: path, Unmeasured: unmeasured, RecoveryObserved: recoveryObserved}, nil
 }
