@@ -138,7 +138,7 @@ type folderAnnouncer struct {
 }
 
 // Hello announces the folders the store holds.
-func (h folderAnnouncer) Hello(ctx context.Context) ports.HelloInfo {
+func (h folderAnnouncer) Hello(ctx context.Context, _ device.ID) ports.HelloInfo {
 	info := ports.HelloInfo{DeviceID: "DEVICE", Name: "test", Folders: []ports.FolderAdvert{}}
 	configured, err := h.store.ListFolders(ctx)
 	if err != nil {
@@ -1276,7 +1276,7 @@ type staticAnnouncer struct {
 }
 
 // Hello announces the fixed folder list.
-func (h staticAnnouncer) Hello(context.Context) ports.HelloInfo {
+func (h staticAnnouncer) Hello(context.Context, device.ID) ports.HelloInfo {
 	info := ports.HelloInfo{DeviceID: "DEVICE", Name: "test", Folders: []ports.FolderAdvert{}}
 	for _, id := range h.folders {
 		info.Folders = append(info.Folders, ports.FolderAdvert{ID: id, Mode: folder.ModeSendReceive})

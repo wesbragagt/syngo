@@ -169,7 +169,11 @@ type Dialer interface {
 // PeerHandler serves incoming peer requests. It is implemented by the
 // application layer and called by the listener adapter.
 type PeerHandler interface {
-	Hello(ctx context.Context) HelloInfo
+	// Hello is what this device announces to peer. The folder list is the
+	// one peer is authorized for, so the handshake never names a folder
+	// the peer may not have. An empty peer id names nobody and is
+	// answered with no folders.
+	Hello(ctx context.Context, peer device.ID) HelloInfo
 	Manifest(ctx context.Context, peer device.ID, id folder.ID) (manifest.Manifest, error)
 	Chunk(ctx context.Context, peer device.ID, req ChunkRequest) (ChunkData, error)
 }
@@ -186,7 +190,10 @@ type Listener interface {
 	Broadcast(id folder.ID, seq uint64)
 	// AnnounceFolders tells every connected peer which folders this device
 	// serves now, so a peer learns about a folder added, removed or given
-	// another mode while the connection is up, without reconnecting.
+	// another mode while the connection is up, without reconnecting. Each
+	// peer is told only about the folders it is authorized for, which the
+	// listener asks the handler for; folders is what this device serves at
+	// all, and never widens what a peer is told.
 	AnnounceFolders(folders []FolderAdvert)
 	// RetainDevices closes the connections of every peer that is not in
 	// the list, so a device removed from the table stops being served

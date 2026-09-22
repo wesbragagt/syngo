@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesbragagt/syncthis/internal/app/folders"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/ignore"
 )
@@ -53,7 +54,8 @@ func newFolderCmd(deps *Deps) *cobra.Command {
 			return deps.help(cmd)
 		},
 	}
-	cmd.AddCommand(newFolderAddCmd(deps), newFolderListCmd(deps), newFolderSetCmd(deps), newFolderRemoveCmd(deps))
+	cmd.AddCommand(newFolderAddCmd(deps), newFolderListCmd(deps), newFolderSetCmd(deps), newFolderRemoveCmd(deps),
+		newFolderGrantCmd(deps), newFolderRevokeCmd(deps), newFolderDevicesCmd(deps))
 	return cmd
 }
 
@@ -68,6 +70,7 @@ type folderAddOpts struct {
 	noEmptyDirs   bool
 	ignore        []string
 	syncWindows   []string
+	devices       []string
 }
 
 // newFolderAddCmd builds the "folder add" command.
@@ -125,15 +128,37 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 				return Errorf(ExitUsage, "folder add: %v", err)
 			}
 
+			granted := make([]device.ID, 0, len(opts.devices))
+			for _, raw := range opts.devices {
+				parsed, err := device.ParseID(raw)
+				if err != nil {
+					return Errorf(ExitUsage, "folder add: --device %v", err)
+				}
+				granted = append(granted, parsed)
+			}
+
 			app, err := deps.app(cmd.Context(), true)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = app.Close() }()
 
+			// The devices are checked before the folder is written, so
+			// a typo does not leave a folder half authorized.
+			for _, dev := range granted {
+				if _, err := app.Store.GetDevice(cmd.Context(), dev); err != nil {
+					return err
+				}
+			}
+
 			added, err := app.Folders.Add(cmd.Context(), f)
 			if err != nil {
 				return err
+			}
+			for _, dev := range granted {
+				if err := app.Folders.Grant(cmd.Context(), added.ID, dev); err != nil {
+					return err
+				}
 			}
 			reloadDaemon(cmd.Context(), deps, app)
 			if deps.Global.JSON {
@@ -154,6 +179,8 @@ func newFolderAddCmd(deps *Deps) *cobra.Command {
 	f.BoolVar(&opts.noEmptyDirs, "no-empty-dirs", false, "do not keep empty directories")
 	f.StringArrayVar(&opts.ignore, "ignore", nil, "ignore pattern; repeatable")
 	f.StringArrayVar(&opts.syncWindows, "sync-window", nil, syncWindowUsage)
+	f.StringArrayVar(&opts.devices, "device", nil,
+		"device ID allowed to synchronize this folder; repeatable. A folder with none is served to no peer")
 	return cmd
 }
 

@@ -295,8 +295,19 @@ func pair(t *testing.T, a, b *node) {
 	saveDevice(t, b, a)
 }
 
-// saveDevice makes one node trust another, in that direction only.
+// saveDevice makes one node trust another, in that direction only, and
+// authorizes it for every folder the node has now. Trusting a device and
+// sharing everything with it are two decisions, but these tests only ever want
+// both: a test about one folder's authorization grants what it means itself.
 func saveDevice(t *testing.T, from, to *node) {
+	t.Helper()
+	trust(t, from, to)
+	grantAll(t, from, to.ID)
+}
+
+// trust makes one node know another without authorizing it for any folder,
+// which is what `peer add` alone does.
+func trust(t *testing.T, from, to *node) {
 	t.Helper()
 	err := from.App.Store.SaveDevice(context.Background(), device.Device{
 		ID: to.ID, Name: to.name, Address: to.Listen,
@@ -304,6 +315,27 @@ func saveDevice(t *testing.T, from, to *node) {
 	})
 	if err != nil {
 		t.Fatalf("pair %s with %s: %v", from.name, to.name, err)
+	}
+}
+
+// grant authorizes one device for one folder of a node.
+func grant(t *testing.T, on *node, id folder.ID, dev device.ID) {
+	t.Helper()
+	if err := on.App.Folders.Grant(context.Background(), id, dev); err != nil {
+		t.Fatalf("grant %s on folder %s of %s: %v", dev.Short(), id, on.name, err)
+	}
+}
+
+// grantAll authorizes one device for every folder a node has configured.
+func grantAll(t *testing.T, on *node, dev device.ID) {
+	t.Helper()
+	ctx := context.Background()
+	configured, err := on.App.Folders.List(ctx)
+	if err != nil {
+		t.Fatalf("list folders of %s: %v", on.name, err)
+	}
+	for _, f := range configured {
+		grant(t, on, f.ID, dev)
 	}
 }
 

@@ -110,12 +110,19 @@ func (d *Dialer) Conns() []*PeerConn {
 	return append([]*PeerConn(nil), d.conns...)
 }
 
+// SelfID is the device the fake connections are opened from: the handler of
+// the peer at the other end is asked what it announces to this id.
+const SelfID = device.ID("SELFSELFSELFSELFSELFSELFSELFSELFSELFSELFSELFSELFSELF")
+
 // NewPeerConn returns an established fake connection answering through
 // handler. A nil handler refuses every manifest and chunk request.
+//
+// The handler is asked what it announces to SelfID, which stands for the
+// device on this side of the fake connection.
 func NewPeerConn(id device.ID, name string, handler ports.PeerHandler, latency time.Duration) *PeerConn {
 	hello := ports.HelloInfo{DeviceID: id, Name: name}
 	if handler != nil {
-		hello = handler.Hello(context.Background())
+		hello = handler.Hello(context.Background(), SelfID)
 		hello.DeviceID = id
 	}
 	return &PeerConn{
@@ -185,7 +192,9 @@ func (c *PeerConn) Pings() int {
 	return c.pings
 }
 
-// RequestManifest returns what the handler knows about a folder.
+// RequestManifest returns what the handler knows about a folder. The handler
+// is asked as SelfID, the device on this side of the connection, because that
+// is who a real peer would see asking.
 func (c *PeerConn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error) {
 	c.mu.Lock()
 	c.manifests = append(c.manifests, id)
@@ -194,7 +203,7 @@ func (c *PeerConn) RequestManifest(ctx context.Context, id folder.ID) (manifest.
 	if handler == nil {
 		return manifest.Manifest{}, errors.New("this fake peer serves no manifests")
 	}
-	return handler.Manifest(ctx, c.ID, id)
+	return handler.Manifest(ctx, SelfID, id)
 }
 
 // RequestChunk returns one chunk from the handler.
@@ -206,7 +215,7 @@ func (c *PeerConn) RequestChunk(ctx context.Context, req ports.ChunkRequest) (po
 	if handler == nil {
 		return ports.ChunkData{}, errors.New("this fake peer serves no chunks")
 	}
-	return handler.Chunk(ctx, c.ID, req)
+	return handler.Chunk(ctx, SelfID, req)
 }
 
 // ChunkRequests returns every chunk request the connection carried, in order.

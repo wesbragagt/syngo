@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -112,27 +113,51 @@ func (l *Listener) Close() error {
 	return err
 }
 
-// Broadcast tells every connected peer that a folder changed.
+// Broadcast tells the peers authorized for a folder that it changed. A peer
+// the folder was never granted to is not told, so the notification does not
+// name a folder its Hello left out.
 func (l *Listener) Broadcast(id folder.ID, seq uint64) {
 	frame, err := frameOf(MsgManifestChanged, manifestChangedHeader{FolderID: string(id), Sequence: seq}, nil)
 	if err != nil {
 		l.log.Error("encode folder change notification", "folder", id, "error", err)
 		return
 	}
-	l.send(frame)
+	for _, c := range l.connections() {
+		served := c.advertised(context.Background())
+		if !slices.ContainsFunc(served, func(a ports.FolderAdvert) bool { return a.ID == id }) {
+			continue
+		}
+		l.write(c, frame)
+	}
 }
 
 // AnnounceFolders tells every connected peer which folders this device serves
-// now. It replaces the list they received in the Hello, so a folder added or
-// given another mode while the connection is up takes effect without a
-// reconnect.
+// now. It replaces the list they received in the Hello, so a folder added,
+// given another mode, granted or revoked while the connection is up takes
+// effect without a reconnect.
+//
+// adverts says what this device serves and in which mode; the handler says
+// which of those folders this peer may know about at all. A peer is told the
+// intersection, so an announcement never names a folder its Hello left out.
 func (l *Listener) AnnounceFolders(adverts []ports.FolderAdvert) {
-	frame, err := frameOf(MsgFoldersChanged, foldersChangedHeader{Folders: toWireAdverts(adverts)}, nil)
-	if err != nil {
-		l.log.Error("encode folder announcement", "error", err)
-		return
+	for _, c := range l.connections() {
+		visible := make(map[folder.ID]struct{})
+		for _, a := range c.advertised(context.Background()) {
+			visible[a.ID] = struct{}{}
+		}
+		allowed := make([]ports.FolderAdvert, 0, len(adverts))
+		for _, a := range adverts {
+			if _, ok := visible[a.ID]; ok {
+				allowed = append(allowed, a)
+			}
+		}
+		frame, err := frameOf(MsgFoldersChanged, foldersChangedHeader{Folders: toWireAdverts(allowed)}, nil)
+		if err != nil {
+			l.log.Error("encode folder announcement", "error", err)
+			return
+		}
+		l.write(c, frame)
 	}
-	l.send(frame)
 }
 
 // RetainDevices closes the connections of peers that are not in ids. It is
@@ -159,19 +184,21 @@ func (l *Listener) RetainDevices(ids []device.ID) {
 	}
 }
 
-// send writes one unsolicited frame to every connected peer.
-func (l *Listener) send(frame Frame) {
+// connections returns the peers connected right now.
+func (l *Listener) connections() []*serverConn {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	conns := make([]*serverConn, 0, len(l.conns))
 	for c := range l.conns {
 		conns = append(conns, c)
 	}
-	l.mu.Unlock()
+	return conns
+}
 
-	for _, c := range conns {
-		if err := c.write(frame); err != nil {
-			l.log.Debug("notify peer", "peer", c.remote.Short(), "type", frame.Type.String(), "error", err)
-		}
+// write sends one unsolicited frame to one peer.
+func (l *Listener) write(c *serverConn, frame Frame) {
+	if err := c.write(frame); err != nil {
+		l.log.Debug("notify peer", "peer", c.remote.Short(), "type", frame.Type.String(), "error", err)
 	}
 }
 
@@ -219,7 +246,7 @@ func (l *Listener) handle(ctx context.Context, raw net.Conn, h ports.PeerHandler
 	if deadline, ok := hsCtx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-	if _, err := exchangeHello(conn, h.Hello(ctx), remote); err != nil {
+	if _, err := exchangeHello(conn, h.Hello(ctx, remote), remote); err != nil {
 		l.log.Debug("hello exchange failed", "peer", remote.Short(), "error", err)
 		return
 	}
@@ -267,6 +294,12 @@ type serverConn struct {
 	// this one synchronizes with.
 	known  ports.DeviceLookup
 	writes sync.Mutex
+}
+
+// advertised is the folder list this device announces to this peer: the
+// folders it is authorized for, as the handler reports them now.
+func (c *serverConn) advertised(ctx context.Context) []ports.FolderAdvert {
+	return c.handler.Hello(ctx, c.remote).Folders
 }
 
 // write sends one frame, serialized against broadcasts.

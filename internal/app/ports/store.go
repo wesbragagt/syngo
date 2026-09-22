@@ -173,6 +173,26 @@ type CounterStore interface {
 	RaiseCounterFloor(ctx context.Context, id device.ID, to uint64) error
 }
 
+// FolderAuthStore persists which devices are authorized to synchronize which
+// folders. It is deny by default: a folder with no row here is served to no
+// peer.
+type FolderAuthStore interface {
+	// GrantFolderDevice authorizes a device for a folder. Granting twice
+	// is not an error. It returns ErrNotFound when the folder or the
+	// device is not configured.
+	GrantFolderDevice(ctx context.Context, id folder.ID, dev device.ID) error
+	// RevokeFolderDevice withdraws the authorization. It returns
+	// ErrNotFound when the device was not authorized for that folder.
+	RevokeFolderDevice(ctx context.Context, id folder.ID, dev device.ID) error
+	// FolderAccess returns the devices authorized for a folder. An
+	// unknown folder yields an empty set rather than an error: a caller
+	// asking on behalf of a peer must not be able to tell the two apart.
+	FolderAccess(ctx context.Context, id folder.ID) (folder.Access, error)
+	// DeviceFolders returns the folders a device is authorized for,
+	// sorted by folder id.
+	DeviceFolders(ctx context.Context, dev device.ID) ([]folder.ID, error)
+}
+
 // DeviceStore persists known peers.
 type DeviceStore interface {
 	SaveDevice(ctx context.Context, d device.Device) error
@@ -211,6 +231,7 @@ type ConflictStore interface {
 // MetadataStore is the full persistence port used by the daemon and the CLI.
 type MetadataStore interface {
 	FolderStore
+	FolderAuthStore
 	FileStore
 	CounterStore
 	DeviceStore

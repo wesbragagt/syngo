@@ -63,8 +63,10 @@ func newIdentity(t *testing.T, name string) identity {
 	}
 }
 
-// hello is the Hello an identity announces.
-func (i identity) hello() ports.HelloInfo {
+// hello is the Hello an identity announces. The peer it is announced to is
+// ignored: authorization is the application's decision, and these tests are
+// about the wire.
+func (i identity) hello(device.ID) ports.HelloInfo {
 	return ports.HelloInfo{
 		DeviceID: i.id,
 		Name:     i.name,
@@ -79,7 +81,7 @@ type handler struct {
 }
 
 // Hello returns the configured Hello.
-func (h handler) Hello(context.Context) ports.HelloInfo { return h.info }
+func (h handler) Hello(context.Context, device.ID) ports.HelloInfo { return h.info }
 
 // Manifest is not reachable in this milestone.
 func (h handler) Manifest(context.Context, device.ID, folder.ID) (manifest.Manifest, error) {
@@ -168,7 +170,7 @@ func newDialer(id identity) *tcpwire.Dialer {
 func TestHandshake_KnownPeerAccepted(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
 	known := &lookups{allow: true}
-	ln := startServer(t, server, server.hello(), known.fn(), 0)
+	ln := startServer(t, server, server.hello(""), known.fn(), 0)
 
 	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
 	if err != nil {
@@ -197,7 +199,7 @@ func TestHandshake_KnownPeerAccepted(t *testing.T) {
 
 func TestHandshake_UnknownPeerRejectedWithReason(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: false}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: false}).fn(), 0)
 	dialer := newDialer(client)
 
 	// A probe still learns who answers, which is what pairing needs.
@@ -222,7 +224,7 @@ func TestHandshake_UnknownPeerRejectedWithReason(t *testing.T) {
 func TestServe_DeviceRemovedWhileConnectedIsDisconnected(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
 	known := &lookups{allow: true}
-	ln := startServer(t, server, server.hello(), known.fn(), 0)
+	ln := startServer(t, server, server.hello(""), known.fn(), 0)
 
 	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
 	if err != nil {
@@ -256,7 +258,7 @@ func TestServe_DeviceRemovedWhileConnectedIsDisconnected(t *testing.T) {
 
 func TestRetainDevices_ClosesTheConnectionOfARemovedPeer(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
 	if err != nil {
@@ -283,7 +285,7 @@ func TestRetainDevices_ClosesTheConnectionOfARemovedPeer(t *testing.T) {
 
 func TestDial_ExpectedIDMismatchFails(t *testing.T) {
 	server, client, other := newIdentity(t, "server"), newIdentity(t, "client"), newIdentity(t, "other")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	_, err := newDialer(client).Dial(context.Background(), ln.Addr(), other.id)
 	if !errors.Is(err, ports.ErrDeviceMismatch) {
@@ -295,7 +297,7 @@ func TestHandshake_HelloAnnouncingAnotherDeviceRejected(t *testing.T) {
 	server, client, other := newIdentity(t, "server"), newIdentity(t, "client"), newIdentity(t, "other")
 
 	// The server's Hello claims an identity its certificate does not have.
-	lying := server.hello()
+	lying := server.hello("")
 	lying.DeviceID = other.id
 	ln := startServer(t, server, lying, (&lookups{allow: true}).fn(), 0)
 
@@ -307,11 +309,11 @@ func TestHandshake_HelloAnnouncingAnotherDeviceRejected(t *testing.T) {
 
 func TestHandshake_ClientAnnouncingAnotherDeviceRejected(t *testing.T) {
 	server, client, other := newIdentity(t, "server"), newIdentity(t, "client"), newIdentity(t, "other")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
-	lying := client.hello()
+	lying := client.hello("")
 	lying.DeviceID = other.id
-	dialer := tcpwire.NewDialer(client.cert, func() ports.HelloInfo { return lying }, nil)
+	dialer := tcpwire.NewDialer(client.cert, func(device.ID) ports.HelloInfo { return lying }, nil)
 	dialer.SetTimeouts(time.Second, 3*time.Second, 3*time.Second)
 
 	_, err := dialer.Dial(context.Background(), ln.Addr(), server.id)
@@ -323,7 +325,7 @@ func TestHandshake_ClientAnnouncingAnotherDeviceRejected(t *testing.T) {
 
 func TestHandshake_OtherProtocolVersionRejected(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	cfg := tcpwire.ClientTLS(client.cert, server.id)
 	conn, err := tls.Dial("tcp", ln.Addr(), cfg)
@@ -361,7 +363,7 @@ func TestHandshake_OtherProtocolVersionRejected(t *testing.T) {
 
 func TestHandshake_WrongALPNFails(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	cfg := tcpwire.ClientTLS(client.cert, server.id)
 	cfg.NextProtos = []string{"http/1.1"}
@@ -374,7 +376,7 @@ func TestHandshake_WrongALPNFails(t *testing.T) {
 
 func TestPing_LatencyPositive(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
 	if err != nil {
@@ -393,7 +395,7 @@ func TestPing_LatencyPositive(t *testing.T) {
 
 func TestIdleTimeout_ClosesAfterSilence(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 100*time.Millisecond)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 100*time.Millisecond)
 
 	// The client must not ping, so the server's read deadline fires.
 	dialer := tcpwire.NewDialer(client.cert, client.hello, nil)
@@ -483,7 +485,7 @@ func TestResolveListen_LoopbackInterface(t *testing.T) {
 
 func TestHandshake_ServerSendsHelloBeforeReadingOne(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	conn, err := tls.Dial("tcp", ln.Addr(), tcpwire.ClientTLS(client.cert, server.id))
 	if err != nil {
@@ -510,7 +512,7 @@ func TestHandshake_ServerSendsHelloBeforeReadingOne(t *testing.T) {
 
 func TestFoldersChanged_FromTheClientIsAcceptedAndIgnored(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	conn, err := tls.Dial("tcp", ln.Addr(), tcpwire.ClientTLS(client.cert, server.id))
 	if err != nil {
@@ -572,7 +574,7 @@ func (h slowHandler) Manifest(_ context.Context, _ device.ID, id folder.ID) (man
 // id, so a late reply would answer the wrong question.
 func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	slow := slowHandler{handler: handler{info: server.hello()}, release: make(chan struct{})}
+	slow := slowHandler{handler: handler{info: server.hello("")}, release: make(chan struct{})}
 	ln := startServerWith(t, server, slow, (&lookups{allow: true}).fn(), 0)
 
 	conn, err := newDialer(client).Dial(context.Background(), ln.Addr(), server.id)
@@ -605,7 +607,7 @@ func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
 // port can ask for.
 func TestServe_BoundsConcurrentHandshakes(t *testing.T) {
 	server := newIdentity(t, "server")
-	ln := startServer(t, server, server.hello(), (&lookups{allow: true}).fn(), 0)
+	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
 	const attempts = tcpwire.MaxConcurrentHandshakes + 8
 	for range attempts {

@@ -154,6 +154,28 @@ func (n *node) trust(ctx context.Context, peer *node) error {
 	})
 }
 
+// grantAll authorizes every device this node trusts on every folder it has.
+// A folder is served to no device until it is granted one, and a benchmark
+// pairs two devices exactly so they can synchronize everything they have.
+func (n *node) grantAll(ctx context.Context) error {
+	configured, err := n.app.Folders.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list folders on %s: %w", n.name, err)
+	}
+	known, err := n.app.Store.ListDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("list devices on %s: %w", n.name, err)
+	}
+	for _, f := range configured {
+		for _, d := range known {
+			if err := n.app.Folders.Grant(ctx, f.ID, d.ID); err != nil {
+				return fmt.Errorf("grant %s on folder %s of %s: %w", d.ID.Short(), f.ID, n.name, err)
+			}
+		}
+	}
+	return nil
+}
+
 // status returns the running daemon's report.
 func (n *node) status(ctx context.Context) (status.Report, error) {
 	return n.app.Control.Status(ctx)

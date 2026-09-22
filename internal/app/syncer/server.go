@@ -24,6 +24,7 @@ var _ ports.PeerHandler = (*Server)(nil)
 // satisfies it.
 type Store interface {
 	ports.FolderStore
+	ports.FolderAuthStore
 	ports.FileStore
 	ports.TransferStore
 }
@@ -56,20 +57,33 @@ func New(store Store, fsys ports.FileSystem, hasher ports.Hasher, identity ports
 // limiter.
 func (s *Server) SetUploadLimiter(l ports.Limiter) { s.upload = l }
 
-// Hello is what this device announces to a connecting peer. Paused folders are
-// left out: the peer cannot get anything from them.
-func (s *Server) Hello(ctx context.Context) ports.HelloInfo {
+// Hello is what this device announces to peer. Only the folders peer is
+// authorized for are named, so a paired device never learns that the others
+// exist. Paused folders are left out too: the peer cannot get anything from
+// them.
+func (s *Server) Hello(ctx context.Context, peer device.ID) ports.HelloInfo {
 	info := ports.HelloInfo{
 		DeviceID: s.identity.DeviceID(),
 		Name:     s.identity.Name(),
 		Folders:  []ports.FolderAdvert{},
 	}
-	configured, err := s.store.ListFolders(ctx)
-	if err != nil {
-		s.log.Error("listing folders for hello", "error", err)
+	if peer == "" {
+		// Nobody has authenticated yet, so no folder is authorized.
 		return info
 	}
-	for _, f := range configured {
+	authorized, err := s.store.DeviceFolders(ctx, peer)
+	if err != nil {
+		s.log.Error("listing authorized folders for hello", "peer", peer.Short(), "error", err)
+		return info
+	}
+	for _, id := range authorized {
+		f, err := s.store.GetFolder(ctx, id)
+		if err != nil {
+			if !errors.Is(err, ports.ErrNotFound) {
+				s.log.Error("loading folder for hello", "folder", id, "error", err)
+			}
+			continue
+		}
 		if f.Paused {
 			continue
 		}
@@ -82,7 +96,7 @@ func (s *Server) Hello(ctx context.Context) ports.HelloInfo {
 // included, so the peer can decide what to pull and what to delete. It fails
 // with ports.ErrFolderUnknown, ports.ErrFolderReceiveOnly or ports.ErrPaused.
 func (s *Server) Manifest(ctx context.Context, peer device.ID, id folder.ID) (manifest.Manifest, error) {
-	if _, err := s.sendable(ctx, id); err != nil {
+	if _, err := s.sendable(ctx, peer, id); err != nil {
 		return manifest.Manifest{}, err
 	}
 	m, err := s.store.LoadManifest(ctx, id)
@@ -114,7 +128,7 @@ func (s *Server) Chunk(ctx context.Context, peer device.ID, req ports.ChunkReque
 		return ports.ChunkData{}, fmt.Errorf("chunk %d of %s: invalid request (chunk size %d)",
 			req.Index, req.Path, req.ChunkSize)
 	}
-	f, err := s.sendable(ctx, req.FolderID)
+	f, err := s.sendable(ctx, peer, req.FolderID)
 	switch {
 	case errors.Is(err, ports.ErrFolderUnknown):
 		return refuse(ports.ChunkFolderUnknown)
@@ -187,11 +201,29 @@ func (s *Server) Chunk(ctx context.Context, peer device.ID, req ports.ChunkReque
 	}, nil
 }
 
-// sendable returns the folder if this device may serve its contents.
-func (s *Server) sendable(ctx context.Context, id folder.ID) (folder.Folder, error) {
+// sendable returns the folder if this device may serve its contents to peer.
+//
+// A folder peer is not authorized for is refused exactly as one that does not
+// exist, with the same error and the same message: a peer that asks for a
+// folder it was never told about must not be able to tell "no such folder"
+// from "not yours". The check is made here, on every request, so a grant
+// withdrawn while a peer is connected stops it at its next request rather than
+// at its next handshake.
+func (s *Server) sendable(ctx context.Context, peer device.ID, id folder.ID) (folder.Folder, error) {
+	unknown := fmt.Errorf("folder %q: %w", id, ports.ErrFolderUnknown)
+
+	access, err := s.store.FolderAccess(ctx, id)
+	if err != nil {
+		return folder.Folder{}, err
+	}
+	if !access.Allows(peer) {
+		s.log.Debug("refused an unauthorized folder", "peer", peer.Short(), "folder", id)
+		return folder.Folder{}, unknown
+	}
+
 	f, err := s.store.GetFolder(ctx, id)
 	if errors.Is(err, ports.ErrNotFound) {
-		return folder.Folder{}, fmt.Errorf("folder %q: %w", id, ports.ErrFolderUnknown)
+		return folder.Folder{}, unknown
 	}
 	if err != nil {
 		return folder.Folder{}, err

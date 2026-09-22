@@ -7,19 +7,22 @@ import (
 	"fmt"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
-// Service adds, lists and removes synchronized folders.
+// Service adds, lists and removes synchronized folders, and says which
+// devices may synchronize each of them.
 type Service struct {
 	store ports.FolderStore
+	auth  ports.FolderAuthStore
 	fs    ports.FileSystem
 	clock ports.Clock
 }
 
 // New returns a folder service.
-func New(store ports.FolderStore, fs ports.FileSystem, clock ports.Clock) *Service {
-	return &Service{store: store, fs: fs, clock: clock}
+func New(store ports.FolderStore, auth ports.FolderAuthStore, fs ports.FileSystem, clock ports.Clock) *Service {
+	return &Service{store: store, auth: auth, fs: fs, clock: clock}
 }
 
 // Add validates f, checks that its path is an existing directory not already
@@ -129,4 +132,37 @@ func (s *Service) SetPaused(ctx context.Context, id folder.ID, paused bool) erro
 		return fmt.Errorf("folder %q: %w", id, ports.ErrNotFound)
 	}
 	return err
+}
+
+// Grant authorizes a device to synchronize a folder. A folder authorizes no
+// device until it is granted one, so this is what makes a new folder reachable
+// at all. Granting a device that is already authorized changes nothing and
+// succeeds. It returns ErrNotFound when the folder or the device is unknown.
+func (s *Service) Grant(ctx context.Context, id folder.ID, dev device.ID) error {
+	parsed, err := device.ParseID(string(dev))
+	if err != nil {
+		return fmt.Errorf("%w: %s", ports.ErrNotFound, err)
+	}
+	return s.auth.GrantFolderDevice(ctx, id, parsed)
+}
+
+// Revoke withdraws the authorization of a device for a folder. The device
+// stops being served the folder at its next request, on the connection it
+// already has. It returns ErrNotFound when the device was not authorized.
+func (s *Service) Revoke(ctx context.Context, id folder.ID, dev device.ID) error {
+	parsed, err := device.ParseID(string(dev))
+	if err != nil {
+		return fmt.Errorf("%w: %s", ports.ErrNotFound, err)
+	}
+	return s.auth.RevokeFolderDevice(ctx, id, parsed)
+}
+
+// Access returns the devices authorized for a folder. It returns ErrNotFound
+// when the folder is not configured, so the CLI does not report an empty list
+// for a folder that does not exist.
+func (s *Service) Access(ctx context.Context, id folder.ID) (folder.Access, error) {
+	if _, err := s.store.GetFolder(ctx, id); err != nil {
+		return folder.Access{}, err
+	}
+	return s.auth.FolderAccess(ctx, id)
 }

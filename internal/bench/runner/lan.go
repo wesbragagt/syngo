@@ -83,6 +83,14 @@ func runLAN(ctx context.Context, cfg Config) (Outcome, error) {
 	if err := b.addFolder(ctx, rootB); err != nil {
 		return Outcome{}, err
 	}
+	// Each side authorizes the other for the folder it just added: a
+	// folder nobody is granted is served to nobody.
+	if err := a.grantAll(ctx); err != nil {
+		return Outcome{}, err
+	}
+	if err := b.grantAll(ctx); err != nil {
+		return Outcome{}, err
+	}
 
 	convergeStart := time.Now()
 	if err := waitConverged(ctx, a, b, cfg.ConvergeTimeout, cfg.PollInterval); err != nil {

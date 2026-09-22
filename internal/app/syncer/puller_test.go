@@ -788,7 +788,7 @@ type handlerFunc struct {
 }
 
 // Hello announces a single send-receive folder.
-func (h handlerFunc) Hello(context.Context) ports.HelloInfo {
+func (h handlerFunc) Hello(context.Context, device.ID) ports.HelloInfo {
 	return ports.HelloInfo{
 		DeviceID: peerID,
 		Folders:  []ports.FolderAdvert{{ID: "docs", Mode: folder.ModeSendReceive}},

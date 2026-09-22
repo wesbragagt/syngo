@@ -44,8 +44,10 @@ func TestReload_FolderAddedAfterPairingIsSynchronized(t *testing.T) {
 
 	// The folder is added through the CLI on both sides, with the daemons
 	// running and already connected. Neither is restarted.
-	cliOK(t, a, "folder", "add", a.Root, "--id", string(folderID))
-	cliOK(t, b, "folder", "add", b.Root, "--id", string(folderID))
+	// --device authorizes the peer as the folder is created: a folder is
+	// served to no device until one is granted.
+	cliOK(t, a, "folder", "add", a.Root, "--id", string(folderID), "--device", string(b.ID))
+	cliOK(t, b, "folder", "add", b.Root, "--id", string(folderID), "--device", string(a.ID))
 
 	writeFile(t, a, "greeting.txt", []byte("hello from a"))
 	waitTreeEqual(t, a, b)
@@ -158,6 +160,9 @@ func TestConfigImport_ReloadsRunningDaemon(t *testing.T) {
 	// a has to know b as well; only b's side is configured by the bundle.
 	saveDevice(t, a, b)
 	cliOK(t, b, "config", "import", file)
+	// The bundle carries folders and peers, not authorizations, so b
+	// grants a the folder it just imported.
+	grantAll(t, b, a.ID)
 
 	writeFile(t, a, "from-a.txt", payload(2500, 31))
 	waitTreeEqual(t, a, b)

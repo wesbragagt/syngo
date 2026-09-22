@@ -184,11 +184,26 @@ func (d *Daemon) Reload(ctx context.Context) error {
 // announceFolders tells every connected peer which folders this device serves
 // now, so a peer that is already connected learns about a folder added, given
 // another mode or removed without reconnecting.
+// It passes the folders this device serves at all; the listener narrows that
+// to what each peer is authorized for, so a peer is never told about a folder
+// it may not have.
 func (d *Daemon) announceFolders(ctx context.Context) {
 	if d.deps.Listener == nil || d.deps.Peers == nil {
 		return
 	}
-	d.deps.Listener.AnnounceFolders(d.deps.Peers.Hello(ctx).Folders)
+	configured, err := d.deps.Store.ListFolders(ctx)
+	if err != nil {
+		d.deps.Log.Error("list folders to announce", "error", err)
+		return
+	}
+	adverts := make([]ports.FolderAdvert, 0, len(configured))
+	for _, f := range configured {
+		if f.Paused {
+			continue
+		}
+		adverts = append(adverts, ports.FolderAdvert{ID: f.ID, Mode: f.Mode})
+	}
+	d.deps.Listener.AnnounceFolders(adverts)
 }
 
 // Shutdown asks the daemon to stop. Run returns once every folder loop and the

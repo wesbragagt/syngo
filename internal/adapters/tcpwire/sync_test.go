@@ -24,7 +24,7 @@ type syncHandler struct {
 }
 
 // Hello returns the configured Hello.
-func (h *syncHandler) Hello(context.Context) ports.HelloInfo { return h.info }
+func (h *syncHandler) Hello(context.Context, device.ID) ports.HelloInfo { return h.info }
 
 // Manifest returns the configured manifest or error.
 func (h *syncHandler) Manifest(_ context.Context, _ device.ID, id folder.ID) (manifest.Manifest, error) {
@@ -60,7 +60,7 @@ func hashOf(t *testing.T, label string) manifest.Hash {
 func connectTo(t *testing.T, h *syncHandler) (ports.PeerConn, *tcpwire.Listener) {
 	t.Helper()
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
-	h.info = server.hello()
+	h.info = server.hello("")
 
 	ln, err := tcpwire.Listen(server.cert, "127.0.0.1:0", nil)
 	if err != nil {
@@ -221,7 +221,14 @@ func TestRequestManifest_RefusalReportsTheReasonOnce(t *testing.T) {
 }
 
 func TestAnnounceFolders_ReplacesWhatTheHelloAnnounced(t *testing.T) {
-	conn, ln := connectTo(t, &syncHandler{manifest: manifest.New("docs")})
+	h := &syncHandler{manifest: manifest.New("docs")}
+	conn, ln := connectTo(t, h)
+	// The handler says which folders this peer may see; the announcement
+	// says which of them this device serves, and in which mode.
+	h.info.Folders = []ports.FolderAdvert{
+		{ID: "docs", Mode: folder.ModeSendReceive},
+		{ID: "pics", Mode: folder.ModeSendReceive},
+	}
 
 	// The first request proves the connection is established before the
 	// announcement is sent.

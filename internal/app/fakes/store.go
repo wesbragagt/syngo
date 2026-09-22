@@ -25,6 +25,7 @@ type Store struct {
 	sequences map[folder.ID]uint64
 	changes   map[folder.ID][]ports.ChangeRecord
 	devices   map[device.ID]device.Device
+	grants    map[folder.ID]map[device.ID]struct{}
 	floors    map[device.ID]uint64
 	transfers map[transfer.ID]transfer.Transfer
 	conflicts []ports.ConflictRecord
@@ -40,6 +41,7 @@ func NewStore() *Store {
 		sequences: make(map[folder.ID]uint64),
 		changes:   make(map[folder.ID][]ports.ChangeRecord),
 		devices:   make(map[device.ID]device.Device),
+		grants:    make(map[folder.ID]map[device.ID]struct{}),
 		floors:    make(map[device.ID]uint64),
 		transfers: make(map[transfer.ID]transfer.Transfer),
 	}
@@ -107,6 +109,7 @@ func (s *Store) DeleteFolder(_ context.Context, id folder.ID) error {
 		return fmt.Errorf("folder %q: %w", id, ports.ErrNotFound)
 	}
 	delete(s.folders, id)
+	delete(s.grants, id)
 	delete(s.files, id)
 	delete(s.sequences, id)
 	delete(s.changes, id)
@@ -445,7 +448,63 @@ func (s *Store) DeleteDevice(_ context.Context, id device.ID) error {
 		return fmt.Errorf("device %q: %w", id, ports.ErrNotFound)
 	}
 	delete(s.devices, id)
+	for _, granted := range s.grants {
+		delete(granted, id)
+	}
 	return nil
+}
+
+// GrantFolderDevice authorizes a device for a folder.
+func (s *Store) GrantFolderDevice(_ context.Context, id folder.ID, dev device.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.folders[id]; !ok {
+		return fmt.Errorf("folder %q: %w", id, ports.ErrNotFound)
+	}
+	if _, ok := s.devices[dev]; !ok {
+		return fmt.Errorf("device %q: %w", dev, ports.ErrNotFound)
+	}
+	if s.grants[id] == nil {
+		s.grants[id] = make(map[device.ID]struct{})
+	}
+	s.grants[id][dev] = struct{}{}
+	return nil
+}
+
+// RevokeFolderDevice withdraws the authorization of a device for a folder.
+func (s *Store) RevokeFolderDevice(_ context.Context, id folder.ID, dev device.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.grants[id][dev]; !ok {
+		return fmt.Errorf("device %q on folder %q: %w", dev, id, ports.ErrNotFound)
+	}
+	delete(s.grants[id], dev)
+	return nil
+}
+
+// FolderAccess returns the devices authorized for a folder.
+func (s *Store) FolderAccess(_ context.Context, id folder.ID) (folder.Access, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]device.ID, 0, len(s.grants[id]))
+	for dev := range s.grants[id] {
+		ids = append(ids, dev)
+	}
+	return folder.NewAccess(ids), nil
+}
+
+// DeviceFolders returns the folders a device is authorized for.
+func (s *Store) DeviceFolders(_ context.Context, dev device.ID) ([]folder.ID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]folder.ID, 0, len(s.grants))
+	for id, granted := range s.grants {
+		if _, ok := granted[dev]; ok {
+			out = append(out, id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
 
 // TouchDevice records when a device was last seen.

@@ -26,7 +26,7 @@ const notificationBuffer = 16
 // Dialer opens authenticated connections to peers.
 type Dialer struct {
 	cert  tls.Certificate
-	hello func() ports.HelloInfo
+	hello func(peer device.ID) ports.HelloInfo
 	log   *slog.Logger
 
 	pingInterval time.Duration
@@ -46,9 +46,10 @@ func (d *Dialer) SetMaxFileSize(max int64) {
 }
 
 // NewDialer returns a dialer presenting cert. hello supplies the Hello sent on
-// every connection; it is a function because the folder list changes while the
-// daemon runs.
-func NewDialer(cert tls.Certificate, hello func() ports.HelloInfo, log *slog.Logger) *Dialer {
+// every connection; it is a function of the peer because the folder list
+// changes while the daemon runs and because a peer is told only about the
+// folders it is authorized for.
+func NewDialer(cert tls.Certificate, hello func(peer device.ID) ports.HelloInfo, log *slog.Logger) *Dialer {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -130,7 +131,10 @@ func (d *Dialer) connect(ctx context.Context, addr string, expect device.ID) (*c
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = tlsConn.SetDeadline(deadline)
 	}
-	hello, err := exchangeHello(tlsConn, d.hello(), remote)
+	// The peer's identity comes from its certificate, so the folder list
+	// this side announces is already filtered by the time it is written:
+	// an unauthorized peer never sees a folder name, not even its own.
+	hello, err := exchangeHello(tlsConn, d.hello(remote), remote)
 	if err != nil {
 		_ = tlsConn.Close()
 		return nil, &ports.ConnectError{Stage: stageOf(ctx, ports.StageHandshake), Err: err}

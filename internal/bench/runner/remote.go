@@ -243,6 +243,16 @@ func (r *remoteDevice) trust(ctx context.Context, localAddr, localID string) err
 	return nil
 }
 
+// grant authorizes the local device for the folder on the peer machine. It is
+// the peer's half of sharing: a folder is served to no device until it is
+// granted one.
+func (r *remoteDevice) grant(ctx context.Context, localID string) error {
+	if _, err := r.syncthis(ctx, "folder", "grant", string(FolderID), localID, "--json"); err != nil {
+		return fmt.Errorf("grant %s on the folder of %s: %w", localID, r.host, err)
+	}
+	return nil
+}
+
 // start launches the daemon on the peer's tailnet interface and waits until
 // it answers status. The daemon is detached from the ssh session and its pid
 // is written under the remote directory, so stop can always find it.

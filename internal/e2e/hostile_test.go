@@ -88,7 +88,7 @@ func (p *hostilePeer) Serve(rel string, data []byte) manifest.Entry {
 }
 
 // Hello announces the shared folder as a sending one.
-func (p *hostilePeer) Hello(context.Context) ports.HelloInfo {
+func (p *hostilePeer) Hello(context.Context, device.ID) ports.HelloInfo {
 	return ports.HelloInfo{
 		DeviceID: p.id,
 		Name:     "hostile",

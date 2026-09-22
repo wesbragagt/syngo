@@ -116,6 +116,12 @@ func runTailscale(ctx context.Context, cfg Config) (Outcome, error) {
 	if err := remote.trust(ctx, n.listen, n.id.String()); err != nil {
 		return Outcome{}, err
 	}
+	if err := remote.grant(ctx, n.id.String()); err != nil {
+		return Outcome{}, err
+	}
+	if err := n.grantAll(ctx); err != nil {
+		return Outcome{}, err
+	}
 
 	localHost, _ := os.Hostname()
 	observer := observeNetworkPath(ctx, networkPathObserver{

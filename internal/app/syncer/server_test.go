@@ -30,6 +30,9 @@ func testFolder(id folder.ID, paused bool) folder.Folder {
 // sourceID is the device the source fixtures write as.
 const sourceID = device.ID("SOURCE")
 
+// askerID is the device the tests that call the server directly ask as.
+const askerID = device.ID("PEER")
+
 // source is a device that serves a folder to its peers.
 type source struct {
 	store  *fakes.Store
@@ -51,7 +54,24 @@ func newSource(t *testing.T, mode folder.Mode) *source {
 		t.Fatalf("save folder: %v", err)
 	}
 	s.server = syncer.New(s.store, s.fs, s.hasher, fakes.NewIdentity("SOURCE", "nas"), nil)
+	s.grant(t, f.ID)
 	return s
+}
+
+// grant authorizes the devices these tests ask as for one folder of the
+// source. A folder is served to nobody until it is granted, so every fixture
+// that expects to be served has to say so.
+func (s *source) grant(t *testing.T, id folder.ID) {
+	t.Helper()
+	ctx := context.Background()
+	for _, dev := range []device.ID{askerID, fakes.SelfID} {
+		if err := s.store.SaveDevice(ctx, device.Device{ID: dev, Name: "peer"}); err != nil {
+			t.Fatalf("save device %s: %v", dev, err)
+		}
+		if err := s.store.GrantFolderDevice(ctx, id, dev); err != nil {
+			t.Fatalf("grant %s on %s: %v", dev, id, err)
+		}
+	}
 }
 
 // addFile writes a file to the source and records it the way a scan would.
@@ -101,8 +121,9 @@ func TestHello_AnnouncesIdentityAndRunningFolders(t *testing.T) {
 	if err := s.store.SaveFolder(ctx, testFolder("photos", true)); err != nil {
 		t.Fatalf("save folder: %v", err)
 	}
+	s.grant(t, "photos")
 
-	hello := s.server.Hello(ctx)
+	hello := s.server.Hello(ctx, askerID)
 	if hello.DeviceID != "SOURCE" || hello.Name != "nas" {
 		t.Fatalf("hello = %+v, want the local identity", hello)
 	}

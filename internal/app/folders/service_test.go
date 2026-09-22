@@ -22,7 +22,7 @@ func newService(t *testing.T) (*folders.Service, *fakes.Store, *fakes.Clock) {
 	fs.AddFile("/notes.txt", []byte("hi"), 0o644)
 	store := fakes.NewStore()
 	clock := fakes.NewClock(time.Time{})
-	return folders.New(store, fs, clock), store, clock
+	return folders.New(store, store, fs, clock), store, clock
 }
 
 // docsFolder returns a valid folder definition.

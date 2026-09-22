@@ -35,6 +35,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/syncer"
 	"github.com/wesbragagt/syncthis/internal/app/transfers"
 	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 )
 
 // ErrNotInitialized is returned when the data directory holds no identity and
@@ -239,7 +240,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		Settings:  settings,
 		Upload:    upload,
 		Download:  download,
-		Folders:   folders.New(store, fs, clock),
+		Folders:   folders.New(store, store, fs, clock),
 		Transfers: transfers.New(store),
 		Conflicts: conflicts.New(store, fs, hasher),
 		Bundle:    configbundle.New(store, store, settings, fs, clock, ValidateListen),
@@ -257,9 +258,10 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, identity, events,
 			syncer.PullerConfig{ChunkSize: cfg.ChunkSize, Download: download}, logger)
 		// The Hello is built per connection because the folder list
-		// changes while the process runs.
-		dialer := tcpwire.NewDialer(identity.TLSCertificate(), func() ports.HelloInfo {
-			return handler.Hello(context.Background())
+		// changes while the process runs, and per peer because it
+		// names only the folders that peer is authorized for.
+		dialer := tcpwire.NewDialer(identity.TLSCertificate(), func(peer device.ID) ports.HelloInfo {
+			return handler.Hello(context.Background(), peer)
 		}, logger)
 		dialer.SetMaxFileSize(cfg.MaxFileSize)
 		app.PeerHandler = handler
