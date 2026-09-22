@@ -45,6 +45,19 @@ func (c *Coalescer) Add(ev ports.WatchEvent) {
 	c.dirs[rel] = struct{}{}
 }
 
+// Requeue puts the subtrees of a scan that has to run again back on the
+// queue, so the next flush covers them together with whatever arrived in the
+// meantime. An empty list means the whole folder.
+func (c *Coalescer) Requeue(paths []string) {
+	if len(paths) == 0 {
+		c.full = true
+		return
+	}
+	for _, p := range paths {
+		c.dirs[p] = struct{}{}
+	}
+}
+
 // Pending reports whether a flush would produce work.
 func (c *Coalescer) Pending() bool { return c.full || len(c.dirs) > 0 }
 

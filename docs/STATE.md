@@ -268,8 +268,14 @@ the download is discarded rather than the local change.
 
 ### A crash during a scan
 
-A scan writes its whole result in one transaction: the entries it found, the
-changes it recorded and the new folder sequence go in together. A process
+A scan writes its whole result in one transaction against the folder sequence
+it read: the entries it found, the changes it recorded and the new sequence go
+in together. A folder that moved on in the meantime, which is what the puller
+does to a scan while it installs files, makes the write refuse itself and
+nothing is stored. The scan reloads the manifest, re-diffs the tree it already
+walked and tries again, five times; a scan that still loses is rescheduled by
+the folder loop, which keeps its watch and scans the same subtrees again. It is
+not a failed scan and is not recorded on the folder. A process
 killed at any moment therefore leaves either the manifest that was there before
 the scan or the complete new one, never a part of either, and the database
 always opens afterwards. Nothing else has to be done to recover: the next scan

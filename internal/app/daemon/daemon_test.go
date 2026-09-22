@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -42,6 +44,9 @@ type recordingScanner struct {
 	release chan struct{}
 	started chan struct{}
 	err     error
+	// partialErr fails scans of a subtree only, which is what a scan
+	// overtaken by a writer looks like: the tree is fine, the write is not.
+	partialErr error
 }
 
 // newRecordingScanner returns a scanner that returns immediately.
@@ -55,6 +60,9 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 	s.calls = append(s.calls, scanCall{ID: f.ID, Paths: o.Paths})
 	release := s.release
 	scanErr := s.err
+	if scanErr == nil && len(o.Paths) > 0 {
+		scanErr = s.partialErr
+	}
 	s.mu.Unlock()
 
 	select {
@@ -78,6 +86,14 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 func (s *recordingScanner) failWith(err error) {
 	s.mu.Lock()
 	s.err = err
+	s.mu.Unlock()
+}
+
+// failPartialWith makes the scan of a subtree fail with err, leaving full
+// scans alone.
+func (s *recordingScanner) failPartialWith(err error) {
+	s.mu.Lock()
+	s.partialErr = err
 	s.mu.Unlock()
 }
 
@@ -1226,4 +1242,100 @@ func (staticAnnouncer) Manifest(context.Context, device.ID, folder.ID) (manifest
 // Chunk serves nothing.
 func (staticAnnouncer) Chunk(context.Context, device.ID, ports.ChunkRequest) (ports.ChunkData, error) {
 	return ports.ChunkData{}, errors.New("this fake peer handler serves no chunks")
+}
+
+// logCapture collects the records a daemon logs, so a test can assert on the
+// level a known condition is reported at.
+type logCapture struct {
+	mu      sync.Mutex
+	records []map[string]any
+}
+
+// handler returns a logger writing into the capture.
+func (c *logCapture) handler() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(writerFunc(c.write), &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// write decodes one JSON log line.
+func (c *logCapture) write(p []byte) (int, error) {
+	var record map[string]any
+	if err := json.Unmarshal(p, &record); err == nil {
+		c.mu.Lock()
+		c.records = append(c.records, record)
+		c.mu.Unlock()
+	}
+	return len(p), nil
+}
+
+// at returns the messages logged at a level.
+func (c *logCapture) at(level string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, record := range c.records {
+		if record["level"] == level {
+			out = append(out, record["msg"].(string))
+		}
+	}
+	return out
+}
+
+// count returns how often a message was logged at a level.
+func (c *logCapture) count(level, msg string) int {
+	n := 0
+	for _, got := range c.at(level) {
+		if got == msg {
+			n++
+		}
+	}
+	return n
+}
+
+// writerFunc adapts a function to io.Writer.
+type writerFunc func([]byte) (int, error)
+
+func (w writerFunc) Write(p []byte) (int, error) { return w(p) }
+
+// TestDaemon_SupersededScanKeepsTheWatchAndRunsAgain is a scan that lost the
+// race with a writer, which is what a device does to itself while it pulls a
+// large folder. It is not a folder that failed: the watch stays on, the
+// subtree is scanned again without waiting for the next tick, and nothing is
+// reported at error level.
+func TestDaemon_SupersededScanKeepsTheWatchAndRunsAgain(t *testing.T) {
+	logs := &logCapture{}
+	// An hour of rescan interval: only the reschedule can produce the
+	// second scan of the subtree. A watch that was dropped and attached
+	// again shows up as a second root.
+	h := startDaemonTweaked(t, daemon.Config{RescanInterval: time.Hour},
+		nil, func(d *daemon.Deps) { d.Log = logs.handler() }, nil, testFolder("docs", false))
+	waitFor(t, "startup watch", func() bool { return len(h.watcher.Roots()) == 1 })
+
+	h.scanner.failPartialWith(fmt.Errorf("folder %q at sequence 4713: %w", "docs", ports.ErrStaleManifest))
+	h.push(t, ports.WatchEvent{Path: folderRoot + "/sub/a.txt", Op: ports.OpWrite})
+
+	partials := func() int {
+		n := 0
+		for _, call := range h.scanner.snapshot() {
+			if !call.full() && len(call.Paths) == 1 && call.Paths[0] == "sub" {
+				n++
+			}
+		}
+		return n
+	}
+	waitFor(t, "the superseded scan to run again", func() bool { return partials() >= 2 })
+
+	if got := len(h.watcher.Roots()); got != 1 {
+		t.Errorf("the folder was watched %d times, want once: a superseded scan is no reason to drop the watch", got)
+	}
+	if got := logs.at("ERROR"); len(got) != 0 {
+		t.Errorf("a superseded scan was logged at error level: %v", got)
+	}
+	if logs.count("INFO", "scan superseded, rescheduling") == 0 {
+		t.Errorf("the superseded scan was not reported: %v", logs.at("INFO"))
+	}
+
+	// Once the writer is done the rescheduled scan succeeds and stops.
+	h.scanner.failPartialWith(nil)
+	settled := partials()
+	waitFor(t, "a scan that is not superseded", func() bool { return partials() > settled })
 }

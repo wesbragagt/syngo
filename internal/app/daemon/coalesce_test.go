@@ -98,3 +98,28 @@ func TestCoalesce_FlushResetsState(t *testing.T) {
 		t.Fatalf("second Flush() = (%v, %t), want (empty, false)", paths, full)
 	}
 }
+
+func TestCoalesce_RequeueKeepsSubtreesAndMergesNewEvents(t *testing.T) {
+	c := daemon.NewCoalescer("/srv/docs")
+	c.Requeue([]string{"sub"})
+	c.Add(ports.WatchEvent{Path: "/srv/docs/other/a.txt", Op: ports.OpWrite})
+
+	paths, full := c.Flush()
+	if full {
+		t.Fatalf("Flush() asked for a full scan, want the two subtrees")
+	}
+	if len(paths) != 2 || paths[0] != "other" || paths[1] != "sub" {
+		t.Fatalf("Flush() = %v, want [other sub]", paths)
+	}
+}
+
+func TestCoalesce_RequeueWithoutPathsAsksForAFullScan(t *testing.T) {
+	c := daemon.NewCoalescer("/srv/docs")
+	c.Requeue(nil)
+	if !c.Pending() {
+		t.Fatalf("Pending() = false after a whole folder was requeued")
+	}
+	if paths, full := c.Flush(); !full || len(paths) != 0 {
+		t.Fatalf("Flush() = (%v, %t), want (empty, true)", paths, full)
+	}
+}

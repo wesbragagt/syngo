@@ -17,11 +17,6 @@ const (
 	smallFileDirs  = 100
 )
 
-// staleManifest is what a daemon says when a scan it started was overtaken by
-// the files it was pulling. It is logged at error level; see KF-5 in
-// docs/PLAN-E2E-DOCKER.md.
-const staleManifest = "manifest changed since it was loaded"
-
 // bigFileMiB is how large the single-file scale test makes its file. A run
 // with -short moves far less; SYNCTHIS_E2E_BIG_MIB overrides both.
 func bigFileMiB(t *testing.T) int {
@@ -66,10 +61,10 @@ func TestScale_TenThousandSmallFiles(t *testing.T) {
 	t.Logf("%d files reached two devices in %s (%.0f files/s per device)",
 		files, elapsed.Round(time.Millisecond), float64(files)/elapsed.Seconds())
 
-	// The standard invariant check is spelled out here because a burst of
-	// this size makes the daemons log the scan race of KF-5, which this
-	// scenario is not about. Every other error still fails the test.
-	races := 0
+	// The standard invariant check is spelled out here because this
+	// scenario also asserts that a burst of this size produces no error
+	// line at all: a scan overtaken by the puller is rescheduled, not
+	// reported.
 	for _, dev := range c.Devices {
 		if parts := dev.PartFiles(); len(parts) != 0 {
 			t.Errorf("%s left partial downloads: %v", dev.Name, parts)
@@ -78,18 +73,11 @@ func TestScale_TenThousandSmallFiles(t *testing.T) {
 			t.Errorf("%s has %d transfers left in its journal", dev.Name, len(rows))
 		}
 		for _, line := range dev.LogLines("error") {
-			if strings.Contains(line.Raw, staleManifest) {
-				races++
-				continue
-			}
 			if expectedError(line.Msg) {
 				continue
 			}
 			t.Errorf("%s logged an error: %s", dev.Name, line.Raw)
 		}
-	}
-	if races > 0 {
-		t.Logf("the devices logged %d scan races at error level while catching up; see KF-5 in docs/PLAN-E2E-DOCKER.md", races)
 	}
 
 	for _, dev := range c.Devices {

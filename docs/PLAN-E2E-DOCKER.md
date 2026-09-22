@@ -365,9 +365,10 @@ docker ps -a --filter label=syncthis.e2e -q | wc -l      # 0 after a run
 - /home/wesbragagt/dev/syncthing/internal/compose/compose.go (`Init` preserves a pre-written `config.json`, which the bootstrap relies on)
 ## 10. Known failures
 
-KF-1, KF-2, KF-3 and KF-4 are fixed; their scenarios run unskipped. What they
-were and how they were fixed is `docs/PLAN-3.md`, in one line each, and
-`docs/STATE.md` for the folder health columns:
+Every known failure is fixed and every scenario runs, with no skip and no
+tolerated log line. What they were and how they were fixed is
+`docs/PLAN-3.md`, in one line each, and `docs/STATE.md` for the folder health
+columns:
 
 - **KF-1**, a transfer whose source changed mid-flight stayed `failed`
   forever, so the journal never emptied (`TestMesh_ConcurrentDisjointEditsConverge`,
@@ -388,35 +389,16 @@ were and how they were fixed is `docs/PLAN-3.md`, in one line each, and
   `folders.pending_items`, which `status` reports as the folder's state, its
   `error` and its `pending_changes`. The scanner keeps `last_error` and
   neither owner clears the other's column.
-
-What remains is KF-5. No invariant is loosened: the scale scenario asserts
-everything it can and counts the rest.
-
-### KF-5: a scan overtaken by the puller is logged as an error and drops the watch
-
-Scenario 18 (`TestScale_TenThousandSmallFiles`) makes this visible every run.
-While a device pulls ten thousand files, its own scan loses the race with the
-writes the puller is making, and the folder loop reports it:
-
-```
-{"level":"ERROR","msg":"scan folder","folder":"docs",
- "error":"folder \"docs\" at sequence 4713, scan started from 4708: manifest changed since it was loaded",
- "paths":[".syncthis","d00", … ]}
-```
-
-Eight such lines in one run of the scenario, on both receivers. The sync is
-unaffected: all three devices converge, the journals empty and the file counts
-agree. Two things are still wrong with it. The level is ERROR for a lost
-optimistic-concurrency race that the next tick retries, which is what an
-operator is asked to watch for; and `folderloop.go` treats it like a folder
-whose root is gone, calling `dropWatch()`, so the device falls back to
-interval scanning until a scan succeeds again.
-
-A fix has to tell `ports.ErrStaleManifest` apart from a scan that really
-failed, at the one place that logs both, and decide whether the retry is
-immediate. Scenario 18 therefore checks the convergence, the journals, the
-partial files and every other error line, and counts these, reporting them
-with a pointer here rather than asserting a clean log.
+- **KF-5**, a scan overtaken by the puller was logged at ERROR and cost the
+  folder its watch (`TestScale_TenThousandSmallFiles`). `ports.ErrStaleManifest`
+  is now told apart from a scan that failed: it is logged at INFO as "scan
+  superseded, rescheduling", the watch stays on, and the subtrees go back on
+  the coalescer so the next debounce scans them again. The scanner also
+  reloads and re-diffs five times before giving the folder loop the job.
+  Scanning and pulling are deliberately not serialized per folder: a cycle
+  that installs ten thousand files would hold such a lock for minutes and no
+  local change would be noticed in that time, which is a worse failure than a
+  scan that runs twice. Scenario 18 now asserts a clean log.
 
 ### What the soak leaves out, and why
 

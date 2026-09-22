@@ -105,7 +105,7 @@ func (l *folderLoop) run(ctx context.Context) {
 
 	// A folder is scanned once at startup so a daemon that was down while
 	// files changed catches up without waiting for the first tick.
-	l.scan(ctx, nil)
+	l.scanOrRequeue(ctx, coalescer, debounce, nil)
 
 	for {
 		select {
@@ -119,21 +119,21 @@ func (l *folderLoop) run(ctx context.Context) {
 			paths, full := coalescer.Flush()
 			if full {
 				log.Debug("watcher overflow, scanning whole folder")
-				l.scan(ctx, nil)
+				l.scanOrRequeue(ctx, coalescer, debounce, nil)
 			} else if len(paths) > 0 {
-				l.scan(ctx, paths)
+				l.scanOrRequeue(ctx, coalescer, debounce, paths)
 			}
 		case <-rescan.C:
 			// A root that came back is watched again before it is
 			// scanned; a root that is still gone leaves the watch
 			// off and the scan records the error.
 			l.ensureWatch(ctx)
-			l.scan(ctx, nil)
+			l.scanOrRequeue(ctx, coalescer, debounce, nil)
 		case <-l.rescans:
 			// A full scan covers everything the coalescer collected.
 			coalescer.Flush()
 			stopTimer(debounce)
-			l.scan(ctx, nil)
+			l.scanOrRequeue(ctx, coalescer, debounce, nil)
 		}
 	}
 }
@@ -173,24 +173,39 @@ func (l *folderLoop) dropWatch() {
 	l.watching = false
 }
 
+// scanOrRequeue scans and, when the scan was superseded by a write that
+// landed while it ran, puts its subtrees back on the coalescer and arms the
+// debounce timer. The work is still wanted, so it is queued rather than left
+// to the next tick, and it goes through the coalescer so a burst of
+// supersessions collapses into one scan.
+func (l *folderLoop) scanOrRequeue(ctx context.Context, coalescer *Coalescer, debounce *time.Timer, paths []string) {
+	if !l.scan(ctx, paths) {
+		return
+	}
+	coalescer.Requeue(paths)
+	stopTimer(debounce)
+	debounce.Reset(l.daemon.cfg.debounce())
+}
+
 // scan runs one scan of the folder unless it is paused. paths limits the scan
-// to those subtrees; nil scans everything.
-func (l *folderLoop) scan(ctx context.Context, paths []string) {
+// to those subtrees; nil scans everything. It reports whether the scan was
+// superseded and has to run again.
+func (l *folderLoop) scan(ctx context.Context, paths []string) bool {
 	log := l.daemon.deps.Log.With("folder", l.folder.ID)
 
 	current, err := l.daemon.deps.Store.GetFolder(ctx, l.folder.ID)
 	if errors.Is(err, ports.ErrNotFound) {
-		return
+		return false
 	}
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Error("read folder", "error", err)
 		}
-		return
+		return false
 	}
 	if current.Paused {
 		log.Debug("folder paused, skipping scan")
-		return
+		return false
 	}
 	l.daemon.setState(current.ID, status.StateScanning)
 	defer l.daemon.setState(current.ID, "")
@@ -198,7 +213,14 @@ func (l *folderLoop) scan(ctx context.Context, paths []string) {
 	result, err := l.daemon.deps.Scanner.Scan(ctx, current, scan.Options{Paths: paths})
 	switch {
 	case ctx.Err() != nil:
-		return
+		return false
+	case errors.Is(err, ports.ErrStaleManifest):
+		// The folder was written while the scan was reading it, most
+		// often by this device's own puller, so the scan wrote nothing
+		// and has to read again. The tree is fine: the watch stays on
+		// and only the scan is repeated.
+		log.Info("scan superseded, rescheduling", "paths", paths, "reason", err)
+		return true
 	case err != nil:
 		// The scanner records the failure on the folder itself, so the
 		// loop only reports it. A folder that cannot be scanned, most
@@ -206,7 +228,7 @@ func (l *folderLoop) scan(ctx context.Context, paths []string) {
 		// the next tick attaches the watch again.
 		log.Error("scan folder", "error", err, "paths", paths)
 		l.dropWatch()
-		return
+		return false
 	}
 	// A scan that succeeded after a failure means the root is usable
 	// again, so the watch goes back on without waiting for the next tick.
@@ -217,6 +239,7 @@ func (l *folderLoop) scan(ctx context.Context, paths []string) {
 	if len(result.Changes) > 0 && l.daemon.deps.Listener != nil {
 		l.daemon.deps.Listener.Broadcast(current.ID, result.Sequence)
 	}
+	return false
 }
 
 // stopTimer stops t and drains it so it can be reset safely.

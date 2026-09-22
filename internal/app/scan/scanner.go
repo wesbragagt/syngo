@@ -138,8 +138,12 @@ func (s *Scanner) checkRoot(f folder.Folder) error {
 }
 
 // persistRetries is how many times a scan reloads the manifest and re-diffs
-// after another scan wrote to the folder first.
-const persistRetries = 2
+// after another writer got to the folder first. A device catching up on
+// thousands of files writes as fast as the puller installs them, so the count
+// is what it takes to get through such a burst rather than the one or two a
+// concurrent scan would need; a scan that still loses is rescheduled by the
+// folder loop.
+const persistRetries = 5
 
 // persist writes the classified changes and records the scan on the folder in
 // one transaction. A concurrent scan that wrote first makes the store reject
