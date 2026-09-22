@@ -33,10 +33,10 @@ func run(args []string, stdout, stderr *os.File) int {
 	dataDirA := fs.String("data-dir-a", "", "lan scenario: data directory of the first device (temp dir if empty)")
 	dataDirB := fs.String("data-dir-b", "", "lan scenario: data directory of the second device (temp dir if empty)")
 
-	peerAddr := fs.String("peer-addr", "", "tailscale scenarios: the already-running peer's listen address")
-	peerDeviceID := fs.String("peer-device-id", "", "tailscale scenarios: the peer's device id, to pin its identity")
-	localDataDir := fs.String("local-data-dir", "", "tailscale scenarios: this device's data directory")
-	iface := fs.String("interface", "", "tailscale scenarios: network interface to bind the listener to")
+	peerHost := fs.String("peer-host", "", "tailscale scenarios: the peer machine, as ssh names it")
+	peerDir := fs.String("peer-dir", "", "tailscale scenarios: the one directory on the peer machine the run may create anything under")
+	localDataDir := fs.String("local-data-dir", "", "tailscale scenarios: this device's data directory (temp dir if empty)")
+	iface := fs.String("interface", runner.DefaultTailnetInterface, "tailscale scenarios: network interface both daemons bind their listener to")
 
 	convergeTimeout := fs.Duration("converge-timeout", runner.DefaultConvergeTimeout, "how long to wait for convergence")
 
@@ -58,8 +58,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		Seed:            *seed,
 		DataDirA:        *dataDirA,
 		DataDirB:        *dataDirB,
-		PeerAddr:        *peerAddr,
-		PeerDeviceID:    *peerDeviceID,
+		PeerHost:        *peerHost,
+		PeerDir:         *peerDir,
 		LocalDataDir:    *localDataDir,
 		Interface:       *iface,
 		ConvergeTimeout: *convergeTimeout,

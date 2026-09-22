@@ -6,10 +6,11 @@
 //
 // The "lan" scenario is fully self-contained: it starts two devices in this
 // process and connects them over loopback, so Run needs nothing beyond the
-// defaults. The "tailscale-direct" and "tailscale-derp" scenarios need a real
-// tailnet and a peer already running on another machine; Run only ever
-// drives the local side of that pair; a field of Result that this side
-// cannot observe is left zero, never invented.
+// defaults. The "tailscale-direct" and "tailscale-derp" scenarios span two
+// machines on one tailnet: Run drives the local side in this process and the
+// peer machine over ssh, so both sides are observable and convergence,
+// recovery and the network path are measured rather than guessed. A field
+// neither side could observe is left zero and explained, never invented.
 package runner
 
 import (
@@ -22,8 +23,11 @@ import (
 
 	"github.com/wesbragagt/syncthis/internal/bench/fixture"
 	"github.com/wesbragagt/syncthis/internal/bench/report"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
 )
+
+// DefaultTailnetInterface is the interface both daemons bind to in the
+// Tailscale scenarios when the operator names no other one.
+const DefaultTailnetInterface = "tailscale0"
 
 // DefaultConvergeTimeout bounds how long Run waits for a folder to converge,
 // once for the initial corpus and once after the mutation set.
@@ -60,20 +64,22 @@ type Config struct {
 	// directory is created and removed when the run ends.
 	DataDirA, DataDirB string
 
-	// PeerAddr is the already-running peer's listen address. Required for
+	// PeerHost is the peer machine, as ssh names it: a host in
+	// ~/.ssh/config, a tailnet name or an address. Required for
 	// "tailscale-direct" and "tailscale-derp"; refused for "lan".
-	PeerAddr string
-	// PeerDeviceID pins the peer's identity, so pairing never trusts
-	// whoever answers at PeerAddr. Required alongside PeerAddr.
-	PeerDeviceID string
+	PeerHost string
+	// PeerDir is the one directory on the peer machine a run may create
+	// anything under: the binary, the data directory, the folder root, the
+	// daemon's pid file and its log. Required alongside PeerHost.
+	PeerDir string
 	// LocalDataDir is this device's data directory for the Tailscale
-	// scenarios. It must already hold an initialized identity, or Run
-	// initializes one there. Required for "tailscale-direct" and
-	// "tailscale-derp"; refused for "lan".
+	// scenarios. Empty means a temporary directory is created and removed
+	// when the run ends. Refused for "lan".
 	LocalDataDir string
-	// Interface binds the local listener to one network interface's first
-	// IPv4 address, the rule docs/ARCHITECTURE.md gives the Tailscale
-	// scenarios for reaching the tailnet rather than the LAN. Optional.
+	// Interface is the network interface both daemons bind their listener
+	// to, the rule docs/ARCHITECTURE.md gives the Tailscale scenarios for
+	// reaching the tailnet rather than the LAN. It names the interface on
+	// both machines; it defaults to DefaultTailnetInterface.
 	Interface string
 
 	// ConvergeTimeout overrides DefaultConvergeTimeout.
@@ -96,6 +102,9 @@ func (c Config) withDefaults() Config {
 	if c.Spec == (fixture.Spec{}) {
 		c.Spec = fixture.DefaultSpec(c.Seed)
 	}
+	if c.Interface == "" && c.Scenario != report.ScenarioLAN {
+		c.Interface = DefaultTailnetInterface
+	}
 	return c
 }
 
@@ -106,30 +115,27 @@ func (c Config) withDefaults() Config {
 func Validate(cfg Config) error {
 	switch cfg.Scenario {
 	case report.ScenarioLAN:
-		if cfg.PeerAddr != "" || cfg.PeerDeviceID != "" || cfg.LocalDataDir != "" {
+		if cfg.PeerHost != "" || cfg.PeerDir != "" || cfg.LocalDataDir != "" {
 			return fmt.Errorf("scenario %q runs on one machine over loopback; "+
-				"--peer-addr, --peer-device-id and --local-data-dir are for the "+
+				"--peer-host, --peer-dir and --local-data-dir are for the "+
 				"tailscale scenarios and must be left unset", cfg.Scenario)
 		}
 	case report.ScenarioTailscaleDirect, report.ScenarioTailscaleDERP:
 		var missing []string
-		if cfg.PeerAddr == "" {
-			missing = append(missing, "--peer-addr")
+		if cfg.PeerHost == "" {
+			missing = append(missing, "--peer-host")
 		}
-		if cfg.PeerDeviceID == "" {
-			missing = append(missing, "--peer-device-id")
-		}
-		if cfg.LocalDataDir == "" {
-			missing = append(missing, "--local-data-dir")
+		if cfg.PeerDir == "" {
+			missing = append(missing, "--peer-dir")
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("scenario %q needs a real peer on another machine over "+
-				"a tailnet; pass %v (see docs/BENCH.md#tailscale-direct and "+
-				"#tailscale-derp for how to set the two machines up); refusing rather "+
-				"than faking a Tailscale measurement", cfg.Scenario, missing)
+			return fmt.Errorf("scenario %q measures two machines: it drives the peer over ssh, "+
+				"so it needs %v (see docs/BENCH.md#tailscale-direct-and-tailscale-derp for what "+
+				"the peer machine must have ready); refusing rather than faking a Tailscale "+
+				"measurement", cfg.Scenario, missing)
 		}
-		if _, err := device.ParseID(cfg.PeerDeviceID); err != nil {
-			return fmt.Errorf("--peer-device-id: %w", err)
+		if _, err := newRemoteDevice(cfg.PeerHost, cfg.PeerDir, execRunner{}); err != nil {
+			return err
 		}
 		if cfg.DataDirA != "" || cfg.DataDirB != "" {
 			return fmt.Errorf("scenario %q uses --local-data-dir, not --data-dir-a/--data-dir-b, "+
@@ -177,10 +183,10 @@ type Outcome struct {
 	Result     report.Result
 	ResultPath string
 	Unmeasured Unmeasured
-	// RecoveryObserved reports whether the lan scenario saw a real transfer
-	// actively in progress before it killed a node to measure recovery. It
-	// is false whenever RecoveryTime was left at zero because nothing was
-	// caught in flight, and always false outside the lan scenario.
+	// RecoveryObserved reports whether the run saw a real transfer actively
+	// in progress before it killed a daemon to measure recovery. It is
+	// false whenever RecoveryTime was left at zero because nothing was
+	// caught in flight.
 	RecoveryObserved bool
 }
 

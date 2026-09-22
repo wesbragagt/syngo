@@ -61,13 +61,13 @@ func TestValidate_LAN(t *testing.T) {
 
 func TestValidate_LANRefusesTailscaleFlags(t *testing.T) {
 	cfg := baseConfig()
-	cfg.PeerAddr = "100.64.0.1:22000"
+	cfg.PeerHost = "macpro-nixos"
 	if err := runner.Validate(cfg); err == nil {
-		t.Fatal("Validate(lan with --peer-addr) = nil, want an error")
+		t.Fatal("Validate(lan with --peer-host) = nil, want an error")
 	}
 }
 
-func TestValidate_TailscaleNeedsPeerAddrAndDeviceIDAndLocalDataDir(t *testing.T) {
+func TestValidate_TailscaleNeedsPeerHostAndPeerDir(t *testing.T) {
 	for _, scenario := range []report.Scenario{report.ScenarioTailscaleDirect, report.ScenarioTailscaleDERP} {
 		cfg := baseConfig()
 		cfg.Scenario = scenario
@@ -82,30 +82,33 @@ func TestValidate_TailscaleNeedsPeerAddrAndDeviceIDAndLocalDataDir(t *testing.T)
 func TestValidate_TailscaleWithEverythingSet(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Scenario = report.ScenarioTailscaleDirect
-	cfg.PeerAddr = "100.64.0.1:22000"
-	cfg.PeerDeviceID = validDeviceID(t)
+	cfg.PeerHost = "macpro-nixos"
+	cfg.PeerDir = "~/syncthis-bench-remote"
 	cfg.LocalDataDir = t.TempDir()
 	if err := runner.Validate(cfg); err != nil {
 		t.Fatalf("Validate(tailscale-direct, fully configured) = %v, want nil", err)
 	}
 }
 
-func TestValidate_TailscaleRefusesBadDeviceID(t *testing.T) {
-	cfg := baseConfig()
-	cfg.Scenario = report.ScenarioTailscaleDirect
-	cfg.PeerAddr = "100.64.0.1:22000"
-	cfg.PeerDeviceID = "not-a-device-id"
-	cfg.LocalDataDir = t.TempDir()
-	if err := runner.Validate(cfg); err == nil {
-		t.Fatal("Validate with a malformed --peer-device-id = nil, want an error")
+// A peer directory that names the whole home directory, or climbs out of
+// itself, would let a run write anywhere on the peer machine.
+func TestValidate_TailscaleRefusesAnEscapingPeerDir(t *testing.T) {
+	for _, dir := range []string{"~", "~/", "/", "bench/../..", "~/bench/../elsewhere"} {
+		cfg := baseConfig()
+		cfg.Scenario = report.ScenarioTailscaleDirect
+		cfg.PeerHost = "macpro-nixos"
+		cfg.PeerDir = dir
+		if err := runner.Validate(cfg); err == nil {
+			t.Errorf("Validate with --peer-dir %q = nil, want a refusal", dir)
+		}
 	}
 }
 
 func TestValidate_TailscaleRefusesLANDataDirFlags(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Scenario = report.ScenarioTailscaleDirect
-	cfg.PeerAddr = "100.64.0.1:22000"
-	cfg.PeerDeviceID = validDeviceID(t)
+	cfg.PeerHost = "macpro-nixos"
+	cfg.PeerDir = "~/syncthis-bench-remote"
 	cfg.LocalDataDir = t.TempDir()
 	cfg.DataDirA = t.TempDir()
 	if err := runner.Validate(cfg); err == nil {
@@ -133,15 +136,6 @@ func TestValidate_RequiresCorpusAndResultsDir(t *testing.T) {
 	if err := runner.Validate(cfg); err == nil {
 		t.Fatal("Validate with no --results-dir = nil, want an error")
 	}
-}
-
-// validDeviceID returns a device ID that parses, without depending on a real
-// identity: ParseID only checks shape.
-func validDeviceID(t *testing.T) string {
-	t.Helper()
-	// 52 base32 characters, a shape ParseID accepts regardless of whether
-	// any device actually holds this ID.
-	return "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRST"
 }
 
 // smallSpec keeps a run's corpus and its measured run time tiny.
@@ -240,4 +234,48 @@ func hasUnmeasured(unmeasured []string, field string) bool {
 		}
 	}
 	return false
+}
+
+// TestRun_TailscaleLive runs a real two-machine scenario. It reaches the
+// network and drives another computer, so it never runs by default: set
+// SYNCTHIS_BENCH_PEER_HOST to the ssh host of a peer machine on the same
+// tailnet, and optionally SYNCTHIS_BENCH_PEER_DIR to the directory it may
+// use there.
+func TestRun_TailscaleLive(t *testing.T) {
+	host := os.Getenv("SYNCTHIS_BENCH_PEER_HOST")
+	if host == "" {
+		t.Skip("set SYNCTHIS_BENCH_PEER_HOST to run the two-machine scenario against a real peer")
+	}
+	peerDir := os.Getenv("SYNCTHIS_BENCH_PEER_DIR")
+	if peerDir == "" {
+		peerDir = "~/syncthis-bench-remote"
+	}
+
+	dir := t.TempDir()
+	cfg := runner.Config{
+		Scenario:        report.ScenarioTailscaleDirect,
+		Name:            "live-test",
+		CorpusDir:       filepath.Join(dir, "corpus"),
+		ResultsDir:      filepath.Join(dir, "results"),
+		Seed:            7,
+		Spec:            smallSpec(7),
+		PeerHost:        host,
+		PeerDir:         peerDir,
+		ConvergeTimeout: 2 * time.Minute,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	outcome, err := runner.Run(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Result.ConvergenceTime <= 0 {
+		t.Errorf("convergence_time_ns = %d, want > 0", outcome.Result.ConvergenceTime)
+	}
+	if outcome.Result.NetworkPath == "" && !hasUnmeasured(outcome.Unmeasured, "network_path") {
+		t.Error("network_path is empty and nothing explains why")
+	}
+	t.Logf("result %s: %+v\nunmeasured: %v", outcome.ResultPath, outcome.Result, outcome.Unmeasured)
 }

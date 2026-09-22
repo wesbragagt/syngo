@@ -64,6 +64,13 @@ type Result struct {
 	// RecoveryTime is how long the run took to reach convergence again
 	// after an interruption; zero when the run had none.
 	RecoveryTime time.Duration `json:"recovery_time_ns"`
+	// NetworkPath is the path the bytes actually took between the two
+	// machines, read from `tailscale status --json` on both of them while
+	// the transfer was running: "direct" when both sides held a non-empty
+	// CurAddr, "relay:<region>" when they fell back to a DERP relay. It is
+	// empty for the lan scenario and for a run that could not read the path
+	// while the connection was live.
+	NetworkPath string `json:"network_path"`
 }
 
 // Writer saves Result values as JSON files in a versioned results directory,
