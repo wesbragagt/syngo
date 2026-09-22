@@ -108,6 +108,8 @@ address. The full walkthrough is in
 
 ## Documentation
 
+- [docs/INSTALL.md](docs/INSTALL.md) — how to install, configure and run it
+  on NixOS, home-manager, Linux, macOS, a NAS and in a container.
 - [docs/CLI.md](docs/CLI.md) — every command, its flags, its JSON shape, the
   exit codes, the daemon lifecycle and a pairing walkthrough over Tailscale.
 - [docs/STATE.md](docs/STATE.md) — the data directory, the database schema and
