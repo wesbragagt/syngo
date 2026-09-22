@@ -7,6 +7,7 @@ import (
 
 	"github.com/wesbragagt/syncthis/internal/compose"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost covers the counter
@@ -45,9 +46,14 @@ func TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost(t *testing.T) {
 		peers := b.Status().Peers
 		return len(peers) == 1 && peers[0].Connected
 	})
-	// The restored database describes the first version, so b pulls a's
-	// third version over it before anything else happens.
-	waitFileContent(t, b, "shared.txt", "the third version, written on b")
+	// The restore replaced the database, not the folder, so the file on
+	// disk already holds the third version and waiting for its content
+	// would say nothing about whether b has spoken to a yet. What proves
+	// the first contact happened is b's record of the path: the restored
+	// database describes the first version, and only a sync cycle against
+	// a can put a's version of the path into it. b's own rescan cannot,
+	// because the counters it hands out come from the restored database.
+	waitVersionAdopted(t, b, a, "shared.txt")
 
 	// The first contact lifted b's counter floor above every counter of its
 	// own that a holds, so the next version b writes cannot be one a
@@ -78,6 +84,27 @@ func copyFile(t *testing.T, from, to string) {
 	if err := os.WriteFile(to, data, 0o600); err != nil {
 		t.Fatalf("write %s: %v", to, err)
 	}
+}
+
+// waitVersionAdopted waits until the version n records for a path is no longer
+// behind the one from holds for it, which happens when n has run a sync cycle
+// against from: the plan merges the peer's vector into the local record, and
+// nothing else on n can produce the peer's counters. It is a synchronization
+// point, not an assertion about the counter floor: the floor is a separate
+// per-device record that only adoptCounters writes.
+func waitVersionAdopted(t *testing.T, n, from *node, rel string) {
+	t.Helper()
+	want, err := from.App.Store.LoadManifest(controlCtx(t), folderID)
+	if err != nil {
+		t.Fatalf("manifest of %s: %v", from.name, err)
+	}
+	waitFor(t, n.name+" to take the record of "+rel+" from "+from.name, convergeTimeout, func() bool {
+		got, err := n.App.Store.LoadManifest(controlCtx(t), folderID)
+		if err != nil {
+			return false
+		}
+		return got.Entries[rel].Version.Compare(want.Entries[rel].Version) != manifest.Before
+	})
 }
 
 // waitFileContent waits until a path inside a node's folder holds want.

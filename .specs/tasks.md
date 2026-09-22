@@ -181,7 +181,7 @@ Goal: ship a reliable multi-device Tailscale-first system.
 - [x] Document install, configure, and run instructions for each platform.
 - [ ] Verify three-device non-conflicting convergence reaches 99.99%.
 - [x] Verify upgrades across two schema versions preserve sync state.
-- [ ] Fix `TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost` (internal/e2e/restore_test.go): fails intermittently, about 1 in 3 runs, with a race-detector build even in isolation with no other test load. Asserts "counter floor of b = 2, want at least the 3 versions a holds" — a real timing-sensitive bug in the restore path or the test's synchronization, not a load artifact. First observed 2026-09-22.
+- [x] Fix `TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost` (internal/e2e/restore_test.go). The test waited for the file content on b before reading the counter floor, but the restore replaces only the database, so that content was already on disk and the wait returned before b had ever spoken to a. The floor it then read was the 2 b's own rescan had produced. The test now waits until b has taken a's version record of the path, which only a sync cycle can write and which happens after adoptCounters in the same cycle. 40 race runs clean; with adoptCounters disabled it still fails 3 out of 3, so the claim is unchanged.
 
 ## Ongoing work
 
