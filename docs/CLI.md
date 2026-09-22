@@ -92,6 +92,7 @@ Starts synchronizing a directory.
 | `--no-empty-dirs` | off | do not keep directories that hold nothing |
 | `--ignore PATTERN` | none | gitignore-style pattern; repeatable |
 | `--sync-window HH:MM-HH:MM` | none | local-time window this folder pulls in; repeatable, see [Sync windows](#sync-windows) |
+| `--device ID` | none | device allowed to synchronize this folder; repeatable, see [Folder authorization](#folder-authorization) |
 
 The ignore rules are the patterns given here plus the lines of
 `<PATH>/.syncthisignore`, and they decide both what is scanned and what is
@@ -118,7 +119,13 @@ $ syncthis folder add ~/docs --id docs --json
 ```
 
 Exits 5 when the id or the path is already configured, and 2 when the path is
-not an existing directory or a flag value is not one of the listed words.
+not an existing directory or a flag value is not one of the listed words. A
+`--device` naming an id that does not parse is exit 2, and one naming a device
+that is not paired is exit 4; both are checked before the folder is written, so
+a typo leaves nothing behind.
+
+A folder added without `--device` is authorized for no device and is served to
+no peer until `folder grant` names one.
 
 ### `syncthis folder list`
 
@@ -185,6 +192,77 @@ terminal.
 $ syncthis folder remove docs --json --yes
 {"removed": "docs"}
 ```
+
+Removing a folder removes its authorizations with it.
+
+## Folder authorization
+
+Pairing a device and sharing a folder with it are two decisions. `peer add`
+makes a device known; a folder is served to no device until it is granted one.
+A device that is not authorized for a folder is not told the folder exists: it
+is left out of the handshake, out of every later folder announcement, and every
+manifest or chunk request it makes for that folder is refused with
+`folder is not configured`, the same answer a folder that was never created
+gets. The check is made on the serving side on every request, so nothing a peer
+sends can widen what it may read.
+
+Devices known before this was added keep every folder they had: the schema
+migration grants every folder that existed to every device that existed, which
+is exactly what the older behavior gave them, so an upgrade changes no running
+synchronization. Everything created afterwards starts authorized for nobody,
+because a folder nobody can read is a visible, reversible mistake and a folder
+the wrong device can read is neither.
+
+### `syncthis folder grant ID DEVICE-ID`
+
+Allows one paired device to synchronize one folder. Granting a device that is
+already authorized succeeds and changes nothing. A running daemon is told at
+once, so the device starts synchronizing over the connection it already has.
+
+```console
+$ syncthis folder grant docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA --json
+{"folder": "docs", "device": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA"}
+```
+
+Exits 2 when either id does not parse, and 4 when the folder is not configured
+or the device is not paired.
+
+### `syncthis folder revoke ID DEVICE-ID`
+
+Withdraws the authorization of one device for one folder. It takes effect on
+the connection the device already has, in the middle of a transfer if there is
+one: the next request the device makes for the folder is answered as if the
+folder did not exist, and a partly downloaded file is left unfinished. The
+files already installed on the other device stay where they are. The device
+remains paired and keeps every other folder it was granted.
+
+```console
+$ syncthis folder revoke docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA --json
+{"folder": "docs", "device": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA"}
+```
+
+Exits 2 when either id does not parse, and 4 when the folder is not configured
+or the device was not authorized for it.
+
+### `syncthis folder devices ID`
+
+Shows which devices may synchronize a folder. Prints the columns `DEVICE ID`
+and `NAME`, sorted by device id; the name is empty for a device that is
+authorized but no longer paired.
+
+```console
+$ syncthis folder devices docs --json
+{
+  "folder": "docs",
+  "devices": [
+    {"id": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA", "name": "nas"}
+  ]
+}
+```
+
+A folder authorized for nobody prints an empty list, and says so in the text
+output. Exits 4 when the folder is not configured, so an empty list is never
+the answer for a folder that does not exist.
 
 ### `syncthis config show`
 

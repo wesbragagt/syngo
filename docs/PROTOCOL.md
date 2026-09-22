@@ -143,6 +143,31 @@ The frame may travel in either direction. The serving side keeps no view of the
 peer's folders, since the peer drives its own pulls, so it accepts the frame and
 answers nothing.
 
+### Folder authorization
+
+Each folder names the devices allowed to synchronize it. The folder list in a
+`Hello`, and in every `FoldersChanged` that follows it, holds only the folders
+the peer being written to is authorized for, so a folder a peer may not have is
+never named to it. The list is per connection: two peers of the same device
+receive different lists.
+
+The naming is not the protection. Every `ManifestRequest` and every
+`ChunkRequest` is checked against the authorization of the device the
+connection's certificate identifies, at the moment the request arrives. A
+request for a folder the peer is not authorized for is answered exactly as a
+request for a folder that does not exist: `folder_unknown`, with the same
+message. A peer cannot tell the two apart, and nothing it sends widens what it
+may read. Checking per request rather than per handshake is also what makes a
+revocation stop a transfer that is already running.
+
+This needs no wire change and the protocol stays at version 2. `Hello` and
+`FoldersChanged` already carry a folder list, and this only narrows what goes
+into it; `folder_unknown` is already the refusal for a folder the peer cannot
+have. No frame, field or code is added, removed or reinterpreted, so a device
+running the older code and one running this one speak the same protocol: the
+older one simply announces and serves more than it should, which is what it did
+before. There is nothing for a version bump to protect against.
+
 `ManifestChanged` and `FoldersChanged` are the only unsolicited frames.
 
 ### Chunk exchange
