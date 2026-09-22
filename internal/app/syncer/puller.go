@@ -60,6 +60,7 @@ type Puller struct {
 	fs        ports.FileSystem
 	hasher    ports.Hasher
 	clock     ports.Clock
+	identity  ports.Identity
 	events    ports.EventSink
 	installer *Installer
 	chunkSize int
@@ -100,7 +101,7 @@ type PullerConfig struct {
 
 // NewPuller returns a puller writing through fsys.
 func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, clock ports.Clock,
-	events ports.EventSink, cfg PullerConfig, log *slog.Logger) *Puller {
+	identity ports.Identity, events ports.EventSink, cfg PullerConfig, log *slog.Logger) *Puller {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -111,7 +112,7 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 		cfg.Concurrency = DefaultConcurrency
 	}
 	return &Puller{
-		store: store, fs: fsys, hasher: hasher, clock: clock, events: events,
+		store: store, fs: fsys, hasher: hasher, clock: clock, identity: identity, events: events,
 		installer: NewInstaller(fsys, hasher),
 		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, download: cfg.Download, log: log,
 		resumed: make(map[transfer.ID]bool),
@@ -296,7 +297,7 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Dirs++
-		return p.record(ctx, f.ID, entry, peer)
+		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
 
 	case syncplan.ActionReplace:
 		return p.replace(ctx, f, peer, item, summary)
@@ -307,7 +308,7 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Modes++
-		return p.record(ctx, f.ID, entry, peer)
+		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
 
 	case syncplan.ActionSymlink:
 		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
@@ -315,14 +316,14 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Symlinks++
-		return p.record(ctx, f.ID, entry, peer)
+		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
 
 	case syncplan.ActionDelete:
 		if err := p.installer.Delete(ctx, f.Path, item.Path); err != nil {
 			return err
 		}
 		summary.Deleted++
-		return p.store.MarkDeleted(ctx, f.ID, []string{item.Path}, peer, p.clock.Now())
+		return p.recordDeletion(ctx, f.ID, peer, item)
 
 	case syncplan.ActionConflict:
 		summary.Conflicts++
@@ -353,15 +354,29 @@ func (p *Puller) replace(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Dirs++
-		return p.record(ctx, f.ID, entry, peer)
+		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
 	default:
 		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
 		if err != nil {
 			return err
 		}
 		summary.Symlinks++
-		return p.record(ctx, f.ID, entry, peer)
+		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
 	}
+}
+
+// recordDeletion writes the tombstone of a path the peer deleted. It adopts
+// the peer's vector rather than raising this device's counter: the deletion is
+// the peer's version of the path, so a peer that still holds the live file is
+// dominated by it and deletes as well, instead of sending the file back.
+func (p *Puller) recordDeletion(ctx context.Context, id folder.ID, peer device.ID, item syncplan.Item) error {
+	tombstone := manifest.Entry{
+		Path:    item.Path,
+		Kind:    item.Local.Kind,
+		Deleted: true,
+		ModTime: p.clock.Now(),
+	}
+	return p.record(ctx, id, fromRemote(tombstone, *item.Remote, peer))
 }
 
 // recordAgreement stores what both sides now agree on for a path that needs no
@@ -373,6 +388,14 @@ func (p *Puller) recordAgreement(ctx context.Context, id folder.ID, item syncpla
 	}
 	if item.Local.SyncedHash != item.Remote.Hash {
 		if err := p.store.SetSyncedHash(ctx, id, item.Path, item.Remote.Hash); err != nil {
+			return err
+		}
+	}
+	// Both sides hold the same content, so the path's history is the merge
+	// of the two vectors: whichever of them a third device holds, it is
+	// then dominated and takes nothing over.
+	if merged := item.Local.Version.Merge(item.Remote.Version); !merged.Equals(item.Local.Version) {
+		if err := p.store.SetVersion(ctx, id, item.Path, merged); err != nil {
 			return err
 		}
 	}
@@ -500,12 +523,12 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		return 0, err
 	}
 
-	entries, err := p.install(ctx, f, conn.RemoteID(), item, t)
+	installed, err := p.install(ctx, f, conn.RemoteID(), item, t)
 	if err != nil {
 		return 0, p.stopped(ctx, t, err)
 	}
-	for _, entry := range entries {
-		if err := p.record(ctx, f.ID, entry, conn.RemoteID()); err != nil {
+	for _, a := range installed {
+		if err := p.record(ctx, f.ID, a); err != nil {
 			return 0, err
 		}
 	}
@@ -529,7 +552,7 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 // now describe the folder. A conflict keeps the local version as well, so it
 // is the only case that returns two.
 func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
-	item syncplan.Item, t transfer.Transfer) ([]manifest.Entry, error) {
+	item syncplan.Item, t transfer.Transfer) ([]arrived, error) {
 	if item.Action == syncplan.ActionConflict {
 		return p.keepBoth(ctx, f, peer, item, t)
 	}
@@ -547,7 +570,7 @@ func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
 	if err != nil {
 		return nil, err
 	}
-	return []manifest.Entry{entry}, nil
+	return []arrived{fromRemote(entry, *item.Remote, peer)}, nil
 }
 
 // transferFor returns the journal entry to continue, or starts a new one. A
@@ -808,15 +831,43 @@ func (p *Puller) failed(ctx context.Context, t transfer.Transfer, cause error) e
 	return cause
 }
 
-// record stores what now sits on disk, attributed to the peer that sent it, so
-// the next local scan sees an unchanged file and does not send it back.
-func (p *Puller) record(ctx context.Context, id folder.ID, e manifest.Entry, peer device.ID) error {
-	e.ModifiedBy = peer
+// arrived is an entry that now sits on disk together with the history it
+// carries: the device that produced the content, which is the one the peer
+// announced and not the peer it came from, and the version vector that orders
+// it against the same path elsewhere.
+type arrived struct {
+	entry   manifest.Entry
+	author  device.ID
+	version manifest.Version
+}
+
+// fromRemote describes an entry installed as the peer announced it. A peer
+// that names no author is itself the author, which is what an entry written
+// before authors were recorded looks like.
+func fromRemote(e manifest.Entry, remote manifest.Entry, peer device.ID) arrived {
+	return arrived{entry: e, author: authorOf(remote, peer), version: remote.Version}
+}
+
+// record stores what now sits on disk: the author, the vector the content
+// carries and the mode as the new baseline, so the next local scan sees an
+// unchanged file and does not send it back.
+func (p *Puller) record(ctx context.Context, id folder.ID, a arrived) error {
+	e := a.entry
+	e.ModifiedBy = a.author
+	e.Version = a.version
 	if e.Kind == manifest.KindFile {
 		e.SyncedHash = e.Hash
 	}
 	e.SyncedMode = e.Mode
 	return p.store.UpsertEntries(ctx, id, []manifest.Entry{e})
+}
+
+// self is the device this puller installs for, empty when it has no identity.
+func (p *Puller) self() device.ID {
+	if p.identity == nil {
+		return ""
+	}
+	return p.identity.DeviceID()
 }
 
 // newTemp creates an empty partial file inside the temp directory of a folder

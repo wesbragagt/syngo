@@ -254,7 +254,7 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 
 		handler := syncer.New(store, fs, app.Hasher, identity, logger)
 		handler.SetUploadLimiter(upload)
-		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, events,
+		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, identity, events,
 			syncer.PullerConfig{ChunkSize: cfg.ChunkSize, Download: download}, logger)
 		// The Hello is built per connection because the folder list
 		// changes while the process runs.

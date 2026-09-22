@@ -20,6 +20,9 @@ import (
 // peerID is the device the destination pulls from.
 const peerID = device.ID("SOURCE")
 
+// destID is the device the destination puller installs for.
+const destID = device.ID("DEST")
+
 // dest is a device that pulls a folder from a peer.
 type dest struct {
 	store  *fakes.Store
@@ -45,7 +48,7 @@ func newDest(t *testing.T, handler ports.PeerHandler) (*dest, *fakes.PeerConn) {
 	if err := d.store.SaveFolder(context.Background(), f); err != nil {
 		t.Fatalf("save folder: %v", err)
 	}
-	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, d.events,
+	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, fakes.NewIdentity(destID, "dest"), d.events,
 		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 2}, nil)
 	return d, fakes.NewPeerConn(peerID, "nas", handler, time.Millisecond)
 }
@@ -53,7 +56,7 @@ func newDest(t *testing.T, handler ports.PeerHandler) (*dest, *fakes.PeerConn) {
 // restart replaces the puller with a fresh one, as a daemon restart would.
 // The store and the filesystem survive, the in-memory state does not.
 func (d *dest) restart() {
-	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, d.events,
+	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, fakes.NewIdentity(destID, "dest"), d.events,
 		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 2}, nil)
 }
 
@@ -981,5 +984,120 @@ func TestSync_OneItemThatCannotBeAppliedDoesNotStopTheCycle(t *testing.T) {
 	}
 	if got := d.events.Count("sync.item_failed"); got != 1 {
 		t.Fatalf("sync.item_failed events = %d, want 1", got)
+	}
+}
+
+// vector parses a version vector written as "ID:N,ID:N".
+func vector(t *testing.T, s string) manifest.Version {
+	t.Helper()
+	v, err := manifest.ParseVersion(s)
+	if err != nil {
+		t.Fatalf("parse version %q: %v", s, err)
+	}
+	return v
+}
+
+// setVersion gives a stored source entry an author and a version vector, the
+// way the scan of the device that wrote the content would have.
+func (s *source) setVersion(t *testing.T, rel string, by device.ID, v manifest.Version) {
+	t.Helper()
+	e, err := s.store.GetFile(context.Background(), s.folder.ID, rel)
+	if err != nil {
+		t.Fatalf("get %s: %v", rel, err)
+	}
+	e.ModifiedBy, e.Version = by, v
+	if err := s.store.UpsertEntries(context.Background(), s.folder.ID, []manifest.Entry{e}); err != nil {
+		t.Fatalf("record %s: %v", rel, err)
+	}
+}
+
+// storedVersion returns the version vector of a destination entry.
+func (d *dest) storedVersion(t *testing.T, rel string) manifest.Version {
+	t.Helper()
+	e, err := d.store.GetFile(context.Background(), d.folder.ID, rel)
+	if err != nil {
+		t.Fatalf("get %s: %v", rel, err)
+	}
+	return e.Version
+}
+
+func TestSync_PullAdoptsTheRemoteVersionAndAuthor(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", []byte("from a third device"))
+	// The peer relays a version another device wrote.
+	src.setVersion(t, "a.txt", "THIRD", vector(t, "THIRD:2"))
+
+	d, conn := newDest(t, src.server)
+	if summary := d.sync(t, conn); summary.Pulled != 1 {
+		t.Fatalf("summary = %+v, want one pulled file", summary)
+	}
+
+	stored, err := d.store.GetFile(context.Background(), d.folder.ID, "a.txt")
+	if err != nil {
+		t.Fatalf("stored entry: %v", err)
+	}
+	if !stored.Version.Equals(vector(t, "THIRD:2")) {
+		t.Fatalf("version = %q, want the vector the content carries", stored.Version)
+	}
+	// The author is the device that wrote the content, not the peer it
+	// came from, so the same version relayed twice is still one version.
+	if stored.ModifiedBy != "THIRD" {
+		t.Fatalf("author = %q, want the device the peer announced", stored.ModifiedBy)
+	}
+}
+
+func TestSync_DeleteAdoptsTheTombstoneVersion(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	data := []byte("deleted upstream")
+	src.addFile(t, "gone.txt", data)
+	if err := src.store.MarkDeleted(ctx, src.folder.ID, []string{"gone.txt"}, peerID, time.Now()); err != nil {
+		t.Fatalf("mark deleted: %v", err)
+	}
+	tombstone, err := src.store.GetFile(ctx, src.folder.ID, "gone.txt")
+	if err != nil {
+		t.Fatalf("source tombstone: %v", err)
+	}
+
+	d, conn := newDest(t, src.server)
+	d.record(t, "gone.txt", data, d.hasher.SumBytes(data))
+
+	if summary := d.sync(t, conn); summary.Deleted != 1 {
+		t.Fatalf("summary = %+v, want one deletion", summary)
+	}
+	stored, err := d.store.GetFile(ctx, d.folder.ID, "gone.txt")
+	if err != nil {
+		t.Fatalf("stored entry: %v", err)
+	}
+	// The deletion is the peer's version of the path, so this device holds
+	// exactly that version rather than a deletion of its own.
+	if !stored.Deleted || !stored.Version.Equals(tombstone.Version) {
+		t.Fatalf("tombstone = %+v, want the peer's vector %q", stored, tombstone.Version)
+	}
+	if stored.ModifiedBy != peerID {
+		t.Fatalf("author = %q, want the device that deleted the file", stored.ModifiedBy)
+	}
+}
+
+func TestSync_InSyncAdoptsTheMergedVersion(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	data := []byte("identical on both sides")
+	src.addFile(t, "a.txt", data)
+	src.setVersion(t, "a.txt", peerID, vector(t, "SOURCE:1"))
+
+	d, conn := newDest(t, src.server)
+	d.record(t, "a.txt", data, manifest.Hash{})
+	if err := d.store.SetVersion(ctx, d.folder.ID, "a.txt", vector(t, "DEST:1")); err != nil {
+		t.Fatalf("set version: %v", err)
+	}
+
+	if summary := d.sync(t, conn); summary.Pulled != 0 {
+		t.Fatalf("summary = %+v, want nothing pulled", summary)
+	}
+	// Both sides hold the same bytes under concurrent vectors, so the path
+	// ends up with the merge and a third device is ordered against it.
+	if got := d.storedVersion(t, "a.txt"); !got.Equals(vector(t, "DEST:1,SOURCE:1")) {
+		t.Fatalf("version = %q, want the merge of both", got)
 	}
 }

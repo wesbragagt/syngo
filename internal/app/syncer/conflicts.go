@@ -41,7 +41,7 @@ func needsRemoteContent(item syncplan.Item) bool {
 // its place, returning the entries that now describe the folder: the file at
 // the path, and the copy holding what this device had.
 func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
-	item syncplan.Item, t transfer.Transfer) ([]manifest.Entry, error) {
+	item syncplan.Item, t transfer.Transfer) ([]arrived, error) {
 	name := conflict.Name(item.Path, p.clock.Now(), peer)
 	// The local version moves aside first, so the path is free for the
 	// peer's version and the local bytes are never overwritten.
@@ -60,7 +60,7 @@ func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
 			// It cannot go back, so the manifest is told where it
 			// is: an unrecorded file would be read as a deletion of
 			// the path and as an addition beside it.
-			if recordErr := p.record(ctx, f.ID, kept, peer); recordErr != nil {
+			if recordErr := p.record(ctx, f.ID, p.keptCopy(ctx, f.ID, kept, item)); recordErr != nil {
 				return nil, errors.Join(err, restoreErr, recordErr)
 			}
 			return nil, errors.Join(err, restoreErr)
@@ -70,7 +70,40 @@ func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
 	if err := p.recordConflict(ctx, f, peer, item, kept.Path); err != nil {
 		return nil, err
 	}
-	return []manifest.Entry{installed, kept}, nil
+	// The version at the path is the outcome of the conflict, so it
+	// dominates both inputs: a third device holding either takes it
+	// without conflicting a second time.
+	outcome := arrived{
+		entry:   installed,
+		author:  authorOf(*item.Remote, peer),
+		version: item.Local.Version.Merge(item.Remote.Version),
+	}
+	return []arrived{outcome, p.keptCopy(ctx, f.ID, kept, item)}, nil
+}
+
+// keptCopy describes the copy holding the version that gave up the path. It
+// keeps the author of that version, and its vector is raised from whatever the
+// copy's path held here before, a tombstone of an earlier copy included, so
+// the copy is a new version of its own path rather than a stale one.
+func (p *Puller) keptCopy(ctx context.Context, id folder.ID, kept manifest.Entry, item syncplan.Item) arrived {
+	var prev manifest.Version
+	if stored, err := p.store.GetFile(ctx, id, kept.Path); err == nil {
+		prev = stored.Version
+	}
+	return arrived{
+		entry:   kept,
+		author:  item.Local.ModifiedBy,
+		version: prev.Bump(p.self()),
+	}
+}
+
+// authorOf is the device that produced a remote version: the one the peer
+// announced, or the peer itself when it announced none.
+func authorOf(remote manifest.Entry, peer device.ID) device.ID {
+	if remote.ModifiedBy == "" {
+		return peer
+	}
+	return remote.ModifiedBy
 }
 
 // conflictKept reports a conflict that leaves the local side exactly as it is:

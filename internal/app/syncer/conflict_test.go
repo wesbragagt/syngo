@@ -10,7 +10,9 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/conflict"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // ordered returns the two contents of a conflict in the order the keep-both
@@ -311,4 +313,71 @@ func TestConflict_FailedInstallPutsTheLocalVersionBack(t *testing.T) {
 	if copies := conflictCopies(d, "a.txt"); len(copies) != 1 {
 		t.Fatalf("conflict copies = %v, want the local version kept beside it", copies)
 	}
+}
+
+func TestConflict_KeepBothRecordsTheMergedVersionAndANewCopy(t *testing.T) {
+	ctx := context.Background()
+	hasher := fakes.NewHasher()
+	base := []byte("what both sides had")
+	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
+
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", remote)
+	src.setVersion(t, "a.txt", peerID, vector(t, "BASE:1,SOURCE:1"))
+
+	d, conn := newDest(t, src.server)
+	d.record(t, "a.txt", local, hasher.SumBytes(base))
+	if err := d.store.SetVersion(ctx, d.folder.ID, "a.txt", vector(t, "BASE:1,DEST:1")); err != nil {
+		t.Fatalf("set version: %v", err)
+	}
+	if err := d.store.UpsertEntries(ctx, d.folder.ID, []manifest.Entry{localEntry(t, d, "a.txt", "DEST")}); err != nil {
+		t.Fatalf("record the author: %v", err)
+	}
+
+	if summary := d.sync(t, conn); summary.Conflicts != 1 {
+		t.Fatalf("summary = %+v, want one conflict", summary)
+	}
+	copies := conflictCopies(d, "a.txt")
+	if len(copies) != 1 {
+		t.Fatalf("conflict copies = %v, want exactly one", copies)
+	}
+
+	// The outcome of a conflict dominates both versions that went into it,
+	// so a third device holding either one takes it without conflicting
+	// again.
+	path, err := d.store.GetFile(ctx, d.folder.ID, "a.txt")
+	if err != nil {
+		t.Fatalf("stored entry: %v", err)
+	}
+	if !path.Version.Equals(vector(t, "BASE:1,DEST:1,SOURCE:1")) {
+		t.Fatalf("version of the path = %q, want the merge of both", path.Version)
+	}
+	if path.ModifiedBy != peerID {
+		t.Fatalf("author of the path = %q, want the device that wrote the content", path.ModifiedBy)
+	}
+
+	// The copy is a version of its own path, made here, and it keeps the
+	// author of the content it holds.
+	copied, err := d.store.GetFile(ctx, d.folder.ID, copies[0])
+	if err != nil {
+		t.Fatalf("stored copy: %v", err)
+	}
+	if !copied.Version.Equals(vector(t, "DEST:1")) {
+		t.Fatalf("version of the copy = %q, want this device's first version of it", copied.Version)
+	}
+	if copied.ModifiedBy != "DEST" {
+		t.Fatalf("author of the copy = %q, want the author of the local version", copied.ModifiedBy)
+	}
+}
+
+// localEntry returns a stored destination entry with its author set, which a
+// scan would have recorded when the local version was written.
+func localEntry(t *testing.T, d *dest, rel string, by device.ID) manifest.Entry {
+	t.Helper()
+	e, err := d.store.GetFile(context.Background(), d.folder.ID, rel)
+	if err != nil {
+		t.Fatalf("get %s: %v", rel, err)
+	}
+	e.ModifiedBy = by
+	return e
 }

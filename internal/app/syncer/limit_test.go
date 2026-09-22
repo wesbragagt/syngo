@@ -19,7 +19,7 @@ import (
 func newLimitedDest(t *testing.T, handler ports.PeerHandler, limiter ports.Limiter) (*dest, *fakes.PeerConn) {
 	t.Helper()
 	d, conn := newDest(t, handler)
-	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, d.events,
+	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, fakes.NewIdentity(destID, "dest"), d.events,
 		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 1, Download: limiter}, nil)
 	return d, conn
 }
