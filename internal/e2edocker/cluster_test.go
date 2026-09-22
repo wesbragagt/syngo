@@ -661,6 +661,29 @@ func (d *Device) Remove(rel string) {
 	}
 }
 
+// Touch sets the modification time of a path, which is how this suite makes
+// clocks disagree: the daemons share the host's clock, so a device that
+// believes a file was written in another decade is the closest a container
+// gets to a skewed clock. It runs inside the container, as the daemon's own
+// view of the file.
+func (d *Device) Touch(rel string, at time.Time) {
+	d.c.T.Helper()
+	res := d.c.d.exec(d.Ctr, "", "touch", "-h", "-d", fmt.Sprintf("@%d", at.Unix()), containerRoot+"/"+rel)
+	if res.code != 0 {
+		d.c.T.Fatalf("%s: touch %s: exit %d: %s", d.Name, rel, res.code, strings.TrimSpace(res.stderr))
+	}
+}
+
+// ModTime is when the device believes a path was last written.
+func (d *Device) ModTime(rel string) time.Time {
+	d.c.T.Helper()
+	info, err := os.Lstat(filepath.Join(d.HostRoot, rel))
+	if err != nil {
+		d.c.T.Fatalf("%s: stat %s: %v", d.Name, rel, err)
+	}
+	return info.ModTime()
+}
+
 // Tree describes what the device holds in its folder.
 func (d *Device) Tree() map[string]tree.Entry {
 	d.c.T.Helper()

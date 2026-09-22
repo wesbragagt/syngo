@@ -2,7 +2,10 @@ package e2edocker
 
 import (
 	"fmt"
+	"sync"
 	"testing"
+
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // TestPartition_EditBothSidesThenHeal cuts one device off from the other two,
@@ -199,6 +202,122 @@ func TestOffline_StaleRejoinKeepsTheNewerVersion(t *testing.T) {
 		}
 		if rows := dev.Conflicts(); len(rows) != 0 {
 			t.Errorf("%s recorded a conflict over a file c never touched: %+v", dev.Name, rows)
+		}
+	}
+}
+
+// netemRounds is how many rounds of simultaneous edits the shaped cluster
+// makes.
+const netemRounds = 3
+
+// TestNetem_LatencyAndLoss gives every link a tenth of a second of latency,
+// jitter and one packet in a hundred dropped, and then has all three devices
+// change the folder at the same instant, round after round. A bad link is
+// slower, not different: every round still ends with the same tree everywhere
+// and nothing anyone calls a conflict.
+func TestNetem_LatencyAndLoss(t *testing.T) {
+	t.Skip("known: a link with latency makes a peer ask for a version the writer has already replaced, " +
+		"and the refused transfer stays in the journal as failed forever; see Known failures (KF-1) " +
+		"in docs/PLAN-E2E-DOCKER.md")
+	c := Start(t, 3)
+	c.requireNetAdmin()
+	for i := range c.Devices {
+		c.Netem(i, "delay 100ms 20ms loss 1%")
+	}
+
+	rounds := netemRounds
+	if testing.Short() {
+		rounds = 1
+	}
+	// want is the last write to every path that still exists, which is
+	// what every device has to hold at the end.
+	want := map[string][]byte{}
+
+	for round := 0; round < rounds; round++ {
+		type change struct {
+			path    string
+			content []byte
+			remove  bool
+		}
+		plan := make([][]change, len(c.Devices))
+		for i, dev := range c.Devices {
+			// Each device owns a directory and works only in it, so
+			// the rounds are disjoint by construction. Every path is
+			// written whole and then put in place, and a path is
+			// only rewritten or removed in a later round, once the
+			// round that created it has converged: a version that
+			// changes while a peer is pulling it is KF-1, which is
+			// not what a shaped link is being asked about.
+			for n := 0; n < 3; n++ {
+				path := fmt.Sprintf("%s/r%02d-%d.bin", dev.Name, round, n)
+				content := payload(n*chunkSize+round*7+13, byte(round*5+n))
+				plan[i] = append(plan[i], change{path: path, content: content})
+				want[path] = content
+			}
+			if round > 0 {
+				// One path from the round before is rewritten
+				// and one is deleted, so a round carries every
+				// kind of change and not only creations.
+				rewritten := fmt.Sprintf("%s/r%02d-0.bin", dev.Name, round-1)
+				content := payload(2*chunkSize+round, byte(200+round))
+				plan[i] = append(plan[i], change{path: rewritten, content: content})
+				want[rewritten] = content
+
+				removed := fmt.Sprintf("%s/r%02d-1.bin", dev.Name, round-1)
+				plan[i] = append(plan[i], change{path: removed, remove: true})
+				delete(want, removed)
+			}
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i, dev := range c.Devices {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				for _, ch := range plan[i] {
+					if ch.remove {
+						dev.Remove(ch.path)
+						continue
+					}
+					dev.WriteFileAtomic(ch.path, ch.content)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		c.WaitConverged()
+		for _, dev := range c.Devices {
+			if rows := dev.Conflicts(); len(rows) != 0 {
+				t.Fatalf("round %d: %s recorded %d conflicts over paths nobody shares: %+v",
+					round, dev.Name, len(rows), rows)
+			}
+		}
+	}
+
+	c.CheckInvariants()
+	for _, dev := range c.Devices {
+		entries := dev.Tree()
+		for path, content := range want {
+			entry, ok := entries[path]
+			if !ok {
+				t.Errorf("%s is missing %s", dev.Name, path)
+				continue
+			}
+			if entry.Hash != hashOf(content) {
+				t.Errorf("%s holds %s as %s, want the last write %s",
+					dev.Name, path, entry.Hash, hashOf(content))
+			}
+		}
+		for path, entry := range entries {
+			if entry.Kind == manifest.KindDir {
+				continue
+			}
+			if _, ok := want[path]; !ok {
+				t.Errorf("%s holds %s, which was deleted", dev.Name, path)
+			}
 		}
 	}
 }

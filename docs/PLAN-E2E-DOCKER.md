@@ -407,6 +407,24 @@ path completes, or retry instead of failing when the refusal says the peer's
 version moved on), which is more than a few clearly correct lines, so it is
 recorded here rather than patched.
 
+Scenario 20 (`TestNetem_LatencyAndLoss`) shows the same failure without any
+transfer being interrupted, and is skipped for it too. With 100 ms of latency
+on every link, a device asks for a version out of a manifest it fetched a
+moment ago; by the time the request arrives the writer has rewritten or
+deleted that path, and the refusal is permanent in the same way:
+
+```
+a: a/r00-1.bin failed 0/2  chunk 0 of docs/a/r00-1.bin refused: not_found
+b: c/r00-0.bin failed 0/1  chunk 0 of docs/c/r00-0.bin refused: hash_changed
+c: b/r00-0.bin failed 0/1  chunk 0 of docs/b/r00-0.bin refused: hash_changed
+```
+
+The rounds converged before the rewrite, so nothing was mid-transfer: the
+window is the age of a manifest, which is as long as the round trip. Any
+cluster where files are edited or deleted at all accumulates these rows once
+the link is slow enough, which makes this the reason to fix KF-1 rather than a
+second bug.
+
 ### KF-2: three-way divergence loses one of the three versions
 
 Scenario 4 (`TestMesh_ThreeWritersOneConflict`). Three devices are partitioned
