@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -48,8 +47,7 @@ func (ExecRunner) LookPath(file string) (string, error) { return exec.LookPath(f
 // be able to break it.
 func (ExecRunner) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	isolateProcessGroup(cmd)
 	cmd.WaitDelay = waitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

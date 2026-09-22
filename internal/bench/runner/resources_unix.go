@@ -29,7 +29,7 @@ func readResourceSample() resourceSample {
 	sample.diskWriteBytes = -1
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err == nil {
 		sample.cpuSeconds = rusageSeconds(ru.Utime) + rusageSeconds(ru.Stime)
-		sample.maxRSS = maxRSSBytes(ru.Maxrss)
+		sample.maxRSS = maxRSSBytes(int64(ru.Maxrss))
 	}
 	if written, err := readProcSelfIOWriteBytes(); err == nil {
 		sample.diskWriteBytes = written
