@@ -21,14 +21,15 @@ type findingView struct {
 
 // repairView is the JSON shape of one repaired folder.
 type repairView struct {
-	FolderID       string        `json:"folder_id"`
-	DryRun         bool          `json:"dry_run"`
-	MissingDeleted []string      `json:"missing_deleted"`
-	Rehashed       []string      `json:"rehashed"`
-	TransfersReset []string      `json:"transfers_reset"`
-	OrphanTemps    []string      `json:"orphan_temps"`
-	SequenceFixed  bool          `json:"sequence_fixed"`
-	Unrecoverable  []findingView `json:"unrecoverable"`
+	FolderID        string        `json:"folder_id"`
+	DryRun          bool          `json:"dry_run"`
+	MissingDeleted  []string      `json:"missing_deleted"`
+	Rehashed        []string      `json:"rehashed"`
+	TransfersReset  []string      `json:"transfers_reset"`
+	TransfersPruned []string      `json:"transfers_pruned"`
+	OrphanTemps     []string      `json:"orphan_temps"`
+	SequenceFixed   bool          `json:"sequence_fixed"`
+	Unrecoverable   []findingView `json:"unrecoverable"`
 }
 
 // viewOfRepair converts a repair report into its JSON shape.
@@ -38,14 +39,15 @@ func viewOfRepair(r repair.Report) repairView {
 		findings = append(findings, findingView{Path: f.Path, Reason: f.Reason})
 	}
 	return repairView{
-		FolderID:       string(r.FolderID),
-		DryRun:         r.DryRun,
-		MissingDeleted: orEmpty(r.MissingDeleted),
-		Rehashed:       orEmpty(r.Rehashed),
-		TransfersReset: orEmpty(r.TransfersReset),
-		OrphanTemps:    orEmpty(r.OrphanTemps),
-		SequenceFixed:  r.SequenceFixed,
-		Unrecoverable:  findings,
+		FolderID:        string(r.FolderID),
+		DryRun:          r.DryRun,
+		MissingDeleted:  orEmpty(r.MissingDeleted),
+		Rehashed:        orEmpty(r.Rehashed),
+		TransfersReset:  orEmpty(r.TransfersReset),
+		TransfersPruned: orEmpty(r.TransfersPruned),
+		OrphanTemps:     orEmpty(r.OrphanTemps),
+		SequenceFixed:   r.SequenceFixed,
+		Unrecoverable:   findings,
 	}
 }
 
@@ -131,9 +133,10 @@ func printRepair(deps *Deps, views []repairView) error {
 			suffix = " (dry run, nothing written)"
 		}
 		if _, err := fmt.Fprintf(deps.Stdout,
-			"%s: %d missing marked deleted, %d rehashed, %d transfers reset, %d orphan temp files, sequence fixed: %t%s\n",
+			"%s: %d missing marked deleted, %d rehashed, %d transfers reset, "+
+				"%d failed transfers pruned, %d orphan temp files, sequence fixed: %t%s\n",
 			v.FolderID, len(v.MissingDeleted), len(v.Rehashed), len(v.TransfersReset),
-			len(v.OrphanTemps), v.SequenceFixed, suffix); err != nil {
+			len(v.TransfersPruned), len(v.OrphanTemps), v.SequenceFixed, suffix); err != nil {
 			return err
 		}
 		for _, f := range v.Unrecoverable {

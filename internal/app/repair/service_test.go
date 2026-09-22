@@ -319,3 +319,92 @@ func TestRun_RefusesARootThatIsNoLongerADirectory(t *testing.T) {
 		t.Fatalf("repair = %v, want ErrRootMissing", err)
 	}
 }
+
+// addFailedTransfer stores a transfer given up on for rel, expecting hash.
+func (e *env) addFailedTransfer(t *testing.T, id, rel, tempPath string, hash manifest.Hash) transfer.Transfer {
+	t.Helper()
+	entry := manifest.Entry{Path: rel, Kind: manifest.KindFile, Size: 8192, Hash: hash}
+	tr := transfer.NewInbound(transfer.ID(id), e.folder.ID, entry, "PEER1", transfer.MinChunkSize, tempPath, e.clock.Now())
+	tr.State = transfer.StateFailed
+	tr.Error = "chunk 1 did not hash right"
+	if err := e.store.SaveTransfer(context.Background(), tr); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+	return tr
+}
+
+// transfers returns every journal row of the folder.
+func (e *env) transfers(t *testing.T) []transfer.Transfer {
+	t.Helper()
+	list, err := e.store.ListTransfers(context.Background(), ports.TransferFilter{FolderID: e.folder.ID})
+	if err != nil {
+		t.Fatalf("list transfers: %v", err)
+	}
+	return list
+}
+
+func TestRepair_PrunesAFailedTransferWithoutItsPartialFile(t *testing.T) {
+	e := newEnv(t)
+	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part",
+		e.hasher.SumBytes([]byte("what the peer offered")))
+
+	report := e.run(t, false)
+	if len(report.TransfersPruned) != 1 || report.TransfersPruned[0] != string(tr.ID) {
+		t.Fatalf("pruned = %v, want the row with nothing left to inspect", report.TransfersPruned)
+	}
+	if rows := e.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want it empty", rows)
+	}
+}
+
+func TestRepair_PrunesAFailedTransferWhosePathConverged(t *testing.T) {
+	e := newEnv(t)
+	entry := e.addFile(t, "big.bin", "what the peer offered")
+	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part", entry.Hash)
+	e.fs.AddFile(tr.TempPath, []byte("half a download"), 0o600)
+
+	report := e.run(t, false)
+	if len(report.TransfersPruned) != 1 {
+		t.Fatalf("pruned = %v, want the row whose path already holds the content", report.TransfersPruned)
+	}
+	if rows := e.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want it empty", rows)
+	}
+	if _, ok := e.fs.Content(tr.TempPath); ok {
+		t.Fatal("the partial file of a pruned row was kept")
+	}
+}
+
+func TestRepair_KeepsAFailedTransferWorthLookingAt(t *testing.T) {
+	e := newEnv(t)
+	e.addFile(t, "big.bin", "what this device holds")
+	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part",
+		e.hasher.SumBytes([]byte("what the peer offered")))
+	e.fs.AddFile(tr.TempPath, []byte("half a download"), 0o600)
+
+	report := e.run(t, false)
+	if len(report.TransfersPruned) != 0 {
+		t.Fatalf("pruned = %v, want the row kept: the path has not converged", report.TransfersPruned)
+	}
+	rows := e.transfers(t)
+	if len(rows) != 1 || rows[0].State != transfer.StateFailed {
+		t.Fatalf("journal holds %+v, want the failed row", rows)
+	}
+	if _, ok := e.fs.Content(tr.TempPath); !ok {
+		t.Fatal("the partial file was removed, it must be kept for inspection")
+	}
+}
+
+func TestRepair_DryRunListsPrunableTransfersWithoutDeletingThem(t *testing.T) {
+	e := newEnv(t)
+	e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part",
+		e.hasher.SumBytes([]byte("what the peer offered")))
+
+	report := e.run(t, true)
+	if len(report.TransfersPruned) != 1 {
+		t.Fatalf("pruned = %v, want the row listed", report.TransfersPruned)
+	}
+	if rows := e.transfers(t); len(rows) != 1 {
+		t.Fatalf("journal holds %+v, want the row still there after a dry run", rows)
+	}
+}

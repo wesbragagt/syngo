@@ -42,6 +42,10 @@ type Report struct {
 	Rehashed []string
 	// TransfersReset are transfers whose partial file disappeared.
 	TransfersReset []string
+	// TransfersPruned are failed transfers with nothing left to inspect:
+	// their partial file is gone, or the path already holds the content
+	// they were downloading.
+	TransfersPruned []string
 	// OrphanTemps are partial files no live transfer claims.
 	OrphanTemps []string
 	// SequenceFixed reports that the folder sequence counter had fallen
@@ -54,7 +58,7 @@ type Report struct {
 // Changed reports whether the folder needed (or received) any change.
 func (r Report) Changed() bool {
 	return len(r.MissingDeleted) > 0 || len(r.Rehashed) > 0 || len(r.TransfersReset) > 0 ||
-		len(r.OrphanTemps) > 0 || r.SequenceFixed
+		len(r.TransfersPruned) > 0 || len(r.OrphanTemps) > 0 || r.SequenceFixed
 }
 
 // Service checks one folder and repairs what it can.
@@ -90,7 +94,7 @@ func (s *Service) Run(ctx context.Context, folderID folder.ID, dryRun bool) (Rep
 	if err != nil {
 		return Report{}, err
 	}
-	transfers, resets, err := s.inspectTransfers(ctx, folderID, &report)
+	transfers, resets, pruned, err := s.inspectTransfers(ctx, f, m, &report)
 	if err != nil {
 		return Report{}, err
 	}
@@ -103,7 +107,7 @@ func (s *Service) Run(ctx context.Context, folderID folder.ID, dryRun bool) (Rep
 	if dryRun {
 		return report, nil
 	}
-	if err := s.apply(ctx, folderID, report, rehashed, resets, orphans); err != nil {
+	if err := s.apply(ctx, folderID, report, rehashed, resets, pruned, orphans); err != nil {
 		return Report{}, err
 	}
 	return report, nil
@@ -167,16 +171,25 @@ func (s *Service) inspectFiles(ctx context.Context, f folder.Folder, m manifest.
 	return rehashed, nil
 }
 
-// inspectTransfers returns every transfer of the folder, plus those whose
-// partial file is gone with their chunk state cleared.
-func (s *Service) inspectTransfers(ctx context.Context, id folder.ID, report *Report) (all, resets []transfer.Transfer, err error) {
-	list, err := s.store.ListTransfers(ctx, ports.TransferFilter{FolderID: id})
+// inspectTransfers returns every transfer of the folder, those whose partial
+// file is gone with their chunk state cleared, and the failed rows worth
+// nothing any more.
+func (s *Service) inspectTransfers(ctx context.Context, f folder.Folder, m manifest.Manifest,
+	report *Report) (all, resets []transfer.Transfer, pruned []transfer.Transfer, err error) {
+	list, err := s.store.ListTransfers(ctx, ports.TransferFilter{FolderID: f.ID})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	for _, t := range list {
-		if t.State == transfer.StateDone || t.State == transfer.StateFailed {
+		if t.State == transfer.StateDone {
+			continue
+		}
+		if t.State == transfer.StateFailed {
+			if s.spent(f, m, t) {
+				pruned = append(pruned, t)
+				report.TransfersPruned = append(report.TransfersPruned, string(t.ID))
+			}
 			continue
 		}
 		if _, err := s.fs.Lstat(t.TempPath); err == nil {
@@ -191,7 +204,22 @@ func (s *Service) inspectTransfers(ctx context.Context, id folder.ID, report *Re
 		resets = append(resets, t)
 		report.TransfersReset = append(report.TransfersReset, string(t.ID))
 	}
-	return list, resets, nil
+	return list, resets, pruned, nil
+}
+
+// spent reports whether a failed transfer has nothing left to say. A failed
+// row is kept so the bytes that did not hash right can be looked at, which is
+// pointless once the partial file is gone or the path holds the content the
+// transfer was after.
+func (s *Service) spent(f folder.Folder, m manifest.Manifest, t transfer.Transfer) bool {
+	if _, err := s.fs.Lstat(t.TempPath); errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	e, ok := m.Entries[t.Path]
+	if !ok || e.Deleted || e.Kind != manifest.KindFile {
+		return false
+	}
+	return e.Hash == t.Hash
 }
 
 // inspectTemp lists the partial files under <root>/.syncthis/tmp that no
@@ -199,7 +227,10 @@ func (s *Service) inspectTransfers(ctx context.Context, id folder.ID, report *Re
 func (s *Service) inspectTemp(ctx context.Context, f folder.Folder, transfers []transfer.Transfer, report *Report) ([]string, error) {
 	claimed := make(map[string]bool, len(transfers))
 	for _, t := range transfers {
-		if t.State != transfer.StateDone && t.State != transfer.StateFailed {
+		// A failed transfer claims its partial file too: those are the
+		// bytes that did not hash right, kept for as long as the row
+		// is. The row and the file go together, in the prune pass.
+		if t.State != transfer.StateDone {
 			claimed[t.TempPath] = true
 		}
 	}
@@ -226,7 +257,7 @@ func (s *Service) inspectTemp(ctx context.Context, f folder.Folder, transfers []
 
 // apply writes the repairs back to the store and the filesystem.
 func (s *Service) apply(ctx context.Context, id folder.ID, report Report,
-	rehashed []manifest.Entry, resets []transfer.Transfer, orphans []string) error {
+	rehashed []manifest.Entry, resets, pruned []transfer.Transfer, orphans []string) error {
 	now := s.clock.Now()
 	by := device.ID("")
 	if s.identity != nil {
@@ -258,6 +289,16 @@ func (s *Service) apply(ctx context.Context, id folder.ID, report Report,
 			return err
 		}
 		if err := s.store.SetTransferState(ctx, t.ID, transfer.StatePending, "", now); err != nil {
+			return err
+		}
+	}
+	for _, t := range pruned {
+		// The partial file goes with the row; one that is already gone
+		// is what made the row worth nothing in the first place.
+		if err := s.fs.Remove(t.TempPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove partial file %s: %w", t.TempPath, err)
+		}
+		if err := s.store.DeleteTransfer(ctx, t.ID); err != nil {
 			return err
 		}
 	}

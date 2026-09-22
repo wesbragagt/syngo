@@ -137,6 +137,29 @@ func (d *dest) failedTransfer(t *testing.T) transfer.Transfer {
 	return list[0]
 }
 
+// transfers returns every journal row of the destination folder.
+func (d *dest) transfers(t *testing.T) []transfer.Transfer {
+	t.Helper()
+	list, err := d.store.ListTransfers(context.Background(),
+		ports.TransferFilter{FolderID: d.folder.ID})
+	if err != nil {
+		t.Fatalf("list transfers: %v", err)
+	}
+	return list
+}
+
+// tempFiles returns the partial files under the folder's temp directory.
+func (d *dest) tempFiles() []string {
+	var out []string
+	prefix := d.folder.Path + "/.syncthis/tmp/"
+	for _, p := range d.fs.Paths() {
+		if strings.HasPrefix(p, prefix) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // chunkIndexes returns the chunk indexes a connection was asked for.
 func chunkIndexes(conn *fakes.PeerConn) []int {
 	var out []int
@@ -492,9 +515,20 @@ func TestSync_HashChangedOnSenderFailsCleanly(t *testing.T) {
 	if summary.Failed != 1 {
 		t.Fatalf("summary = %+v, want one failed file", summary)
 	}
-	failed := d.failedTransfer(t)
-	if _, ok := d.fs.Content(failed.TempPath); ok {
-		t.Fatal("the partial file of a superseded version was kept")
+	// The plan the transfer was made from is stale, not the bytes: nothing
+	// is left to inspect, so the journal keeps no row and no partial file
+	// and the next cycle decides the path again from scratch.
+	if rows := d.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want it empty", rows)
+	}
+	if temps := d.tempFiles(); len(temps) != 0 {
+		t.Fatalf("partial files = %v, want none left behind", temps)
+	}
+	if d.events.Count("transfer.superseded") != 1 {
+		t.Fatalf("superseded events = %d, want 1", d.events.Count("transfer.superseded"))
+	}
+	if d.events.Count("transfer.failed") != 0 {
+		t.Fatal("a stale plan was reported as a failed transfer")
 	}
 	if _, ok := d.fs.Content(d.folder.Path + "/big.bin"); ok {
 		t.Fatal("a file was installed although the sender changed it")
@@ -652,6 +686,50 @@ func TestSync_RefusesToInstallOverAFileThatChangedUnderneath(t *testing.T) {
 	if got := d.content(t, "a.txt"); string(got) != "written by the user" {
 		t.Fatalf("local file = %q, want the user's version", got)
 	}
+	// The local side moved, so the plan is stale and the row is worth
+	// nothing: the next cycle decides the path again.
+	if rows := d.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want it empty", rows)
+	}
+	if temps := d.tempFiles(); len(temps) != 0 {
+		t.Fatalf("partial files = %v, want none left behind", temps)
+	}
+	if d.events.Count("transfer.superseded") != 1 {
+		t.Fatalf("superseded events = %d, want 1", d.events.Count("transfer.superseded"))
+	}
+}
+
+// TestSync_NewTransferPrunesAnOlderFailedRow covers the journal that used to
+// grow forever: a path that failed on its bytes keeps one row while it has not
+// converged, and the cycle that tries it again is the answer to that row.
+func TestSync_NewTransferPrunesAnOlderFailedRow(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	data := payload(chunkSize*2, 17)
+	src.addFile(t, "big.bin", data)
+
+	d, conn := newDest(t, src.server)
+	stale := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
+		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
+	stale.State = transfer.StateFailed
+	stale.Error = "chunk 1 did not hash right"
+	if err := d.store.SaveTransfer(ctx, stale); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+	d.fs.AddFile(stale.TempPath, []byte("half a download"), 0o600)
+
+	if summary := d.sync(t, conn); summary.Pulled != 1 {
+		t.Fatalf("summary = %+v, want the file pulled", summary)
+	}
+	if rows := d.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want the failed row gone with the finished one", rows)
+	}
+	if _, ok := d.fs.Content(stale.TempPath); ok {
+		t.Fatalf("%s was kept, want the partial file of the pruned row removed", stale.TempPath)
+	}
+	if got := d.content(t, "big.bin"); string(got) != string(data) {
+		t.Fatal("the pulled file does not match the source")
+	}
 }
 
 func TestResumeAll_PutsActiveTransfersBackToPending(t *testing.T) {
@@ -674,6 +752,32 @@ func TestResumeAll_PutsActiveTransfersBackToPending(t *testing.T) {
 	live := d.liveTransfer(t, "big.bin")
 	if live.State != transfer.StatePending {
 		t.Fatalf("state = %s, want pending", live.State)
+	}
+}
+
+// TestResumeAll_LeavesFailedRowsAlone covers the one row kind that is not a
+// transfer to continue: bytes that did not hash right are kept for inspection
+// and only the plan may ask for that path again.
+func TestResumeAll_LeavesFailedRowsAlone(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "big.bin", payload(chunkSize*2, 19))
+
+	d, _ := newDest(t, src.server)
+	failed := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
+		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
+	failed.State = transfer.StateFailed
+	failed.Error = "chunk 1 did not hash right"
+	if err := d.store.SaveTransfer(ctx, failed); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+
+	if err := d.puller.ResumeAll(ctx, d.folder); err != nil {
+		t.Fatalf("resume all: %v", err)
+	}
+	rows := d.transfers(t)
+	if len(rows) != 1 || rows[0].State != transfer.StateFailed {
+		t.Fatalf("journal holds %+v, want the failed row untouched", rows)
 	}
 }
 

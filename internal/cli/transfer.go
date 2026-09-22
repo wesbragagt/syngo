@@ -94,7 +94,11 @@ func newTransferListCmd(deps *Deps) *cobra.Command {
 		Use:   "list",
 		Short: "List unfinished and failed transfers",
 		Long: "list shows the transfer journal. A transfer disappears from it once its\n" +
-			"file is installed, so what is left is running, paused or failed.",
+			"file is installed, so what is left is running, paused or failed. A failed\n" +
+			"row means the peer served bytes that did not hash right; its partial file\n" +
+			"is kept to be looked at. A transfer the next plan supersedes leaves no row\n" +
+			"at all. A failed row goes when that path is transferred again, or when\n" +
+			"repair finds nothing left to inspect.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			filter := transfers.Filter{}

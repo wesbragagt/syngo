@@ -208,6 +208,16 @@ transfer given up on and `paused` for one a user stopped (milestone 7). A
 finished transfer is removed from the journal once its file is installed and
 recorded in `files`; the journal only exists to resume.
 
+`failed` means one thing: the peer served bytes that did not hash right. The
+row and its partial file are kept so they can be looked at. A transfer the next
+plan supersedes is a different case and leaves nothing: the peer moved on to
+another version, or the local path changed under the download, so the row and
+its partial file are deleted and a `transfer.superseded` event is published.
+A `failed` row is deleted when a later cycle starts a new transfer for the same
+path, so at most one exists per path, and `repair` deletes the ones whose
+partial file is gone or whose path already holds the content the transfer was
+after. A converged mesh therefore ends with an empty journal.
+
 `transfer_chunks` has one row per chunk, with the BLAKE3-256 of the chunk once
 it has been verified. Offsets and lengths are derived from the size and the
 chunk size rather than stored.

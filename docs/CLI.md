@@ -410,8 +410,13 @@ document.
 Restores agreement between the database and the files on disk: paths the
 database knows and the disk does not become tombstones, files whose size or
 modification time moved are rehashed, transfers whose partial file is gone are
-reset, partial files no transfer claims are deleted, and the folder sequence is
-corrected. It runs inside the daemon when one is running.
+reset, failed transfers with nothing left to inspect are pruned with their
+partial files, partial files no transfer claims are deleted, and the folder
+sequence is corrected. It runs inside the daemon when one is running.
+
+A failed transfer has nothing left to inspect when its partial file is gone or
+the path already holds the content it was downloading. A dry run lists the rows
+it would prune in `transfers_pruned` without deleting anything.
 
 A folder whose root does not exist, or is no longer a directory, stops the
 command instead: every entry would look missing and the folder would be marked
@@ -426,6 +431,7 @@ $ syncthis repair docs --json
     "missing_deleted": [],
     "rehashed": [],
     "transfers_reset": [],
+    "transfers_pruned": [],
     "orphan_temps": [],
     "sequence_fixed": false,
     "unrecoverable": []
@@ -790,6 +796,13 @@ send-only` as its error.
 Shows the journal of inbound downloads. A transfer leaves it once its file is
 installed, so what is left is running, paused or failed. `--state` takes one of
 `pending`, `active`, `paused`, `verifying`, `done`, `failed`.
+
+A `failed` row means one thing: the peer served bytes that did not hash right.
+Its partial file is kept so it can be looked at. A transfer the next plan
+supersedes, because the peer moved on or the local file did, leaves no row and
+no partial file behind. A `failed` row goes when a later cycle transfers that
+path again, or when `repair` finds its partial file gone or the path already
+holding the content it was after, so a converged mesh has an empty journal.
 
 Columns: `ID`, `FOLDER`, `PATH`, `STATE`, `CHUNKS`, `DONE`, `SIZE`, `PEER`.
 

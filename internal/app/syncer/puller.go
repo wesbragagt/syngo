@@ -586,10 +586,9 @@ func (p *Puller) transferFor(ctx context.Context, f folder.Folder, item syncplan
 		if existing.Hash == remote.Hash && existing.Size == remote.Size && existing.ChunkSize == p.chunkSize {
 			return existing, nil
 		}
-		if err := p.failed(ctx, existing, errors.New("the peer now offers another version")); err != nil {
+		if err := p.giveUp(ctx, existing, errSuperseded); err != nil {
 			return transfer.Transfer{}, err
 		}
-		p.removeTemp(existing.TempPath)
 	case !errors.Is(err, ports.ErrNotFound):
 		return transfer.Transfer{}, err
 	}
@@ -600,6 +599,12 @@ func (p *Puller) transferFor(ctx context.Context, f folder.Folder, item syncplan
 	}
 	tempPath, err := p.newTemp(f.Path, id)
 	if err != nil {
+		return transfer.Transfer{}, err
+	}
+
+	// An earlier attempt at this path that was given up on has had its
+	// answer: this transfer.
+	if err := p.pruneFailed(ctx, f.ID, item.Path); err != nil {
 		return transfer.Transfer{}, err
 	}
 
@@ -785,7 +790,7 @@ func (p *Puller) stopped(ctx context.Context, t transfer.Transfer, cause error) 
 		return ctx.Err()
 	}
 	if isPerFile(cause) {
-		return p.failed(ctx, t, cause)
+		return p.giveUp(ctx, t, cause)
 	}
 	if errors.Is(cause, ports.ErrPaused) {
 		p.forget(t.ID)
@@ -804,25 +809,72 @@ func (p *Puller) stopped(ctx context.Context, t transfer.Transfer, cause error) 
 	return cause
 }
 
-// failed records why a transfer stopped. The partial file is kept so the
-// failure can be inspected, except when the peer's version changed, in which
-// case the bytes are worthless.
-func (p *Puller) failed(ctx context.Context, t transfer.Transfer, cause error) error {
-	var refused *ports.ChunkError
-	if errors.As(cause, &refused) &&
-		(refused.Reason == ports.ChunkHashChanged || refused.Reason == ports.ChunkNotFound) {
-		p.removeTemp(t.TempPath)
-	}
+// giveUp ends a transfer that will not be continued, and decides what its
+// journal row is worth afterwards. A row whose plan went stale is worth
+// nothing: the next cycle re-decides the path from scratch, so the row and its
+// partial file go and the journal empties itself. Bytes that did not hash right
+// are the one thing worth looking at later, so that row and its file stay.
+func (p *Puller) giveUp(ctx context.Context, t transfer.Transfer, cause error) error {
 	p.forget(t.ID)
+	if !superseded(cause) {
+		if err := p.store.SetTransferState(ctx, t.ID, transfer.StateFailed, cause.Error(), p.clock.Now()); err != nil {
+			return err
+		}
+		p.publish("transfer.failed", map[string]any{
+			"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
+			"path": t.Path, "error": cause.Error(),
+		})
+		return cause
+	}
 
-	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateFailed, cause.Error(), p.clock.Now()); err != nil {
+	p.removeTemp(t.TempPath)
+	if err := p.store.DeleteTransfer(ctx, t.ID); err != nil {
 		return err
 	}
-	p.publish("transfer.failed", map[string]any{
+	p.log.Info("transfer superseded", "folder", t.FolderID, "path", t.Path, "reason", cause.Error())
+	p.publish("transfer.superseded", map[string]any{
 		"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
-		"path": t.Path, "error": cause.Error(),
+		"path": t.Path, "reason": cause.Error(),
 	})
 	return cause
+}
+
+// errSuperseded says a transfer was started for a version the peer no longer
+// offers.
+var errSuperseded = errors.New("the peer now offers another version")
+
+// superseded reports whether a failure means the plan the transfer was started
+// from is stale, rather than something about the bytes. Either side may have
+// moved on: the peer serves another version now, or the local path changed
+// under the download. Neither leaves anything to inspect.
+func superseded(cause error) bool {
+	var refused *ports.ChunkError
+	if errors.As(cause, &refused) {
+		return refused.Reason == ports.ChunkHashChanged || refused.Reason == ports.ChunkNotFound
+	}
+	return errors.Is(cause, errSuperseded) ||
+		errors.Is(cause, ErrChangedUnderneath) || errors.Is(cause, ErrDirNotEmpty)
+}
+
+// pruneFailed removes the failed rows a path still carries, with their partial
+// files, before a new transfer for it is journalled. A failed row is kept only
+// as long as the path has not converged; a cycle that wants the path again is
+// the newer answer, so at most one failed row per path can exist.
+func (p *Puller) pruneFailed(ctx context.Context, id folder.ID, rel string) error {
+	rows, err := p.store.ListTransfers(ctx, ports.TransferFilter{
+		FolderID: id, Path: rel, State: transfer.StateFailed,
+	})
+	if err != nil {
+		return err
+	}
+	for _, t := range rows {
+		p.removeTemp(t.TempPath)
+		if err := p.store.DeleteTransfer(ctx, t.ID); err != nil {
+			return err
+		}
+		p.log.Debug("failed transfer pruned", "folder", id, "path", rel, "transfer", t.ID)
+	}
+	return nil
 }
 
 // arrived is an entry that now sits on disk together with the history it
