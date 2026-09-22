@@ -240,7 +240,11 @@ func (s *Service) apply(ctx context.Context, id folder.ID, report Report,
 	}
 	if len(rehashed) > 0 {
 		for i := range rehashed {
+			// The content on disk is a version this device holds
+			// and no peer has seen, so it is attributed to this
+			// device and raises its counter.
 			rehashed[i].ModifiedBy = by
+			rehashed[i].Version = rehashed[i].Version.Bump(by)
 		}
 		if err := s.store.UpsertEntries(ctx, id, rehashed); err != nil {
 			return err

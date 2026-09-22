@@ -710,3 +710,153 @@ func TestScan_RootThatIsNotADirectoryFails(t *testing.T) {
 		t.Fatalf("scan error = %v, want ErrRootMissing", err)
 	}
 }
+
+// entry returns one stored entry, tombstones included.
+func (e *env) entry(t *testing.T, p string) manifest.Entry {
+	t.Helper()
+	stored, err := e.store.GetFile(context.Background(), e.folder.ID, p)
+	if err != nil {
+		t.Fatalf("get %s: %v", p, err)
+	}
+	return stored
+}
+
+// wantCounter fails the test unless the stored entry's vector holds exactly
+// the given counter for the scanning device.
+func (e *env) wantCounter(t *testing.T, p string, want uint64) {
+	t.Helper()
+	got := e.entry(t, p).Version
+	if got.Counter("DEV1") != want {
+		t.Fatalf("version of %s = %q, want the counter of DEV1 at %d", p, got, want)
+	}
+}
+
+func TestScan_CreateStartsTheVersionAtOne(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+
+	e.wantCounter(t, "a.txt", 1)
+	if by := e.entry(t, "a.txt").ModifiedBy; by != "DEV1" {
+		t.Fatalf("author = %q, want the scanning device", by)
+	}
+}
+
+func TestScan_ModifyBumpsTheVersion(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+
+	e.overwrite(t, "a.txt", "alpha two")
+	e.scan(t, scan.Options{})
+
+	e.wantCounter(t, "a.txt", 2)
+}
+
+func TestScan_ModeOnlyChangeDoesNotBumpTheVersion(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+	before := e.entry(t, "a.txt").Version
+
+	if err := e.fs.Chmod(root+"/a.txt", 0o600); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	res := e.scan(t, scan.Options{})
+
+	if got := summary(res); !equal(got, []string{"modify:a.txt"}) {
+		t.Fatalf("changes = %v, want the chmod classified as a modify", got)
+	}
+	got := e.entry(t, "a.txt")
+	if got.Mode != 0o600 {
+		t.Fatalf("mode = %o, want 600", got.Mode)
+	}
+	// Permission bits are not content, so they must not order two versions
+	// against each other.
+	if !got.Version.Equals(before) {
+		t.Fatalf("version = %q, want it unchanged at %q", got.Version, before)
+	}
+}
+
+func TestScan_DeleteAndRecreateKeepBumpingTheSameVector(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+
+	e.remove(t, "a.txt")
+	e.scan(t, scan.Options{})
+	tombstone := e.entry(t, "a.txt")
+	if !tombstone.Deleted {
+		t.Fatalf("entry = %+v, want a tombstone", tombstone)
+	}
+	e.wantCounter(t, "a.txt", 2)
+
+	// A recreated file dominates its own deletion, so a peer that still
+	// holds the tombstone takes the new content.
+	e.write("a.txt", "alpha again")
+	e.scan(t, scan.Options{})
+	e.wantCounter(t, "a.txt", 3)
+	if e.entry(t, "a.txt").Deleted {
+		t.Fatal("entry is still a tombstone after the file came back")
+	}
+}
+
+func TestScan_RenameBumpsBothPaths(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+
+	if err := e.fs.Rename(root+"/a.txt", root+"/b.txt"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	res := e.scan(t, scan.Options{})
+	if got := summary(res); !equal(got, []string{"rename:b.txt<-a.txt"}) {
+		t.Fatalf("changes = %v, want a rename", got)
+	}
+
+	e.wantCounter(t, "b.txt", 1)
+	e.wantCounter(t, "a.txt", 2)
+	if !e.entry(t, "a.txt").Deleted {
+		t.Fatal("the old path is not a tombstone")
+	}
+}
+
+func TestScan_PartialScanKeepsTheVersionsOfUntouchedSubtrees(t *testing.T) {
+	e := newEnv(t)
+	e.write("keep/a.txt", "alpha")
+	e.write("sub/b.txt", "beta")
+	e.scan(t, scan.Options{})
+	before := e.entry(t, "keep/a.txt").Version
+
+	e.overwrite(t, "sub/b.txt", "beta two")
+	e.scan(t, scan.Options{Paths: []string{"sub"}})
+
+	e.wantCounter(t, "sub/b.txt", 2)
+	if got := e.entry(t, "keep/a.txt").Version; !got.Equals(before) {
+		t.Fatalf("version outside the scanned subtree = %q, want %q", got, before)
+	}
+}
+
+func TestScan_RetryAfterAConcurrentScanBumpsFromTheStoredVersion(t *testing.T) {
+	e := newEnv(t)
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+
+	// Both scanners see the same edit; the second one finishes first, so
+	// the first has to re-diff against what that one wrote.
+	e.overwrite(t, "a.txt", "alpha two")
+	hooked := &hookedStore{Store: e.store}
+	slow := scan.New(e.fs, e.hasher, hooked, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+	hooked.after = func() {
+		if _, err := e.scanner.Scan(context.Background(), e.folder, scan.Options{}); err != nil {
+			t.Errorf("concurrent scan: %v", err)
+		}
+	}
+	if _, err := slow.Scan(context.Background(), e.folder, scan.Options{}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	// The retry raises the counter from the version the other scan wrote,
+	// not from the stale one it loaded, so the file is at 2 and not at 3.
+	e.wantCounter(t, "a.txt", 2)
+}

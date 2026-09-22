@@ -131,10 +131,10 @@ func (w *walker) visit(ctx context.Context, rel string, info ports.FileInfo) err
 		return w.addSymlink(rel, info)
 	case info.IsDir():
 		if w.folder.KeepEmptyDirs {
-			w.add(manifest.Entry{
+			w.add(w.carrying(manifest.Entry{
 				Path: rel, Kind: manifest.KindDir, ModTime: info.ModTime,
 				Mode: uint32(info.Mode.Perm()), Inode: info.Inode,
-			})
+			}))
 		}
 		return nil
 	case info.Mode.IsRegular():
@@ -176,10 +176,10 @@ func (w *walker) addSymlink(rel string, info ports.FileInfo) error {
 		w.skip(rel, err)
 		return nil
 	}
-	w.add(manifest.Entry{
+	w.add(w.carrying(manifest.Entry{
 		Path: rel, Kind: manifest.KindSymlink, ModTime: info.ModTime,
 		Mode: uint32(info.Mode.Perm()), LinkTarget: target, Inode: info.Inode,
-	})
+	}))
 	return nil
 }
 
@@ -195,7 +195,7 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 		e.Hash = prev.Hash
 		e.SyncedHash = prev.SyncedHash
 		e.SyncedMode = prev.SyncedMode
-		w.add(e)
+		w.add(w.carrying(e))
 		return nil
 	}
 
@@ -211,7 +211,7 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 	}
 	w.result.Hashed++
 	w.result.Bytes += info.Size
-	w.add(e)
+	w.add(w.carrying(e))
 	return nil
 }
 
@@ -242,6 +242,18 @@ func (w *walker) skip(rel string, err error) {
 	if prev, ok := w.old.Entries[rel]; ok && !prev.Deleted {
 		w.cur.Add(prev)
 	}
+}
+
+// carrying gives an entry the history the stored one has: the version vector
+// and the author of the content. A change raises the vector when it is
+// written; what the walk builds is the manifest as it is now, in which an
+// untouched path still carries what it always carried.
+func (w *walker) carrying(e manifest.Entry) manifest.Entry {
+	if prev, ok := w.old.Entries[e.Path]; ok {
+		e.Version = prev.Version
+		e.ModifiedBy = prev.ModifiedBy
+	}
+	return e
 }
 
 // add records an entry and reports progress.

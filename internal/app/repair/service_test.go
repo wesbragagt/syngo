@@ -163,6 +163,11 @@ func TestRepair_RehashesStale(t *testing.T) {
 	if got.Size != int64(len("alpha rewritten")) {
 		t.Fatalf("size = %d, want %d", got.Size, len("alpha rewritten"))
 	}
+	// The rehashed content is a version this device holds and no peer has
+	// seen, so it dominates what was stored for the path.
+	if got.Version.Compare(before.Version) != manifest.After {
+		t.Fatalf("version = %q, want it to dominate %q", got.Version, before.Version)
+	}
 }
 
 func TestRepair_ResetsTransferWithoutTempFile(t *testing.T) {

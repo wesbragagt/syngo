@@ -101,7 +101,7 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 		// in one transaction. The line marks the boundary: everything
 		// logged before it read the tree, everything after it wrote.
 		s.log.Debug("scan writing", "folder", f.ID, "changes", len(result.Changes))
-		if err := s.persist(ctx, f, w.cur, old.Sequence, &result, now); err != nil {
+		if err := s.persist(ctx, f, old, w.cur, &result, now); err != nil {
 			return Result{}, err
 		}
 	}
@@ -145,10 +145,11 @@ const persistRetries = 2
 // one transaction. A concurrent scan that wrote first makes the store reject
 // the write; the scan then reloads the manifest, re-diffs the tree it already
 // walked and tries again, so the change log never records the same scan twice.
-func (s *Scanner) persist(ctx context.Context, f folder.Folder, cur manifest.Manifest,
-	base uint64, result *Result, now time.Time) error {
+func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifest.Manifest,
+	result *Result, now time.Time) error {
+	base := old.Sequence
 	for attempt := 0; ; attempt++ {
-		write := s.writeOf(result, base, now)
+		write := s.writeOf(result, old, base, now)
 		err := s.store.ApplyScan(ctx, f.ID, write)
 		if err == nil {
 			// The store hands out one sequence number per written
@@ -161,17 +162,23 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, cur manifest.Man
 		}
 		s.log.Debug("folder changed during scan, re-diffing", "folder", f.ID, "attempt", attempt+1)
 
-		old, loadErr := s.store.LoadManifest(ctx, f.ID)
+		reloaded, loadErr := s.store.LoadManifest(ctx, f.ID)
 		if loadErr != nil {
 			return loadErr
 		}
+		// The versions the write raises are the ones of the manifest it
+		// diffed against, so the reloaded manifest replaces the stale
+		// one for both the diff and the vectors.
+		old = reloaded
 		base = old.Sequence
 		result.Changes = manifest.Diff(old, cur)
 	}
 }
 
-// writeOf turns classified changes into the write the store applies.
-func (s *Scanner) writeOf(result *Result, base uint64, now time.Time) ports.ScanWrite {
+// writeOf turns classified changes into the write the store applies. old is
+// the manifest the changes were diffed against: it holds the version vector
+// each new version is raised from.
+func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, now time.Time) ports.ScanWrite {
 	by := device.ID("")
 	if s.identity != nil {
 		by = s.identity.DeviceID()
@@ -189,6 +196,7 @@ func (s *Scanner) writeOf(result *Result, base uint64, now time.Time) ports.Scan
 		case manifest.Create, manifest.Modify, manifest.Rename:
 			e := *c.New
 			e.ModifiedBy = by
+			e.Version = versionOf(c, old, by)
 			w.Upserts = append(w.Upserts, e)
 			if c.Type == manifest.Rename {
 				w.Deleted = append(w.Deleted, c.OldPath)
@@ -198,6 +206,19 @@ func (s *Scanner) writeOf(result *Result, base uint64, now time.Time) ports.Scan
 		}
 	}
 	return w
+}
+
+// versionOf is the vector the new version of a path carries. A content change
+// raises this device's counter over the version the path had here, so the new
+// version dominates it; a change that only moves permission bits keeps the
+// vector it found, because a mode is not content and must not order two
+// versions. A create raises the vector of whatever the path held before, a
+// tombstone included, so a recreated file dominates its own deletion.
+func versionOf(c manifest.Change, old manifest.Manifest, by device.ID) manifest.Version {
+	if c.Type == manifest.Modify && c.Old != nil && c.New != nil && !manifest.ContentDiffers(*c.Old, *c.New) {
+		return c.Old.Version
+	}
+	return old.Entries[c.Path].Version.Bump(by)
 }
 
 // recordFailure stores err as the folder's last error, keeping the time of the
