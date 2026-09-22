@@ -159,7 +159,7 @@ Goal: a usable terminal interface without a GUI.
 
 Goal: ship a reliable multi-device Tailscale-first system.
 
-- [ ] Support three or more devices per folder.
+- [x] Support three or more devices per folder.
 - [ ] Implement folder-level device authorization.
 - [ ] Recover automatically after a Tailscale restart.
 - [ ] Recover after network changes.
