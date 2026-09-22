@@ -223,7 +223,7 @@ The key metric is not peak throughput alone. Measure time from local change to v
 
 ## Main risks
 
-- Filesystem semantics differ across Linux, macOS, Windows, and mobile platforms.
+- Filesystem semantics differ across Linux, macOS, and mobile platforms.
 - Conflict resolution is a data-loss risk and needs conservative defaults.
 - A content-addressed store needs secure garbage collection and quota handling.
 - Device identity and key rotation need a clear recovery path.
@@ -307,7 +307,8 @@ Validate personal file synchronization across two Tailscale-connected devices. T
 - Custom VPN functionality.
 - Complex permissions.
 - Automatic binary merging.
-- Windows and macOS packaging until the workflow is validated.
+- Windows, on any platform and at any time.
+- macOS packaging until the workflow is validated.
 
 ### Initial release success metrics
 
@@ -361,7 +362,7 @@ The primary network goal is direct peer-to-peer synchronization over the user's 
 - Support Tailscale ACLs as the first access-control boundary.
 - Expose the sync service on a configurable port.
 - Provide a connectivity diagnostic that reports interface, peer address, route, latency, MTU, and connection failure reason.
-- Work across Linux, macOS, Windows, NAS hosts, containers, and headless servers where Tailscale runs.
+- Work across Linux, macOS, NAS hosts, containers, and headless servers where Tailscale runs.
 - Support a local LAN fallback only when explicitly enabled.
 - Keep public relays, hosted discovery, and internet exposure out of v1.
 
@@ -565,7 +566,7 @@ V1 is a general file sync daemon for two or more devices connected through Tails
 - Direct versus DERP diagnostics.
 - Upgrade and database migration handling.
 - Security review and fuzz testing of protocol and path handling.
-- Linux, macOS, Windows, NAS, container, and headless service packaging.
+- Linux, macOS, NAS, container, and headless service packaging.
 
 **Exit metrics:**
 
