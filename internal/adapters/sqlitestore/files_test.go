@@ -190,6 +190,11 @@ func TestMarkDeleted_CreatesTombstone(t *testing.T) {
 		!got.ModTime.Equal(deletedAt) || got.Sequence != 2 {
 		t.Fatalf("tombstone = %+v", got)
 	}
+	// The deletion is a content change of the deleting device, so the
+	// tombstone dominates the version it replaced.
+	if got.Version.Counter("DEVICEID") != 1 {
+		t.Fatalf("tombstone version = %q, want the counter of DEVICEID at 1", got.Version)
+	}
 	if len(m.Entries) != 1 {
 		t.Fatalf("entries = %d, want only the tombstone", len(m.Entries))
 	}
@@ -318,5 +323,60 @@ func TestApplyScan_RejectsAStaleWrite(t *testing.T) {
 	}
 	if f.LastError != write.LastError || !f.LastScanAt.Equal(testTime) {
 		t.Fatalf("folder scan state = %q at %v", f.LastError, f.LastScanAt)
+	}
+}
+
+func TestVersion_RoundTripsAndIsBumpedByDeletions(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openStore(t)
+	if err := store.SaveFolder(ctx, testFolder("docs", "/home/u/docs")); err != nil {
+		t.Fatalf("SaveFolder error: %v", err)
+	}
+	stored, err := manifest.ParseVersion("AAA:2,BBB:1")
+	if err != nil {
+		t.Fatalf("ParseVersion error: %v", err)
+	}
+	if err := store.UpsertEntries(ctx, "docs", []manifest.Entry{
+		{Path: "a.txt", Kind: manifest.KindFile, Size: 5, Hash: hashOf(1), ModTime: testTime, Version: stored},
+	}); err != nil {
+		t.Fatalf("UpsertEntries error: %v", err)
+	}
+
+	got, err := store.GetFile(ctx, "docs", "a.txt")
+	if err != nil {
+		t.Fatalf("GetFile error: %v", err)
+	}
+	if !got.Version.Equals(stored) {
+		t.Fatalf("version = %q, want %q", got.Version, stored)
+	}
+
+	// SetVersion replaces the vector without giving the row a new sequence:
+	// the content is unchanged, only its history is now better known.
+	merged := stored.Bump("CCC")
+	if err := store.SetVersion(ctx, "docs", "a.txt", merged); err != nil {
+		t.Fatalf("SetVersion error: %v", err)
+	}
+	after, err := store.GetFile(ctx, "docs", "a.txt")
+	if err != nil {
+		t.Fatalf("GetFile error: %v", err)
+	}
+	if !after.Version.Equals(merged) || after.Sequence != got.Sequence {
+		t.Fatalf("after SetVersion = %q at sequence %d, want %q at %d",
+			after.Version, after.Sequence, merged, got.Sequence)
+	}
+	if err := store.SetVersion(ctx, "docs", "missing.txt", merged); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("SetVersion on unknown path = %v, want ErrNotFound", err)
+	}
+
+	// A deletion carries the vector it replaces, raised by one.
+	if err := store.MarkDeleted(ctx, "docs", []string{"a.txt"}, "BBB", testTime); err != nil {
+		t.Fatalf("MarkDeleted error: %v", err)
+	}
+	tombstone, err := store.GetFile(ctx, "docs", "a.txt")
+	if err != nil {
+		t.Fatalf("GetFile error: %v", err)
+	}
+	if want := merged.Bump("BBB"); !tombstone.Version.Equals(want) {
+		t.Fatalf("tombstone version = %q, want %q", tombstone.Version, want)
 	}
 }

@@ -95,7 +95,7 @@ holds it open.
 
 ### Migrations
 
-The schema is at version 4. `Open` reads `schema_version`, applies every
+The schema is at version 5. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
@@ -104,6 +104,7 @@ migration above it in one transaction and records the new version:
 | 2 | `002_synced_mode.sql` | `files.synced_mode` |
 | 3 | `003_conflict_reason.sql` | `conflicts.reason` |
 | 4 | `004_sync_windows.sql` | `folders.sync_windows` |
+| 5 | `005_version.sql` | `files.version`, the version vector of the entry |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,

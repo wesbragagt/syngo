@@ -61,27 +61,43 @@ func (o Ordering) String() string {
 	}
 }
 
-// NewVersion builds a normalized version from counters. It fails on an invalid
-// device id, a zero counter or a repeated id.
+// NewVersion builds a normalized version from counters. It fails on an
+// invalid device id, a zero counter or a repeated id. It is what the wire
+// adapter uses, where the counters come from a peer and nothing about them is
+// known yet.
 func NewVersion(counters []Counter) (Version, error) {
+	for _, c := range counters {
+		if _, err := device.ParseID(string(c.ID)); err != nil {
+			return Version{}, fmt.Errorf("%w: %w", ErrInvalidVersion, err)
+		}
+	}
+	return newVersion(counters)
+}
+
+// newVersion normalizes counters without checking that the device ids are
+// real ones: a stored vector carries whatever id the device that wrote it had,
+// and rejecting it on read would make the folder unreadable.
+func newVersion(counters []Counter) (Version, error) {
 	if len(counters) == 0 {
 		return Version{}, nil
 	}
 	out := make([]Counter, 0, len(counters))
 	seen := make(map[device.ID]bool, len(counters))
 	for _, c := range counters {
-		id, err := device.ParseID(string(c.ID))
-		if err != nil {
-			return Version{}, fmt.Errorf("%w: %w", ErrInvalidVersion, err)
+		switch {
+		case c.ID == "":
+			return Version{}, fmt.Errorf("%w: a counter has no device id", ErrInvalidVersion)
+		case strings.ContainsAny(string(c.ID), ":,"):
+			// The stored and wire forms separate on these, so an id
+			// holding one could not be read back.
+			return Version{}, fmt.Errorf("%w: device id %q holds a separator", ErrInvalidVersion, c.ID)
+		case c.N == 0:
+			return Version{}, fmt.Errorf("%w: device %s has a zero counter", ErrInvalidVersion, c.ID.Short())
+		case seen[c.ID]:
+			return Version{}, fmt.Errorf("%w: device %s appears twice", ErrInvalidVersion, c.ID.Short())
 		}
-		if c.N == 0 {
-			return Version{}, fmt.Errorf("%w: device %s has a zero counter", ErrInvalidVersion, id.Short())
-		}
-		if seen[id] {
-			return Version{}, fmt.Errorf("%w: device %s appears twice", ErrInvalidVersion, id.Short())
-		}
-		seen[id] = true
-		out = append(out, Counter{ID: id, N: c.N})
+		seen[c.ID] = true
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return Version{counters: out}, nil
@@ -223,7 +239,8 @@ func (v Version) String() string {
 }
 
 // ParseVersion reads the form String writes. An empty string is the zero
-// version.
+// version. It accepts any device id the local store may have written, and
+// only refuses input that is not a vector at all.
 func ParseVersion(s string) (Version, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -242,5 +259,5 @@ func ParseVersion(s string) (Version, error) {
 		}
 		counters = append(counters, Counter{ID: device.ID(id), N: n})
 	}
-	return NewVersion(counters)
+	return newVersion(counters)
 }

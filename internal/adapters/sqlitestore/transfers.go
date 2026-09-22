@@ -114,6 +114,10 @@ func (s *Store) ListTransfers(ctx context.Context, filter ports.TransferFilter) 
 		query += ` AND folder_id = ?`
 		args = append(args, string(filter.FolderID))
 	}
+	if filter.Path != "" {
+		query += ` AND rel_path = ?`
+		args = append(args, filter.Path)
+	}
 	if filter.State != "" {
 		query += ` AND state = ?`
 		args = append(args, string(filter.State))

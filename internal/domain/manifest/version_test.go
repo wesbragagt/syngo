@@ -191,10 +191,15 @@ func TestVersionRefusesBadCounters(t *testing.T) {
 			}
 		})
 	}
-	for _, s := range []string{"nope:1", devA.String() + ":0", devA.String() + ":1," + devA.String() + ":2", devA.String(), devA.String() + ":x"} {
+	for _, s := range []string{devA.String() + ":0", devA.String() + ":1," + devA.String() + ":2", devA.String(), devA.String() + ":x", ":1"} {
 		if _, err := manifest.ParseVersion(s); err == nil {
 			t.Fatalf("ParseVersion(%q) accepted it", s)
 		}
+	}
+	// A stored vector carries whatever id the device that wrote it had, so
+	// reading one back does not check that the id is a real device id.
+	if _, err := manifest.ParseVersion("SHORTID:1"); err != nil {
+		t.Fatalf("ParseVersion of a stored short id: %v", err)
 	}
 }
 

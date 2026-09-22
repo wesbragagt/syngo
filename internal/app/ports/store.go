@@ -63,8 +63,10 @@ type ScanWrite struct {
 // TransferFilter narrows a transfer listing. Zero values mean "no filter".
 type TransferFilter struct {
 	FolderID folder.ID
-	State    transfer.State
-	Limit    int
+	// Path narrows the listing to one path of the folder.
+	Path  string
+	State transfer.State
+	Limit int
 }
 
 // ConflictRecord is a detected divergence between the local and remote version
@@ -111,6 +113,10 @@ type FileStore interface {
 	UpsertEntries(ctx context.Context, id folder.ID, entries []manifest.Entry) error
 	MarkDeleted(ctx context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error
 	SetSyncedHash(ctx context.Context, id folder.ID, path string, h manifest.Hash) error
+	// SetVersion replaces the version vector of one entry without giving it
+	// a new sequence number: the content did not change, only what is known
+	// about which versions it descends from.
+	SetVersion(ctx context.Context, id folder.ID, path string, v manifest.Version) error
 	// SetSyncedMode records the permission bits last known to match the peer.
 	SetSyncedMode(ctx context.Context, id folder.ID, path string, mode uint32) error
 	FolderStats(ctx context.Context, id folder.ID) (FolderStats, error)

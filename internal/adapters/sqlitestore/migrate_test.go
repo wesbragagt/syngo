@@ -171,7 +171,72 @@ func TestMigrate_3To4_KeepsFoldersAndReadsThemAsAlwaysOpen(t *testing.T) {
 		t.Fatalf("sync windows = %v, want a folder that predates the column to be always open",
 			f.SyncWindows.Strings())
 	}
-	if got := schemaVersionOf(t, path); got != 4 {
-		t.Fatalf("schema version = %d, want 4", got)
+	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
+	}
+}
+
+// writeVersion4DB creates a database holding the first four migrations plus
+// one folder and one file row, which is what a device upgrading to version
+// vectors starts from, and returns its path.
+func writeVersion4DB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	for version := 1; version <= 4; version++ {
+		script, err := sqlitestore.MigrationSQL(version)
+		if err != nil {
+			t.Fatalf("read migration %d: %v", version, err)
+		}
+		if _, err := db.ExecContext(ctx, script); err != nil {
+			t.Fatalf("apply migration %d: %v", version, err)
+		}
+	}
+	for _, stmt := range []string{
+		`INSERT INTO schema_version (version) VALUES (4)`,
+		`INSERT INTO folders (id, path, label, mode, delete_policy, include_hidden, symlink_policy,
+			keep_empty_dirs, paused, last_error, created_at)
+		 VALUES ('docs', '/srv/docs', '', 'sendreceive', 'propagate', 0, 'store', 1, 0, '', 1)`,
+		`INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, sequence, updated_at)
+		 VALUES ('docs', 'a.txt', 1, 5, 42, 420, '` + testHash + `', 1, 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare version 4 database: %v", err)
+		}
+	}
+	return path
+}
+
+func TestMigrate_4To5_KeepsFilesAndGivesThemAnEmptyVersion(t *testing.T) {
+	ctx := context.Background()
+	path := writeVersion4DB(t)
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	entry, err := store.GetFile(ctx, folder.ID("docs"), "a.txt")
+	if err != nil {
+		t.Fatalf("file after the migration: %v", err)
+	}
+	if entry.Hash.String() != testHash || entry.Size != 5 {
+		t.Fatalf("entry = %+v, want the row written before the migration", entry)
+	}
+	// Nothing is backfilled: sequences are per device, so any guess could
+	// order a stale version above a newer one.
+	if !entry.Version.IsZero() {
+		t.Fatalf("version = %q, want it empty for a row that predates the column", entry.Version)
+	}
+	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
 	}
 }

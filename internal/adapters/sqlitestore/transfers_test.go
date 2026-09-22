@@ -230,3 +230,24 @@ func TestLoadChunks_RebuildsARowThatWasNeverWritten(t *testing.T) {
 		t.Fatalf("chunk 2 = %+v", got.Chunks[2])
 	}
 }
+
+func TestListTransfers_FiltersByPath(t *testing.T) {
+	ctx := context.Background()
+	store := storeWithFolder(t)
+	for _, tr := range []transfer.Transfer{
+		inbound("t1", "a.txt", transfer.MinChunkSize),
+		inbound("t2", "b.txt", transfer.MinChunkSize),
+	} {
+		if err := store.SaveTransfer(ctx, tr); err != nil {
+			t.Fatalf("SaveTransfer error: %v", err)
+		}
+	}
+
+	got, err := store.ListTransfers(ctx, ports.TransferFilter{FolderID: "docs", Path: "b.txt"})
+	if err != nil {
+		t.Fatalf("ListTransfers error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "t2" {
+		t.Fatalf("transfers = %+v, want only the one for b.txt", got)
+	}
+}

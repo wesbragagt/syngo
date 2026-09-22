@@ -19,7 +19,7 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
-		       modified_by, sequence, synced_hash, synced_mode
+		       modified_by, sequence, synced_hash, synced_mode, version
 		FROM files WHERE folder_id = ? ORDER BY rel_path`, string(id))
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("load manifest of folder %q: %w", id, err)
@@ -50,7 +50,7 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 func (s *Store) GetFile(ctx context.Context, id folder.ID, path string) (manifest.Entry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
-		       modified_by, sequence, synced_hash, synced_mode
+		       modified_by, sequence, synced_hash, synced_mode, version
 		FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path)
 	e, err := scanEntry(row)
 	if err != nil {
@@ -100,6 +100,18 @@ func (s *Store) SetSyncedHash(ctx context.Context, id folder.ID, path string, h 
 		h.String(), string(id), path)
 	if err != nil {
 		return fmt.Errorf("set synced hash of %q in folder %q: %w", path, id, err)
+	}
+	return requireRow(res, fmt.Sprintf("file %q in folder %q", path, id))
+}
+
+// SetVersion replaces the version vector of one entry, without touching its
+// sequence: the content is unchanged, only what is known about its history.
+func (s *Store) SetVersion(ctx context.Context, id folder.ID, path string, v manifest.Version) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE files SET version = ? WHERE folder_id = ? AND rel_path = ?`,
+		v.String(), string(id), path)
+	if err != nil {
+		return fmt.Errorf("set version of %q in folder %q: %w", path, id, err)
 	}
 	return requireRow(res, fmt.Sprintf("file %q in folder %q", path, id))
 }
@@ -215,18 +227,19 @@ func upsertEntries(ctx context.Context, tx *sql.Tx, id folder.ID, entries []mani
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, link_target,
 			                   inode, deleted, modified_by, sequence, synced_hash, synced_mode,
-			                   updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			                   version, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(folder_id, rel_path) DO UPDATE SET
 				kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
 				mode = excluded.mode, hash = excluded.hash, link_target = excluded.link_target,
 				inode = excluded.inode, deleted = excluded.deleted, modified_by = excluded.modified_by,
 				sequence = excluded.sequence, synced_hash = excluded.synced_hash,
-				synced_mode = excluded.synced_mode, updated_at = excluded.updated_at`,
+				synced_mode = excluded.synced_mode, version = excluded.version,
+				updated_at = excluded.updated_at`,
 			string(id), e.Path, int(e.Kind), e.Size, e.ModTime.UnixNano(), int64(e.Mode),
 			e.Hash.String(), e.LinkTarget, int64(e.Inode), boolToInt(e.Deleted),
 			string(e.ModifiedBy), int64(next+uint64(i)), e.SyncedHash.String(),
-			int64(e.SyncedMode), updatedAt); err != nil {
+			int64(e.SyncedMode), e.Version.String(), updatedAt); err != nil {
 			return fmt.Errorf("upsert file %q in folder %q: %w", e.Path, id, err)
 		}
 	}
@@ -243,16 +256,43 @@ func markDeleted(ctx context.Context, tx *sql.Tx, id folder.ID, paths []string, 
 		return err
 	}
 	for i, p := range paths {
+		// A tombstone is a content change like any other, so it carries
+		// the vector of the version it replaces raised by one: a peer
+		// still holding that version is then dominated by the deletion.
+		version, err := bumpedVersion(ctx, tx, id, p, by)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE files SET deleted = 1, hash = '', size = 0, mtime_ns = ?, modified_by = ?,
-			                 sequence = ?, updated_at = ?
+			                 sequence = ?, version = ?, updated_at = ?
 			WHERE folder_id = ? AND rel_path = ?`,
-			now.UnixNano(), string(by), int64(next+uint64(i)), now.UnixNano(),
+			now.UnixNano(), string(by), int64(next+uint64(i)), version, now.UnixNano(),
 			string(id), p); err != nil {
 			return fmt.Errorf("mark %q deleted in folder %q: %w", p, id, err)
 		}
 	}
 	return nil
+}
+
+// bumpedVersion returns the stored version vector of a path with the counter
+// of by raised by one, in its stored string form. A path that is not stored
+// has no row to update, so its version is irrelevant and reported as empty.
+func bumpedVersion(ctx context.Context, tx *sql.Tx, id folder.ID, path string, by device.ID) (string, error) {
+	var stored string
+	err := tx.QueryRowContext(ctx,
+		`SELECT version FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path).Scan(&stored)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("read version of %q in folder %q: %w", path, id, err)
+	}
+	v, err := manifest.ParseVersion(stored)
+	if err != nil {
+		return "", fmt.Errorf("file %q in folder %q: %w", path, id, err)
+	}
+	return v.Bump(by).String(), nil
 }
 
 // appendChanges records scan classifications inside tx.
@@ -388,9 +428,10 @@ func scanEntry(row scanner) (manifest.Entry, error) {
 		deleted              int
 		modifiedBy, linkDest string
 		sequence, syncedMode int64
+		versionText          string
 	)
 	if err := row.Scan(&e.Path, &kind, &e.Size, &mtimeNS, &mode, &hashHex, &linkDest,
-		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex, &syncedMode); err != nil {
+		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex, &syncedMode, &versionText); err != nil {
 		return manifest.Entry{}, err
 	}
 	hash, err := manifest.ParseHash(hashHex)
@@ -401,6 +442,11 @@ func scanEntry(row scanner) (manifest.Entry, error) {
 	if err != nil {
 		return manifest.Entry{}, fmt.Errorf("file %q: %w", e.Path, err)
 	}
+	version, err := manifest.ParseVersion(versionText)
+	if err != nil {
+		return manifest.Entry{}, fmt.Errorf("file %q: %w", e.Path, err)
+	}
+	e.Version = version
 	e.Kind = manifest.Kind(kind)
 	e.ModTime = time.Unix(0, mtimeNS).UTC()
 	e.Mode = uint32(mode)

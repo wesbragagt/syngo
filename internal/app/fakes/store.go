@@ -196,6 +196,9 @@ func (s *Store) MarkDeleted(_ context.Context, id folder.ID, paths []string, by 
 		e.ModifiedBy = by
 		e.ModTime = now
 		e.Sequence = s.sequences[id]
+		// A deletion is a content change: the tombstone carries the
+		// vector of the version it replaces, raised by one.
+		e.Version = e.Version.Bump(by)
 		s.files[id][p] = e
 	}
 	return nil
@@ -210,6 +213,19 @@ func (s *Store) SetSyncedHash(_ context.Context, id folder.ID, p string, h manif
 		return fmt.Errorf("file %q in folder %q: %w", p, id, ports.ErrNotFound)
 	}
 	e.SyncedHash = h
+	s.files[id][p] = e
+	return nil
+}
+
+// SetVersion replaces the version vector of one entry.
+func (s *Store) SetVersion(_ context.Context, id folder.ID, p string, v manifest.Version) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.files[id][p]
+	if !ok {
+		return fmt.Errorf("file %q in folder %q: %w", p, id, ports.ErrNotFound)
+	}
+	e.Version = v
 	s.files[id][p] = e
 	return nil
 }
@@ -434,6 +450,9 @@ func (s *Store) ListTransfers(_ context.Context, filter ports.TransferFilter) ([
 	var out []transfer.Transfer
 	for _, t := range s.transfers {
 		if filter.FolderID != "" && t.FolderID != filter.FolderID {
+			continue
+		}
+		if filter.Path != "" && t.Path != filter.Path {
 			continue
 		}
 		if filter.State != "" && t.State != filter.State {
