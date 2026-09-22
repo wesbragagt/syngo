@@ -164,9 +164,9 @@ Goal: ship a reliable multi-device Tailscale-first system.
 
 - [x] Support three or more devices per folder.
 - [ ] Implement folder-level device authorization.
-- [ ] Recover automatically after a Tailscale restart.
-- [ ] Recover after network changes.
-- [ ] Add direct versus DERP diagnostics.
+- [x] Recover automatically after a Tailscale restart.
+- [x] Recover after network changes.
+- [x] Add direct versus DERP diagnostics.
 - [x] Add database migration handling.
 - [x] Run a security review of the protocol and path handling.
 - [x] Add fuzz tests for the protocol and filesystem logic.

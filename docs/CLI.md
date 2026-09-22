@@ -458,7 +458,12 @@ from the database and `daemon.running` is `false`.
   "device": {"id": "RCUFGP7…", "name": "laptop", "data_dir": "/home/u/.local/share/syncthis"},
   "daemon": {"running": true, "pid": 3776214, "listen": "127.0.0.1:22001",
              "started_at": "2026-09-21T08:32:15Z",
-             "upload_limit": 0, "download_limit": 4194304},
+             "upload_limit": 0, "download_limit": 4194304,
+             "listener": {"bound": true, "address": "127.0.0.1:22001",
+                          "interface": "tailscale0",
+                          "bound_at": "2026-09-21T08:40:02Z",
+                          "lost_at": "2026-09-21T08:39:58Z",
+                          "rebinds": 1, "failures": 0, "error": null}},
   "folders": [
     {"id": "docs", "path": "/home/u/docs", "label": "", "mode": "sendreceive",
      "delete_policy": "propagate", "paused": false, "state": "idle",
@@ -470,12 +475,40 @@ from the database and `daemon.running` is `false`.
   "peers": [
     {"id": "ETI3RRZ…", "name": "nas", "address": "127.0.0.1:22002", "verified": true,
      "connected": true, "last_seen_at": "2026-09-21T08:32:15Z", "latency_ms": 0.022,
-     "error": null}
+     "error": null, "state": "connected", "next_retry_at": null,
+     "path": {"kind": "direct", "endpoint": "192.168.1.20:41641", "relay": "",
+              "active": true, "reason": null,
+              "observed_at": "2026-09-21T08:32:45Z"}}
   ],
   "transfers": {"active": 0, "pending": 0, "paused": 0, "failed": 0, "items": []},
   "conflicts": {"unresolved": 0}
 }
 ```
+
+`daemon.listener` is the port peers connect to and what it has been through.
+`bound` says whether it is accepting connections right now; `address` is the
+address it is bound to, and stays what peers know it by while it is rebinding.
+`interface` is the interface the address is taken from, empty when the address
+was configured directly. `bound_at` is when the current socket was bound and
+`lost_at` when the address was last lost; `lost_at` keeps its value after the
+listener comes back, so the report says what happened rather than only what is.
+`rebinds` counts the times it came back, `failures` the consecutive bind
+attempts that failed, and `error` is why the last one failed. A daemon rebinds
+by itself after a Tailscale restart, an address change, a sleep and wake, or a
+link that dropped and returned; nothing has to be restarted, and the bind
+attempts are spaced by a backoff that starts at one second and never exceeds
+thirty.
+
+`peers[].state` is `connected`, `connecting`, `unreachable`, or `unknown`
+without a running daemon. `peers[].next_retry_at` is when an unreachable peer
+is dialled again, and is null while it is connected. `peers[].path` is how
+traffic reaches the peer, read from the local Tailscale client: `kind` is
+`direct`, `relay` or `unknown`, `endpoint` is the direct address on a direct
+path, `relay` is the DERP region on a relayed one, `active` says whether the
+client saw traffic to the peer recently, and `observed_at` is when it was read.
+Nothing is guessed: a path the client cannot describe is `unknown` with
+`reason` saying why, including when there is no Tailscale client at all.
+`syncthis network path` prints the same thing for a person.
 
 `daemon.upload_limit` and `daemon.download_limit` are the rates in force in the
 running daemon, in bytes per second, `0` for unlimited and for no daemon.
@@ -523,6 +556,16 @@ $ syncthis daemon run --interface tailscale0
 The daemon then listens on the device's `100.64.0.0/10` address, which only
 the tailnet can reach, and `--allow-public` is not needed. Put `"interface":
 "tailscale0"` in `config.json` to make it the default.
+
+The daemon keeps its port bound. When the address goes away under it, which is
+what a Tailscale client restarting, an interface renumbering, a suspend or a
+dropped link look like, it closes the socket, drops the connections that ran
+over it, and binds again as soon as the machine has an address for it, on the
+same port its peers are configured with. Bind attempts are spaced by a backoff
+between one and thirty seconds, so an address that stays gone costs two
+attempts a minute. Peers are reconnected on the same bounded backoff. Nothing
+has to be restarted; `status` says what happened, in `daemon.listener` and in
+`peers[].state`.
 
 Exactly one daemon owns a data directory. A second one exits 6. It prints one
 line when it is serving, or with `--json` one document:
@@ -780,8 +823,57 @@ $ syncthis network peers --json
 The document `tailscale status --json` prints changes between releases, so it
 is read tolerantly: unknown fields are ignored, `Online` falls back to `Active`
 on clients too old to report it, and the MagicDNS suffix is read from
-`CurrentTailnet` first and the top-level field second. Nothing but these two
-commands and the host name convenience of `peer add` depends on Tailscale.
+`CurrentTailnet` first and the top-level field second.
+
+### `syncthis network path`
+
+Reports, for every configured peer, whether traffic reaches it peer-to-peer or
+through a DERP relay. It is read from the local Tailscale client and nothing is
+inferred: a peer the client describes with a current endpoint is `direct`, one
+it gives a DERP region for is `relay`, and everything else is `unknown` with
+the reason. A peer whose address is not a tailnet node at all is `unknown` too.
+Like `network peers` it exits 11 when there is no client to ask, because the
+listing that was asked for cannot exist.
+
+```console
+$ syncthis network path
+PEER  ADDRESS                     PATH    DETAIL               ACTIVE
+nas   100.64.0.3:22000            direct  192.168.1.20:41641   true
+phone nas.tail1234.ts.net:22000   relay   DERP fra             true
+
+$ syncthis network path --json
+[
+  {
+    "peer_id": "ETI3RRZ…",
+    "name": "nas",
+    "address": "100.64.0.3:22000",
+    "kind": "direct",
+    "endpoint": "192.168.1.20:41641",
+    "relay": "",
+    "active": true,
+    "reason": null
+  }
+]
+```
+
+A client that names neither an endpoint nor a relay for a node says so:
+
+```json
+[
+  {
+    "peer_id": "ETI3RRZ…", "name": "nas", "address": "100.64.0.3:22000",
+    "kind": "unknown", "endpoint": "", "relay": "", "active": false,
+    "reason": "the local Tailscale client reports neither a direct endpoint nor a relay for this node"
+  }
+]
+```
+
+The same path is in `status --json` under `peers[].path`, where a running
+daemon refreshes it every thirty seconds, so a status call never waits for the
+Tailscale client.
+
+Nothing but these three commands, the path section of `status`, and the host
+name convenience of `peer add` depends on Tailscale.
 
 ### `syncthis pause [FOLDER]` and `syncthis resume [FOLDER]`
 

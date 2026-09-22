@@ -43,15 +43,41 @@ build when a rule is broken.
 | `MetadataStore` | `sqlitestore` | the database, as folders, files, devices, transfers and conflicts |
 | `Watcher` | `fsnotifywatch` | filesystem change notifications |
 | `Dialer`, `Listener`, `PeerConn` | `tcpwire` | the peer protocol |
+| `Binder` | `tcpwire` | turning a listen address and an interface name into a bound socket, and saying whether the machine still has the address |
 | `Identity` | `identityfile` | the device key, certificate and derived ID |
 | `ControlServer`, `ControlClient` | `unixctl` | the control socket |
 | `EventSink` | the daemon, the tests | what happened, as named events |
 | `Limiter` | `tokenbucket` | waiting for a byte budget |
 | `SettingsStore` | `jsonconfig` | the settings in `config.json` that change while the process runs |
-| `TailnetDiscovery` | `tailscalecli` | the local Tailscale client, through `tailscale status --json` |
+| `TailnetDiscovery` | `tailscalecli` | the local Tailscale client, through `tailscale status --json`: this device, the other nodes, and the path to each of them |
 
 The application never constructs an adapter. `compose.Build` wires them and
 returns an `App`; every command asks the `App` for the service it needs.
+
+## Recovering from network changes
+
+A daemon outlives the address it started on. `internal/app/network.Rebinder`
+implements `ports.Listener` and owns the socket: it serves through a
+`ports.Binder`, checks that the machine still has the address it is bound to,
+closes the socket when it does not, and binds again with a bounded backoff.
+`tcpwire.Binder` is the only thing that knows what an address is: it re-resolves
+the configured interface on every attempt, so a renumbered interface is bound at
+its new address, and it keeps the port the first bind ended up on, so the
+listener comes back where its peers already look for it. A Tailscale client
+restarting, a suspend, and a link that drops and returns are the same event
+seen from here.
+
+The reconnect waits are one type, `domain/backoff.Policy`, used by the rebinder
+and by the peer loops: doubling from a floor to a ceiling, never zero, never
+unbounded. `internal/app/daemon` reports the result in `status --json`, in
+`daemon.listener` and in `peers[].state`.
+
+Which path a peer is reached over is a question only the local Tailscale client
+can answer, so it is behind `TailnetDiscovery.Paths`. `network.Service.PeerPaths`
+matches configured peers to tailnet nodes by address or name, and the daemon
+reads it on a timer rather than per request. A node the client describes with
+neither an endpoint nor a relay is reported as unknown with the reason; the
+path is never inferred from anything else.
 
 ## Glossary
 
