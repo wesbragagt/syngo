@@ -223,10 +223,9 @@ func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, no
 
 // versionOf is the vector the new version of a path carries. A content change
 // raises this device's counter over the version the path had here and over the
-// counter floor, so the new
-// version dominates it; a change that only moves permission bits keeps the
-// vector it found, because a mode is not content and must not order two
-// versions. A create raises the vector of whatever the path held before, a
+// counter floor, so the new version dominates both; a change that only moves
+// permission bits keeps the vector it found, because a mode is not content and
+// must not order two versions. A create raises the vector of whatever the path held before, a
 // tombstone included, so a recreated file dominates its own deletion.
 func versionOf(c manifest.Change, old manifest.Manifest, by device.ID, floor uint64) manifest.Version {
 	if c.Type == manifest.Modify && c.Old != nil && c.New != nil && !manifest.ContentDiffers(*c.Old, *c.New) {
