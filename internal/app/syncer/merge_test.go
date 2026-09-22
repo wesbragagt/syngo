@@ -179,3 +179,35 @@ func TestMerge_SettingOffKeepsBoth(t *testing.T) {
 		t.Fatal("the file was merged with the setting off")
 	}
 }
+
+// TestMerge_ABaseThatDisagreesWithItsOwnHashIsNotUsed is the read-side half of
+// the check the recorder makes when it writes. A row whose content no longer
+// hashes to the hash stored beside it was changed after it was written, so it
+// is not a version either side ever had; merging against it would drop
+// whatever edit it appears to already hold. It is passed over and both
+// versions are kept.
+func TestMerge_ABaseThatDisagreesWithItsOwnHashIsNotUsed(t *testing.T) {
+	c := divergedText(t, mergeEditHead, mergeEditTail, mergeBaseText, "", true)
+
+	// The row a healthy recorder would have written, with its content
+	// corrupted in place and its hash column left intact. The corruption
+	// chosen is the one that does damage rather than the one that is
+	// obvious: a base holding both edits already reads as each side having
+	// reverted the other's, so an unchecked merge against it succeeds and
+	// throws both edits away.
+	corrupted := []byte(mergeWanted)
+	err := c.dest.store.SaveMergeBase(context.Background(), ports.MergeBase{
+		FolderID: c.dest.folder.ID, Path: "notes.txt", Version: vector(t, "SOURCE:1"),
+		Hash: c.dest.hasher.SumBytes([]byte(mergeBaseText)), Content: corrupted,
+		SavedAt: c.dest.clock.Now(),
+	})
+	if err != nil {
+		t.Fatalf("save merge base: %v", err)
+	}
+
+	c.dest.sync(t, c.conn)
+	keptBoth(t, c)
+	if got := string(c.dest.content(t, "notes.txt")); got == mergeBaseText {
+		t.Fatal("both edits were reverted by merging against a corrupted base")
+	}
+}

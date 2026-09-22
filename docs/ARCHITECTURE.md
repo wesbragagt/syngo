@@ -166,8 +166,14 @@ edited over, nothing else on the device holds that content. So with the
 setting on, the scanner and the puller keep the last few versions of every
 small text file in `ports.MergeBaseStore`, with the version vector each
 carried. `mergeBase` picks the newest candidate that both sides dominate
-(`manifest.Before` against each), which is what makes it an ancestor of both;
-a path with no such candidate is not merged. With the setting off no recorder
+(`manifest.Before` against each), which is what makes it an ancestor of both,
+and re-hashes its stored bytes against the hash stored beside them before
+using it. The recorder hashed what it wrote, so a row that disagrees with
+itself now was changed after it was written, and it is not a version either
+side ever had: a base that happens to hold both edits already reads as each
+side having reverted the other's, and merging against it succeeds and throws
+both edits away. Such a candidate is passed over exactly as an absent one is.
+A path with no usable candidate is not merged. With the setting off no recorder
 is built, the table stays empty, and the conflict path is the one that was
 there before.
 

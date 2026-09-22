@@ -102,10 +102,26 @@ func (p *Puller) mergeBase(ctx context.Context, id folder.ID, item syncplan.Item
 		return ports.MergeBase{}, fmt.Errorf("%w: merge bases of %s: %w", ErrNoMerge, item.Path, err)
 	}
 	for _, base := range candidates {
-		if base.Version.Compare(item.Local.Version) == manifest.Before &&
-			base.Version.Compare(item.Remote.Version) == manifest.Before {
-			return base, nil
+		if base.Version.Compare(item.Local.Version) != manifest.Before ||
+			base.Version.Compare(item.Remote.Version) != manifest.Before {
+			continue
 		}
+		// The stored bytes are checked against the hash stored beside
+		// them before anything is merged against them. The recorder
+		// hashed what it wrote, so a row that disagrees with itself
+		// now was changed after it was written: bitrot, a migration
+		// that touched this table, someone editing the database. Such
+		// a row is not a version anything ever had, and merging
+		// against it would drop whichever edit it appears to have
+		// already contained. It is passed over, exactly as an absent
+		// base is.
+		if got := p.hasher.SumBytes(base.Content); got != base.Hash {
+			p.log.Warn("merge base does not match its own hash, ignoring it",
+				"folder", id, "path", item.Path, "stored", base.Hash.String(),
+				"content", got.String())
+			continue
+		}
+		return base, nil
 	}
 	return ports.MergeBase{}, fmt.Errorf("%w: no recorded version of %s precedes both sides",
 		ErrNoMerge, item.Path)
