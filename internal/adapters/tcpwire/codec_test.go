@@ -1,13 +1,16 @@
 package tcpwire
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 // sampleID is a syntactically valid device ID used by the codec tests.
@@ -184,5 +187,65 @@ func TestFromWireManifest_AcceptsTheLargestAllowedFile(t *testing.T) {
 	}
 	if _, err := fromWireManifest(header, 4096); err != nil {
 		t.Fatalf("fromWireManifest error: %v", err)
+	}
+}
+
+// wireDeviceID is the device the vector tests attribute versions to.
+const wireDeviceID = sampleID
+
+func TestWireManifest_CarriesVersionVectors(t *testing.T) {
+	version, err := manifest.NewVersion([]manifest.Counter{{ID: wireDeviceID, N: 3}})
+	if err != nil {
+		t.Fatalf("NewVersion error: %v", err)
+	}
+	m := manifest.New("docs")
+	m.Add(manifest.Entry{Path: "a.txt", Kind: manifest.KindFile, Size: 3, Version: version})
+	m.Add(manifest.Entry{Path: "backfilled.txt", Kind: manifest.KindFile, Size: 3})
+
+	header := toWireManifest(m)
+	encoded, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded manifestReplyHeader
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	back, err := fromWireManifest(decoded, DefaultMaxFileSize)
+	if err != nil {
+		t.Fatalf("fromWireManifest error: %v", err)
+	}
+
+	if got := back.Entries["a.txt"].Version; !got.Equals(version) {
+		t.Fatalf("version = %q, want %q", got, version)
+	}
+	// A path whose row predates vectors carries none, and the field is
+	// left out of the frame rather than sent empty.
+	if got := back.Entries["backfilled.txt"].Version; !got.IsZero() {
+		t.Fatalf("version = %q, want the zero vector", got)
+	}
+	if strings.Contains(string(encoded), `"version":{}`) {
+		t.Fatalf("frame carries an empty version map: %s", encoded)
+	}
+}
+
+func TestFromWireManifest_RejectsAnUnusableVersion(t *testing.T) {
+	cases := map[string]map[string]uint64{
+		"not a device id": {"nope": 1},
+		"zero counter":    {string(wireDeviceID): 0},
+	}
+	for name, version := range cases {
+		t.Run(name, func(t *testing.T) {
+			header := manifestReplyHeader{
+				FolderID: "docs",
+				Entries: []manifestEntry{
+					{Path: "fine.txt", Kind: 1},
+					{Path: "a.txt", Kind: 1, Size: 3, Version: version},
+				},
+			}
+			if _, err := fromWireManifest(header, DefaultMaxFileSize); err == nil {
+				t.Fatal("fromWireManifest accepted the version")
+			}
+		})
 	}
 }

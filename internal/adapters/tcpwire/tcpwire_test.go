@@ -332,7 +332,7 @@ func TestHandshake_OtherProtocolVersionRejected(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	header := `{"protocol_version":2,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
+	header := `{"protocol_version":1,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
 	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(header)}); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestFoldersChanged_FromTheClientIsAcceptedAndIgnored(t *testing.T) {
 		t.Fatalf("set deadline: %v", err)
 	}
 
-	hello := `{"protocol_version":1,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
+	hello := `{"protocol_version":2,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
 	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(hello)}); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
@@ -630,5 +630,41 @@ func TestServe_BoundsConcurrentHandshakes(t *testing.T) {
 			t.Fatalf("%d handshakes in flight, want the limit to be reached", got)
 		}
 		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestDial_OtherProtocolVersionRejected is the client half of the version
+// check: a peer announcing another version cannot be ordered against, so the
+// dialer refuses it instead of speaking a protocol it does not know.
+func TestDial_OtherProtocolVersionRejected(t *testing.T) {
+	server, client := newIdentity(t, "server"), newIdentity(t, "client")
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tcpwire.ServerTLS(server.cert))
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		if _, readErr := tcpwire.ReadFrame(conn); readErr != nil {
+			return
+		}
+		hello := `{"protocol_version":1,"device_id":"` + string(server.id) + `","device_name":"server","folders":[]}`
+		_ = tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(hello)})
+		// The dialer must not go on talking to it.
+		time.Sleep(time.Second)
+	}()
+
+	_, err = newDialer(client).Dial(context.Background(), ln.Addr().String(), server.id)
+	if err == nil {
+		t.Fatal("Dial accepted a peer speaking another protocol version")
+	}
+	if !strings.Contains(err.Error(), "protocol version") {
+		t.Fatalf("Dial error = %v, want it to name the protocol version", err)
 	}
 }

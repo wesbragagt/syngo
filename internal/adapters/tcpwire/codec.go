@@ -12,8 +12,11 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
-// ProtocolVersion is the only version this implementation speaks.
-const ProtocolVersion = 1
+// ProtocolVersion is the only version this implementation speaks. Version 2
+// carries a version vector on every manifest entry; a version-1 peer sends
+// none, and a receiver cannot order its entries, so the versions do not
+// interoperate and every device of a mesh upgrades together.
+const ProtocolVersion = 2
 
 // Reasons a connection is rejected during the handshake.
 const (
@@ -158,21 +161,23 @@ type manifestRequestHeader struct {
 	FolderID string `json:"folder_id"`
 }
 
-// manifestEntry is one entry of a ManifestResponse. SyncedHash is the version
-// the sender last agreed on with a peer, which is what the receiver needs to
-// tell a newer version from a diverged one.
+// manifestEntry is one entry of a ManifestResponse. Version is the version
+// vector of the entry, device id to counter, which is what the receiver needs
+// to tell a newer version from a diverged one. It is absent for a path whose
+// stored row predates vectors, which reads as the zero vector.
 type manifestEntry struct {
-	Path       string `json:"path"`
-	Kind       uint8  `json:"kind"`
-	Size       int64  `json:"size"`
-	MTimeNS    int64  `json:"mtime_ns"`
-	Mode       uint32 `json:"mode"`
-	Hash       string `json:"hash"`
-	LinkTarget string `json:"link_target"`
-	Deleted    bool   `json:"deleted"`
-	ModifiedBy string `json:"modified_by"`
-	Sequence   uint64 `json:"sequence"`
-	SyncedHash string `json:"synced_hash"`
+	Path       string            `json:"path"`
+	Kind       uint8             `json:"kind"`
+	Size       int64             `json:"size"`
+	MTimeNS    int64             `json:"mtime_ns"`
+	Mode       uint32            `json:"mode"`
+	Hash       string            `json:"hash"`
+	LinkTarget string            `json:"link_target"`
+	Deleted    bool              `json:"deleted"`
+	ModifiedBy string            `json:"modified_by"`
+	Sequence   uint64            `json:"sequence"`
+	SyncedHash string            `json:"synced_hash"`
+	Version    map[string]uint64 `json:"version,omitempty"`
 }
 
 // manifestReplyHeader is the ManifestResponse frame header.
@@ -231,9 +236,23 @@ func toWireManifest(m manifest.Manifest) manifestReplyHeader {
 			ModifiedBy: string(e.ModifiedBy),
 			Sequence:   e.Sequence,
 			SyncedHash: e.SyncedHash.String(),
+			Version:    wireVersion(e.Version),
 		})
 	}
 	return manifestReplyHeader{FolderID: string(m.FolderID), Sequence: m.Sequence, Entries: entries}
+}
+
+// wireVersion turns a version vector into the map the wire carries. The zero
+// vector is left out of the frame entirely.
+func wireVersion(v manifest.Version) map[string]uint64 {
+	if v.IsZero() {
+		return nil
+	}
+	out := make(map[string]uint64, len(v.Counters()))
+	for _, c := range v.Counters() {
+		out[string(c.ID)] = c.N
+	}
+	return out
 }
 
 // DefaultMaxFileSize is the largest file accepted from a peer when a dialer
@@ -279,6 +298,13 @@ func fromWireManifest(h manifestReplyHeader, maxSize int64) (manifest.Manifest, 
 		if err != nil {
 			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
 		}
+		// A counter naming something that is not a device, or counting
+		// zero changes, is not a vector this device can order anything
+		// against, so the whole manifest is refused.
+		version, err := manifest.NewVersion(wireCounters(e.Version))
+		if err != nil {
+			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
+		}
 		m.Add(manifest.Entry{
 			Path:       e.Path,
 			Kind:       manifest.Kind(e.Kind),
@@ -291,9 +317,23 @@ func fromWireManifest(h manifestReplyHeader, maxSize int64) (manifest.Manifest, 
 			ModifiedBy: device.ID(e.ModifiedBy),
 			Sequence:   e.Sequence,
 			SyncedHash: synced,
+			Version:    version,
 		})
 	}
 	return m, nil
+}
+
+// wireCounters turns the map a peer sent into counters. A duplicate id cannot
+// survive JSON decoding, so NewVersion sees at most one counter per device.
+func wireCounters(m map[string]uint64) []manifest.Counter {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]manifest.Counter, 0, len(m))
+	for id, n := range m {
+		out = append(out, manifest.Counter{ID: device.ID(id), N: n})
+	}
+	return out
 }
 
 // toWireChunkRequest converts a chunk request into its wire form.

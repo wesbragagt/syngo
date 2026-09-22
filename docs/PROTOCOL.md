@@ -1,4 +1,4 @@
-# Syncthis peer protocol, version 1
+# Syncthis peer protocol, version 2
 
 This is what `internal/adapters/tcpwire` implements. It is the contract between
 two daemons; the application layer sees it through `internal/app/ports`.
@@ -45,7 +45,7 @@ timeout is dropped.
 
 | Type | Name | Direction | Header |
 |---|---|---|---|
-| 0x01 | Hello | both, first frame after TLS | `{"protocol_version":1,"device_id":"…","device_name":"…","folders":[{"id":"…","mode":"…"}]}` |
+| 0x01 | Hello | both, first frame after TLS | `{"protocol_version":2,"device_id":"…","device_name":"…","folders":[{"id":"…","mode":"…"}]}` |
 | 0x02 | Rejected | server → client, then close | `{"reason":"unknown_device"\|"protocol_version"\|"id_mismatch"}` |
 | 0x03 | Ping | client → server | `{"nonce":123}` |
 | 0x04 | Pong | server → client | `{"nonce":123}` |
@@ -66,7 +66,8 @@ the receiver can tell "never had it" from "deleted". One entry is
 ```json
 {"path":"sub/a.txt","kind":1,"size":1234,"mtime_ns":1700000000123456789,
  "mode":420,"hash":"<64 hex>","link_target":"","deleted":false,
- "modified_by":"<device id>","sequence":7,"synced_hash":"<64 hex>"}
+ "modified_by":"<device id>","sequence":7,"synced_hash":"<64 hex>",
+ "version":{"<device id>":3,"<device id>":1}}
 ```
 
 Every entry is validated before anything is built from it, and one bad entry
@@ -102,9 +103,43 @@ that is a file on one side and a directory or a symlink on the other is a
 place. Both decisions are the receiver's; the wire only says what the sender
 has.
 
+`version` is the version vector of the entry: for each device, how many
+content changes it has made to that path. It is what lets the receiver order
+two versions of a path. A version that dominates the receiver's (every counter
+at least as high, one higher) was written on top of it, so taking it loses
+nothing and it is a pull; a version the receiver's dominates is stale and
+changes nothing here; two versions where each is ahead on some device were
+written concurrently and the receiver keeps both. Installing a version adopts
+its vector, and the outcome of a conflict adopts the merge of both, so a third
+device holding either input takes the outcome without a second conflict.
+
+The field is absent for a path whose stored row predates version vectors,
+which reads as the zero vector: dominated by every other vector, equal to
+every other empty one. A counter naming something that is not a device id, or
+counting zero changes, refuses the whole manifest like any other bad entry.
+Permission bits are deliberately not counted: a `chmod` is not a content
+version, and the synced mode stays local bookkeeping and is never sent.
+
 `synced_hash` is the version the sender last agreed on with a peer, described
 in [STATE.md](STATE.md#files). It is what lets the receiver tell a newer
-version from a diverged one: an entry whose `synced_hash` is the version the
+version from a diverged one: an entry whose `version` is the version vector of the entry: for each device, how many
+content changes it has made to that path. It is what lets the receiver order
+two versions of a path. A version that dominates the receiver's (every counter
+at least as high, one higher) was written on top of it, so taking it loses
+nothing and it is a pull; a version the receiver's dominates is stale and
+changes nothing here; two versions where each is ahead on some device were
+written concurrently and the receiver keeps both. Installing a version adopts
+its vector, and the outcome of a conflict adopts the merge of both, so a third
+device holding either input takes the outcome without a second conflict.
+
+The field is absent for a path whose stored row predates version vectors,
+which reads as the zero vector: dominated by every other vector, equal to
+every other empty one. A counter naming something that is not a device id, or
+counting zero changes, refuses the whole manifest like any other bad entry.
+Permission bits are deliberately not counted: a `chmod` is not a content
+version, and the synced mode stays local bookkeeping and is never sent.
+
+`synced_hash` is the version the
 receiver holds was written on top of that version, so taking it loses nothing
 and it is a pull rather than a conflict. A sender that omits the field, as one
 from before it existed does, is read as "no baseline known", which changes no
@@ -162,8 +197,11 @@ a peer removed while it is connected stops being served at once.
    its leaf certificate.
 2. Both sides write `Hello` immediately and read the other's. A `Hello` that
    announces a device ID other than the certificate's is answered with
-   `Rejected{id_mismatch}`; a protocol version other than 1 with
-   `Rejected{protocol_version}`. The connection closes either way.
+   `Rejected{id_mismatch}`; a protocol version other than 2 with
+   `Rejected{protocol_version}`. The connection closes either way. Both sides
+   check: a version-1 peer sends no version vectors, so its entries cannot be
+   ordered, and there is no mixed-version operation. Every device of a mesh
+   upgrades together.
 3. The server looks the client up in its `devices` table. An unknown device is
    answered with `Rejected{unknown_device}` and closed. The rejection comes
    *after* the server's own `Hello`, on purpose: a `peer add` probe from an
