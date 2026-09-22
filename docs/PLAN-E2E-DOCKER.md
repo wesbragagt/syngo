@@ -425,6 +425,24 @@ cluster where files are edited or deleted at all accumulates these rows once
 the link is slow enough, which makes this the reason to fix KF-1 rather than a
 second bug.
 
+Scenario 5 (`TestPartition_EditBothSidesThenHeal`) is skipped for the same
+reason, and is the plainest reproduction of the three because no test writes
+anything while a transfer runs. Two devices write different versions of
+`x.txt` on either side of a partition; the partition is healed; the device
+holding the losing version starts pulling the winner, and the keep-both
+resolution replaces the file it is pulling from underneath it:
+
+```
+a: x.txt failed 2/3  chunk 2 of docs/x.txt refused: hash_changed
+```
+
+Everything else the scenario asks for holds: the winner keeps the path on all
+three devices, the losing version is there as one conflict copy, and the trees
+are equal. Only the journal is wrong, and it stays wrong. Two runs in three
+failed this way; the third had the transfer finish before the resolution.
+Resolving a divergence is the one thing a synchronizer is certain to do, so
+this is the case that decides the policy KF-1 needs.
+
 ### KF-2: three-way divergence loses one of the three versions
 
 Scenario 4 (`TestMesh_ThreeWritersOneConflict`). Three devices are partitioned
