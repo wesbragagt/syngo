@@ -112,7 +112,11 @@ func (d *Daemon) resumeTransfers(ctx context.Context, id folder.ID) error {
 	return nil
 }
 
-// setPaused writes the paused flag of one or every folder.
+// setPaused writes the paused flag of one or every folder and tells the peers
+// that are connected which folders this device serves now. A paused folder is
+// left out of the Hello, and a peer filters on the list it was given for the
+// life of the connection: without the announcement a peer that connected while
+// the folder was paused would never pull it again, however often it resumes.
 func (d *Daemon) setPaused(ctx context.Context, id folder.ID, paused bool) error {
 	targets, err := d.targets(ctx, id)
 	if err != nil {
@@ -123,6 +127,7 @@ func (d *Daemon) setPaused(ctx context.Context, id folder.ID, paused bool) error
 			return err
 		}
 	}
+	d.announceFolders(ctx)
 	return nil
 }
 

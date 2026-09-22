@@ -831,6 +831,31 @@ func TestReload_AnnouncesAModeChange(t *testing.T) {
 	}
 }
 
+// TestPauseResume_AnnounceTheFolderList is D3: a peer that connected while a
+// folder was paused filters that folder out for the life of the connection, so
+// pausing and resuming has to tell it the new list.
+func TestPauseResume_AnnounceTheFolderList(t *testing.T) {
+	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+
+	if err := h.daemon.Pause(h.ctx, "docs"); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if err := h.daemon.Resume(h.ctx, "docs"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	announcements := h.listener.Announcements()
+	if len(announcements) != 2 {
+		t.Fatalf("%d announcements, want one for the pause and one for the resume", len(announcements))
+	}
+	if len(announcements[0]) != 0 {
+		t.Fatalf("announced %+v after the pause, want no folder", announcements[0])
+	}
+	if len(announcements[1]) != 1 || announcements[1][0].ID != "docs" {
+		t.Fatalf("announced %+v after the resume, want docs", announcements[1])
+	}
+}
+
 func TestPeerLoop_SyncsAFolderTheHelloDidNotList(t *testing.T) {
 	const peerID = device.ID("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD")
 	// The peer connects announcing no folder at all, which is what a peer

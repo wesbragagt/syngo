@@ -130,8 +130,14 @@ another mode while daemons run. `FoldersChanged` carries the list again, at any
 time: it replaces what the `Hello` announced, and the receiving client runs a
 sync cycle over every folder both sides now share. A daemon sends it to the
 peers connected to it whenever it reloads its configuration, which is what the
-CLI asks for after `folder add`, `folder set` and `folder remove`. Neither side
-has to reconnect for a new folder or a new mode to take effect.
+CLI asks for after `folder add`, `folder set` and `folder remove`, and whenever
+a folder is paused or resumed. Neither side has to reconnect for a new folder,
+a new mode or a resumed folder to take effect.
+
+A paused folder is left out of both the `Hello` and the announcement, and the
+client filters its cycles on the list it last received. The announcement on
+resume is therefore what puts the folder back: without it a peer that connected
+while the folder was paused would never pull it again on that connection.
 
 The frame may travel in either direction. The serving side keeps no view of the
 peer's folders, since the peer drives its own pulls, so it accepts the frame and
