@@ -105,6 +105,53 @@ func (r *remoteDevice) resolve(ctx context.Context) error {
 	default:
 		r.dir = home + "/" + r.dir
 	}
+	return validateResolvedDir(r.dir)
+}
+
+// validateResolvedDir is the last check before a run deletes anything on the
+// peer machine: the resolved directory must be absolute and at least two
+// levels below the root, so "rm -rf" under it can never name "/", "/home" or
+// a home directory itself.
+func validateResolvedDir(dir string) error {
+	if !strings.HasPrefix(dir, "/") {
+		return fmt.Errorf("the peer directory resolved to %q, which is not an absolute path", dir)
+	}
+	var parts []string
+	for _, part := range strings.Split(strings.Trim(dir, "/"), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return fmt.Errorf("the peer directory resolved to %q, which climbs out of itself", dir)
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) < 2 {
+		return fmt.Errorf("the peer directory resolved to %q, too close to the root of the peer machine "+
+			"for a run to clear it; name a directory of its own, for example ~/syncthis-bench-remote", dir)
+	}
+	return nil
+}
+
+// reset clears the folder root and the data directory the last run left on
+// the peer and recreates them empty, so every run starts from a known state.
+//
+// Without it a run inherits whatever an earlier run left there: the peer
+// serves that content back, this machine pulls it, and the recorded
+// convergence time and byte count describe data that is not the corpus under
+// test. It deletes exactly two paths, both under the directory the operator
+// named and both checked by validateResolvedDir, and nothing else on the peer
+// machine is touched.
+func (r *remoteDevice) reset(ctx context.Context) error {
+	if err := validateResolvedDir(r.dir); err != nil {
+		return err
+	}
+	if _, err := r.run(ctx, shellJoin("rm", "-rf", r.root(), r.dataDir())); err != nil {
+		return fmt.Errorf("clear the previous run's state under %s on %s: %w", r.dir, r.host, err)
+	}
+	if _, err := r.run(ctx, shellJoin("mkdir", "-p", r.dir+"/bin", r.dataDir(), r.root())); err != nil {
+		return fmt.Errorf("create %s on %s: %w", r.dir, r.host, err)
+	}
 	return nil
 }
 
@@ -131,8 +178,8 @@ func (r *remoteDevice) prepare(ctx context.Context, localBinary string, build bu
 	if err := build(ctx, localBinary, goos, goarch); err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, shellJoin("mkdir", "-p", r.dir+"/bin", r.dataDir(), r.root())); err != nil {
-		return fmt.Errorf("create %s on %s: %w", r.dir, r.host, err)
+	if err := r.reset(ctx); err != nil {
+		return err
 	}
 	if _, err := r.exec.Run(ctx, "scp", scpArgs(localBinary, r.host, r.bin())...); err != nil {
 		return fmt.Errorf("copy the syncthis binary to %s: %w", r.host, err)
@@ -197,10 +244,14 @@ func (r *remoteDevice) start(ctx context.Context, iface string, poll time.Durati
 			" >> " + shellQuote(r.logFile()) + " 2>&1 < /dev/null &",
 		"echo $! > " + shellQuote(r.pidFile()),
 	}, "\n")
+	// The flag is set before the call, not after: ssh can start the daemon
+	// and still fail, and a stop that skipped it would leave a process
+	// running on the peer machine. stop is safe when there is nothing to
+	// kill.
+	r.running = true
 	if _, err := r.run(ctx, script); err != nil {
 		return fmt.Errorf("start the daemon on %s: %w", r.host, err)
 	}
-	r.running = true
 
 	deadline := time.Now().Add(remoteReadyTimeout)
 	for {

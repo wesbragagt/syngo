@@ -278,3 +278,96 @@ func TestRemoteHashScriptSkipsTheStateDirectory(t *testing.T) {
 		}
 	}
 }
+
+// A run must start from a known peer state. An earlier run's files left in
+// the peer's folder root would be served back to this machine, and the
+// convergence time and byte count would describe data that is not the corpus
+// under test.
+func TestPrepareClearsThePreviousRunsState(t *testing.T) {
+	fake := &fakeRunner{answer: peerAnswers}
+	r := newTestRemote(t, fake)
+	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	var removals []string
+	for _, line := range fake.lines() {
+		if strings.Contains(line, "rm") {
+			removals = append(removals, line)
+		}
+	}
+	if len(removals) != 1 {
+		t.Fatalf("prepare ran %d removals, want exactly 1: %v", len(removals), removals)
+	}
+	want := shellJoin("rm", "-rf", r.root(), r.dataDir())
+	if !strings.Contains(removals[0], want) {
+		t.Errorf("removal %q is not %q: a run clears the folder root and the data directory, nothing else",
+			removals[0], want)
+	}
+	// The binary and the directory itself survive, and nothing outside the
+	// operator's directory is ever named.
+	for _, keep := range []string{r.bin(), "'" + r.dir + "'"} {
+		if strings.Contains(removals[0], keep) {
+			t.Errorf("removal %q names %q, which a run must not delete", removals[0], keep)
+		}
+	}
+	if strings.Contains(removals[0], "/home/bench'") {
+		t.Errorf("removal %q names the home directory", removals[0])
+	}
+}
+
+// validateResolvedDir is the last guard before a run deletes anything: a
+// directory too close to the root of the peer machine is refused.
+func TestValidateResolvedDirRefusesTheRootAndItsNeighbours(t *testing.T) {
+	for _, dir := range []string{"/", "/home", "/home/", "relative/path", "/home/bench/../.."} {
+		if err := validateResolvedDir(dir); err == nil {
+			t.Errorf("validateResolvedDir(%q) = nil, want a refusal", dir)
+		}
+	}
+	for _, dir := range []string{"/home/bench/syncthis-bench-remote", "/srv/bench"} {
+		if err := validateResolvedDir(dir); err != nil {
+			t.Errorf("validateResolvedDir(%q) = %v, want nil", dir, err)
+		}
+	}
+}
+
+func TestResolveRefusesAPeerDirectoryTooCloseToTheRoot(t *testing.T) {
+	fake := &fakeRunner{answer: func(cmd recordedCommand) ([]byte, error) {
+		if strings.HasSuffix(cmd.line(), "pwd") {
+			return []byte("/\n"), nil
+		}
+		return nil, nil
+	}}
+	r, err := newRemoteDevice("macpro-nixos", "bench", fake)
+	if err != nil {
+		t.Fatalf("newRemoteDevice: %v", err)
+	}
+	if err := r.resolve(context.Background()); err == nil {
+		t.Fatal("resolve to /bench = nil, want a refusal: a run clears what it resolves to")
+	}
+}
+
+// ssh can start the daemon and still fail afterwards. The driver owns that
+// daemon from the moment the command is sent, or a failed run leaves a
+// process alive on the peer machine.
+func TestStopKillsADaemonWhoseStartReportedFailure(t *testing.T) {
+	fake := &fakeRunner{answer: func(cmd recordedCommand) ([]byte, error) {
+		if strings.Contains(cmd.line(), "'daemon' 'run'") {
+			return nil, errors.New("client_loop: send disconnect: Broken pipe")
+		}
+		return peerAnswers(cmd)
+	}}
+	r := newTestRemote(t, fake)
+	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if err := r.start(context.Background(), "tailscale0", time.Millisecond); err == nil {
+		t.Fatal("start = nil, want the failure ssh reported")
+	}
+	if err := r.stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if !strings.Contains(findCommand(t, fake, "kill"), r.pidFile()) {
+		t.Error("stop killed nothing after a start that may have left a daemon behind")
+	}
+}
