@@ -119,27 +119,82 @@ reports one.
 
 ### Tailscale direct and Tailscale DERP
 
-These need two real machines already joined to the same tailnet, set up as
-the sections above describe. This command only ever drives the local side of
-the pair — there is no way for one process to read a folder on the other
-machine — so it needs the peer's address and identity, and the local data
-directory to run the daemon against:
+These scenarios measure two machines. The command drives the local side in
+this process and the peer machine over `ssh`, so both sides are observable and
+convergence, recovery and the network path are real measurements rather than
+two results an operator compares by hand.
 
 ```console
-$ go run ./cmd/syncthis-bench --scenario tailscale-direct --name baseline \
-    --peer-addr 100.64.0.7:22000 \
-    --peer-device-id ETI3RRZ... \
-    --local-data-dir ~/.local/share/syncthis-bench
+$ go run ./cmd/syncthis-bench --scenario tailscale-direct --name two-sided \
+    --peer-host macpro-nixos \
+    --peer-dir '~/syncthis-bench-remote' \
+    --corpus-dir bench/corpus/v1 --results-dir bench/results/v1
+bench/results/v1/20260922T145929Z-tailscale-direct-two-sided.json
+scenario tailscale-direct, name two-sided, took 19s
+unmeasured: bytes_transferred: every byte moved from this machine to macpro-nixos, ...
 ```
 
-Run the matching invocation on the peer machine to fill in both sides of a
-comparison. A machine without a running, reachable Tailscale client is
-refused with an actionable message rather than producing a result: this
-runner never fakes a Tailscale measurement.
+The operator gives three things: the scenario, the peer host and the peer
+directory. `--interface` names the interface both daemons bind to and defaults
+to `tailscale0`; `--local-data-dir` is optional and defaults to a temporary
+directory removed when the run ends.
 
-Fields these scenarios fill in: `bytes_transferred` and, on Linux and macOS,
-`cpu_seconds`, `peak_memory_bytes` and `disk_writes`. `convergence_time_ns`
-and `recovery_time_ns` are always left at zero with an `unmeasured` line
-explaining why: convergence and recovery both need seeing the peer's folder
-or restarting the peer's process, and this command only ever runs on one
-machine.
+#### What the operator prepares
+
+- Both machines joined to the same tailnet, `tailscale` on `PATH` on both.
+- `ssh <peer-host>` works from this machine with no passphrase and no prompt:
+  the runner uses `BatchMode=yes` and fails rather than waiting for one.
+- `--peer-dir` names one directory on the peer machine. The run creates
+  nothing outside it: the binary lands in `<dir>/bin/syncthis`, the data
+  directory in `<dir>/data`, the folder root in `<dir>/root`, and the daemon's
+  pid and log in `<dir>/daemon.pid` and `<dir>/daemon.log`. A `--peer-dir` of
+  `/`, `~`, or one holding `..` is refused.
+- Nothing else. The runner builds and copies the binary, initializes the data
+  directory, adds the folder, pairs the two devices, starts the peer's daemon
+  on the tailnet interface and stops it again, including when the run fails
+  partway through.
+
+The DERP scenario is the same command with `--scenario tailscale-derp`, run
+with direct connections blocked between the two machines, per the setup
+section above. Nothing else changes: the run reports the path it actually
+observed, so a DERP run that quietly held a direct connection is visible in
+`network_path` rather than assumed away.
+
+#### The static build requirement
+
+The binary copied to the peer is built with `CGO_ENABLED=0`, the same flags
+`make release` uses. A dynamically linked build made on one NixOS machine
+names its interpreter by an absolute `/nix/store` path that does not exist on
+the other machine, and a copy of it dies with exit 127 before printing
+anything. The runner also reads `uname -s -m` on the peer and builds for that
+platform, so a peer of another architecture gets a binary that runs.
+
+#### Fields these scenarios fill in
+
+- `convergence_time_ns`: real. The run polls `status --json` on both machines
+  until neither has a pending change or a transfer in flight and both report
+  the same file count, then compares the two folder roots file by file by
+  SHA-256 hash. Only matching hashes count as a convergence, so two different
+  trees with the same file count can never be recorded as converged.
+- `recovery_time_ns`: the time from restarting the peer's daemon until the
+  folders converge again, measured only when the peer was caught with
+  `transfers.active > 0` after the mutation set. When nothing is caught moving
+  within 30s, no daemon is killed, the field stays `0`, and an
+  `unmeasured: recovery_time_ns: ...` line says why. This is the same rule the
+  `lan` scenario follows.
+- `network_path`: `direct` when both machines reported a non-empty `CurAddr`
+  for each other in `tailscale status --json` *while a transfer was in
+  flight*, `relay:<region>` when they fell back to a relay. The reading is
+  taken during the transfer on purpose: the same field read after it is empty
+  and proves nothing. A run that could not read it while the connection was
+  live leaves it empty with an `unmeasured` line.
+- `cpu_seconds`, `peak_memory_bytes`, `disk_writes`: the local process only.
+- `bytes_transferred` is normally `0` with an `unmeasured` line: the counter
+  sums transfers that completed on this machine, the corpus and the mutations
+  start here and land on the peer, and the peer's journal drops a transfer as
+  soon as its file is installed, so there is nothing left to count once the
+  run has converged.
+
+A machine without a running, reachable Tailscale client, or a peer host that
+does not answer ssh, is refused with an actionable message rather than
+producing a result: this runner never fakes a Tailscale measurement.
