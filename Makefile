@@ -73,6 +73,7 @@ SCALE_CYCLES       ?= 1000
 SCALE_TRANSFER_GIB ?= 10
 SCALE_RATE_SECONDS ?= 120
 SCALE_FILES_EACH   ?= 500
+SCALE_IDLE_SECONDS ?= 300
 
 scale:
 	@mkdir -p $(SCALE_DIR)
@@ -82,6 +83,7 @@ scale:
 	SYNCTHIS_SCALE_TRANSFER_GIB=$(SCALE_TRANSFER_GIB) \
 	SYNCTHIS_SCALE_RATE_SECONDS=$(SCALE_RATE_SECONDS) \
 	SYNCTHIS_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
+	SYNCTHIS_SCALE_IDLE_SECONDS=$(SCALE_IDLE_SECONDS) \
 	  go test ./internal/e2e/ -run 'TestScale_' -count=1 -p 1 -v -timeout 180m
 
 # Containers and networks of a run killed before its cleanups ran.

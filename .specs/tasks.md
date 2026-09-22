@@ -65,8 +65,12 @@ Goal: prove safe filesystem tracking without networking.
 - [x] Implement dry-run, status, rescan, and repair commands.
 - [x] Add tests for rename, delete, atomic-save, and symlink behavior.
 - [x] Add a crash test that kills the process mid-scan.
-- [ ] Verify a 100,000-file folder reconciles safely.
-- [ ] Verify idle memory under 100 MB on the reference device.
+- [x] Verify a 100,000-file folder reconciles safely.
+- [ ] Verify idle memory under 100 MB on the reference device. Measured and it
+      does not hold: an idle daemon over 100,000 files settles at 148.8 MiB.
+      Resident memory grows about 1.45 KiB per file, crossing 100 MiB near
+      54,000 files. `TestScale_IdleMemoryUnderTheLimit` asserts the 100 MiB
+      limit and fails today; see docs/BENCH.md.
 
 ## Phase 2: Two-device Tailscale transfer
 
@@ -84,7 +88,7 @@ Goal: transfer arbitrary files between two Tailscale devices.
 - [x] Install files atomically into place after verification.
 - [x] Add a `status --json` command.
 - [x] Add a `peer test` command that reports latency, route, and failures.
-- [ ] Run a 10 GB transfer test with bounded memory.
+- [x] Run a 10 GB transfer test with bounded memory.
 - [x] Run an interrupted transfer test and verify resume.
 - [x] Verify the listener never binds to a public interface.
 
@@ -101,9 +105,9 @@ Goal: dependable backup and mirror workflows.
 - [x] Add atomic destination writes.
 - [x] Support configuration import and export.
 - [x] Add a CLI command to inspect transfer state.
-- [ ] Run 1,000 interruption and restart cycles without corruption.
+- [x] Run 1,000 interruption and restart cycles without corruption.
 - [ ] Run a 1 TB mirror test and verify no full retransfer after restart.
-- [ ] Verify bandwidth stays within 5% of configured limits.
+- [x] Verify bandwidth stays within 5% of configured limits.
 
 ## Phase 4: Two-way sync and conflict safety
 

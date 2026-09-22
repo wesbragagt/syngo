@@ -426,8 +426,17 @@ func TestScale_IdleMemoryUnderTheLimit(t *testing.T) {
 		humanBytes(settled), humanBytes(readings[len(readings)-1]),
 		humanBytes(idleMemoryLimit), tree.files)
 
+	// Bytes per file is the number that says whether a reading is a fixed
+	// overhead or something that grows with the folder. A run over a
+	// smaller tree that reports the same per-file figure has measured the
+	// same thing the full run does.
+	perFile := float64(settled) / float64(tree.files)
+	t.Logf("settled %s over %d files = %.0f B per file", humanBytes(settled), tree.files, perFile)
+
 	if settled >= idleMemoryLimit {
-		t.Fatalf("idle resident memory settled at %s over %v (peak %s), want under %s",
-			humanBytes(settled), idleSettle, humanBytes(whole), humanBytes(idleMemoryLimit))
+		t.Fatalf("idle resident memory settled at %s over %v (peak %s, %.0f B per file "+
+			"over %d files), want under %s",
+			humanBytes(settled), idleSettle, humanBytes(whole), perFile, tree.files,
+			humanBytes(idleMemoryLimit))
 	}
 }

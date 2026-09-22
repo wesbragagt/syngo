@@ -213,3 +213,225 @@ platform, so a peer of another architecture gets a binary that runs.
 A machine without a running, reachable Tailscale client, or a peer host that
 does not answer ssh, is refused with an actionable message rather than
 producing a result: this runner never fakes a Tailscale measurement.
+
+## The scale suite
+
+The benchmark scenarios above measure convergence and throughput against a
+corpus. The scale suite measures a different set of claims: the ones about
+size and resource use that the task list states as absolutes, such as "a
+100,000-file folder reconciles safely" and "idle memory under 100 MB". They
+are tests rather than benchmarks, because each one has a pass or fail
+condition, and they live in `internal/e2e` alongside the tests they share a
+harness with.
+
+They are opt-in the same way the container suite is. Without
+`SYNCTHIS_SCALE=1` every one of them skips, so `make test` compiles them and
+pays nothing else for them.
+
+```console
+$ make scale
+```
+
+Every size and count is a parameter, so a machine with less disk or less wall
+time runs a smaller version of the same measurement and reports the number it
+really ran:
+
+```console
+$ make scale SCALE_CYCLES=100 SCALE_TRANSFER_GIB=2 SCALE_FILES_EACH=100
+```
+
+| Variable | Default | What it sets |
+| --- | --- | --- |
+| `SCALE_DIR` | `.scale` | Where fixtures, folder roots and staged files go |
+| `SCALE_FILES_EACH` | `500` | Files per directory; 200 directories, so 100,000 files |
+| `SCALE_IDLE_SECONDS` | `300` | How long an idle daemon is watched |
+| `SCALE_TRANSFER_GIB` | `10` | Size of the single-file transfer |
+| `SCALE_CYCLES` | `1000` | Kill-and-restart cycles |
+| `SCALE_RATE_SECONDS` | `120` | Length of the bandwidth measurement window |
+
+`SCALE_DIR` must be on a filesystem with room for about three times
+`SCALE_TRANSFER_GIB`: the sender, the receiver and the staged copy each hold
+the file at once. That rules out a `/tmp` backed by tmpfs, which is why the
+default is a directory inside the checkout. The transfer test reads the free
+space before it starts and skips with both numbers rather than failing on a
+write error halfway through.
+
+### Measured results
+
+Machine: `icebox`, AMD Ryzen 7 9700X (8 cores, 16 threads), 60 GiB RAM, NVMe
+(`/dev/nvme0n1p2`, 190 GiB free at the time of the run), NixOS, Linux 7.0.3
+x86_64, Go 1.26.7. Date: 2026-09-22. Commit: `f108c41`. Run with `make scale`
+at the default parameters unless a row says otherwise.
+
+Memory is resident set size read from `/proc/<pid>/status`. There is no
+portable way to read another process's RSS from the standard library, so on a
+platform that does not provide `/proc` these tests skip with that as the
+reason rather than passing.
+
+| Claim | Measured | Verdict |
+| --- | --- | --- |
+| 100,000-file folder reconciles safely | see below | pass |
+| Idle memory under 100 MB | 148.8 MiB settled over 100,000 files | **fail** |
+| 10 GiB transfer with bounded memory | 25.2 MiB peak receiver RSS | pass |
+| 1,000 interruption cycles without corruption | see below | pass |
+| Bandwidth within 5% of the limit | -0.13% over 1m44s | pass |
+
+#### 100,000-file reconcile
+
+200 directories of 500 files, 15.1 MiB in total.
+
+```
+built 100000 files in 200 directories (15.1 MiB) in 868ms
+scan: 100200 entries, 100000 hashed, 100200 changes, 0 skipped, took 3.53s
+scan: 100202 entries,  11000 hashed,  12002 changes, 0 skipped, took 908ms
+scan: 100202 entries,      0 hashed,      0 changes, 0 skipped, took 504ms
+reconciled 100000 files: 10000 modified, 1000 deleted, 1000 added
+```
+
+The three scans are the first record, the reconcile of a mutated tree, and a
+repeat that must find nothing. What the test asserts is not that the scans
+finished: after each one it compares the stored manifest against the bytes the
+test wrote, entry by entry, and checks that `FolderStats` reports exactly
+100,000 file rows, 200 directory rows and the right total size. The reconcile
+also has to classify the mutation exactly: 10,000 modifications, 1,000
+deletions, 1,000 creations and no renames.
+
+Consecutive revisions of a fixture file always differ in length, and no two
+files ever hold the same bytes. Without the first property a rescan can miss a
+change whatever the filesystem reports for the modification time; without the
+second the scanner correctly pairs a deletion with a creation and reports a
+rename, which would make the expected counts wrong.
+
+#### Idle memory: the 100 MB claim does not hold at 100,000 files
+
+This is the one failing measurement. A daemon over a 100,000-file folder, left
+idle for five minutes after it reported the folder scanned and no change
+pending, settles at **148.8 MiB** resident. The limit is 100 MiB.
+
+```
+peak resident memory including the startup scan: 174.0 MiB
+idle over 5m0s: 600 samples, first 159.8 MiB, highest 160.0 MiB,
+  settled 148.8 MiB (last quarter), last 148.8 MiB, limit 100.0 MiB
+```
+
+The settled figure is the highest reading over the last quarter of the window,
+not a single sample and not the reading right after the scan. A five-minute
+window is long enough for the Go scavenger to have run several times; it
+returned about 11 MiB over that window and then stopped, so the remaining
+149 MiB is memory the daemon holds, not memory the runtime has yet to give
+back.
+
+Resident memory grows linearly with the file count, measured over a
+two-minute window at four sizes:
+
+| Files | Settled RSS | Bytes per file |
+| --- | --- | --- |
+| 10,000 | 36.8 MiB | 3857 |
+| 30,000 | 64.5 MiB | 2254 |
+| 50,000 | 93.7 MiB | 1966 |
+| 100,000 | 161.0 MiB | 1688 |
+
+The marginal cost is about 1.45 KiB per file on top of roughly 22 MiB of fixed
+overhead, which puts the 100 MiB crossing at somewhere near 54,000 files. The
+claim holds comfortably for a folder of tens of thousands of files and does
+not hold at 100,000. The task list line stays open.
+
+The test asserts 100 MiB and therefore fails today. That is deliberate: the
+limit under test is the claim, and lowering it to whatever this machine
+happens to measure would turn the test into a description of the current
+behaviour instead of a check on it.
+
+#### 10 GiB transfer
+
+One 10 GiB file of random content between two daemon processes, 1 MiB chunks.
+
+```
+staged big.bin of 10.00 GiB in 23.5s
+10.00 GiB arrived in 1m17.7s (131.8 MiB/s)
+peak resident memory while transferring:
+  sender 20.6 MiB over 311 samples, receiver 25.2 MiB over 311 samples
+kernel-recorded peak (VmHWM): sender 23.0 MiB, receiver 25.7 MiB
+```
+
+The file that arrived was hashed in full and matched what was sent. Memory is
+sampled every 250 ms for the whole transfer and cross-checked against the
+kernel's own high-water mark, so a spike between two samples cannot be missed.
+
+The asserted bound is 512 MiB, and the reason it is 512 MiB rather than the
+30 MiB actually measured: the transfer is chunked, so a daemon needs a small
+multiple of the chunk size plus its database cache, and that must not grow
+with the file. 512 MiB is two orders of magnitude below the 10 GiB being
+moved, so any implementation that buffered the file, or even a twentieth of
+it, fails the test; and it is far enough above what a chunked implementation
+needs that a pass is not a measurement of how much memory the Go runtime
+happened to keep on the day. Tightening the bound to the measured 25 MiB would
+make the test fail on a slower disk or a busier machine for no reason worth
+acting on.
+
+Peak RSS is 25.2 MiB moving 10 GiB: memory is flat in the size of the file,
+which is the claim.
+
+#### 1,000 interruption and restart cycles
+
+Each cycle publishes a new file of about 4 MiB to the sender with a 64 KiB
+chunk size, waits until the receiver has a partial download on disk, sends it
+`SIGKILL`, restarts it, and waits for the file to arrive and hash correctly.
+
+```
+1000 kill-and-restart cycles in 8m20.6s (500ms per cycle);
+  1000 of them killed a daemon with a partial download on disk
+1 of 1000 cycles left an orphaned partial file behind
+  (no journal row refers to it, the tree is intact)
+```
+
+All 1,000 kills landed on a transfer in progress; a cycle that killed a daemon
+between transfers would prove nothing and the test counts them separately and
+fails if none was caught. After the last cycle the two folder trees were
+compared file by file, the journal was empty with no failed rows, and
+`repair --dry-run` found nothing unrecoverable.
+
+Two findings came out of this run.
+
+The cycle files must differ in length from one cycle to the next. With a
+constant 4 MiB, one run in 1,000 stalled at cycle 444 with both daemons idle
+and the previous cycle's bytes on disk: two cycles finished within a second of
+each other and wrote the same path, so the only thing distinguishing them was
+the modification time, and a rescan reading that at second granularity saw an
+unchanged file. That is a property of the fixture rather than of an
+interruption, and the fixture now rotates through 16 lengths to remove it. It
+is worth recording because the same shape would affect any real folder whose
+files are rewritten at the same size faster than the timestamp resolution.
+
+Repeated `SIGKILL` can orphan a partial file. The receiver creates the
+`.part` file before it saves the journal row that names it (`newTemp` then
+`SaveTransfer` in `internal/app/syncer/puller.go`), so a kill in that window
+leaves a file under `.syncthis/tmp` that no row refers to and nothing later
+deletes. One run of 1,000 cycles left one such file, zero bytes long. It is
+wasted disk, not corruption: the installed tree matched the sender hash for
+hash and the journal was empty. The cycle test reports the count instead of
+failing on it, and says so in a comment; every other test in the package,
+including the 10 GiB one, still fails outright on a leftover partial file, so
+the leniency applies only where repeated `SIGKILL` is the deliberate
+condition.
+
+#### Bandwidth within 5%
+
+A 4 MiB/s download limit, measured by following the size of the partial
+download, which is the count of bytes received and verified and so exactly
+what the limiter paces.
+
+```
+measured 419.0 MiB over 1m44.9s (481 samples):
+  4188647 B/s = 4.0 MiB/s, limit 4.0 MiB/s, deviation -0.13%
+```
+
+The window is what makes this a real measurement. The existing
+`TestDownloadLimit_...` in `internal/e2e` moves 20 MiB at 4 MiB/s, which takes
+five seconds, and a 5% assertion over five seconds is an assertion about
+scheduler noise rather than about the limiter. This test transfers for
+`SCALE_RATE_SECONDS` (120 by default) and measures the rate over everything
+after the first 15 seconds, dropping that warm-up because the token bucket
+starts with a burst and the first chunk requests arrive before the pacing
+settles. It also refuses to report a rate measured over less than half the
+requested window. The measured window here was 1m44.9s, and the sustained rate
+was 0.13% below the configured limit.
