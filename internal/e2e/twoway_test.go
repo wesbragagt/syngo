@@ -490,7 +490,9 @@ func TestTwoWay_StaleRestartDoesNotRollBack(t *testing.T) {
 	b := startNode(t, "b", folder.ModeSendReceive)
 	writeFile(t, a, "notes.txt", []byte("the version both sides had"))
 	pair(t, a, b)
-	waitTreeEqual(t, a, b)
+	// Both nodes are idle before b goes down, so what b misses is only
+	// what a writes afterwards.
+	waitConverged(t, a, b)
 
 	b.Stop()
 	writeFile(t, a, "notes.txt", []byte("the first edit made while b was down"))
@@ -528,7 +530,9 @@ func TestTwoWay_DeletionSurvivesAStalePeer(t *testing.T) {
 	writeFile(t, a, "gone.txt", []byte("what both sides had"))
 	writeFile(t, a, "kept.txt", []byte("what stays"))
 	pair(t, a, b)
-	waitTreeEqual(t, a, b)
+	// Both nodes are idle before b goes down, so the deletion is the only
+	// thing b has to catch up with.
+	waitConverged(t, a, b)
 
 	b.Stop()
 	if err := os.Remove(filepath.Join(a.Root, "gone.txt")); err != nil {
