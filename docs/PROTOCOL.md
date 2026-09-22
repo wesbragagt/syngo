@@ -225,6 +225,17 @@ written before the index existed, cuts the file on the spot to answer a
 `ChunkListRequest`, so an upgraded device serves its peers before it has
 rescanned.
 
+The average chunk size a device is configured with is therefore not part of
+this contract and changing it is not a protocol version. The list carries the
+lengths the sending side actually cut, and a request names a byte range out of
+that list, so no device ever derives a boundary from a size; two devices
+configured with different averages interoperate. What a mismatch costs is
+deduplication rather than compatibility: each device cuts its own files with
+its own average when it scans, so boundaries a peer announces are recognized in
+the local index only when both were cut the same way. The default moved from
+1 MiB to 64 KiB with no version bump for exactly this reason; the measurements
+are in [BENCH.md](BENCH.md).
+
 A `path` that breaks the rules above is answered with `ChunkError{not_found}`,
 like a request for a file the sender does not have. A refusal of a chunk list
 carries `index` zero: the request is about the whole file.

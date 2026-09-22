@@ -314,12 +314,19 @@ peer when the bytes are not what was announced. A stale row costs one read.
 
 **Cost.** A row is 6 columns, dominated by the 64 character hash and the path:
 about 120 bytes plus the path length in a `WITHOUT ROWID` table, plus roughly
-70 bytes in the hash index. Call it 200 bytes per chunk. At the default average
-chunk size of 1 MiB that is about 200 bytes per mebibyte of content, or 0.02%:
-a 1 TiB folder costs roughly 200 MiB of database. A folder of many small files
-costs one row per file instead, since a file below the minimum chunk size is a
-single chunk: 100,000 small files is about 20 MiB. Lowering `chunk_size` raises
-the cost in proportion.
+70 bytes in the hash index. Measured rather than estimated, a database holding
+nothing but one 1 GiB file and its index is **370 bytes per chunk**, at every
+average from 16 KiB to 1 MiB (docs/BENCH.md, the chunk size sweep).
+
+At the default average chunk size of 64 KiB that is about 5.2 MiB per gibibyte
+of content, or 0.5%: a 1 TiB folder costs roughly 5 GiB of database. It is the
+price of the insertion budget, and the sweep in BENCH.md is where it was
+weighed against it. A folder of many small files costs one row per file
+instead, since a file below the minimum chunk size is a single chunk, and that
+figure does not move with `chunk_size` at all: 100,000 small files is 100,000
+rows, about 35 MiB at the measured per-row figure, whatever the average is. Raising `chunk_size` lowers the cost in
+proportion, and raises what an edit to a large file moves by about the same
+proportion.
 
 **Upgrading.** A database written before migration 8 starts with an empty
 index. Nothing is re-downloaded for it: a transfer simply finds nothing to

@@ -154,14 +154,14 @@ func benchPublish(t *testing.T, dir, root, name string, size int64, gen func(int
 // inserted into a ten gigabyte file moves less than two megabytes once the
 // receiver holds the file.
 //
-// It fails today, and the assertion is left at the claim rather than at what
-// the machine measures, the same way the idle memory test is. At the shipped
-// 1 MiB average chunk size an insertion re-cuts the chunks it lands in as
-// well as carrying its own megabyte, so the cost is the insertion plus a
-// chunk or so, which is above the two megabyte budget whatever the size of
-// the file: 2,254,262 bytes in the run recorded in docs/BENCH.md. The
-// budget holds at smaller chunk sizes, which is what
-// TestDedup_InsertionMovesOnlyWhatChanged measures at 16 KiB.
+// An insertion carries its own megabyte plus the chunks it re-cuts, and how
+// many chunks that is depends on where the boundaries around the insertion
+// happen to fall: it took up to four of them in the sweep recorded in
+// docs/BENCH.md. At the 1 MiB average this benchmark used to run at, the
+// claim failed at every position measured, between 2,254,262 and 4,009,666
+// bytes. The default is now 64 KiB, where four chunks fit inside the budget's
+// slack with room to spare, and this benchmark passes rather than having its
+// bound lowered to what the machine measures.
 func TestScale_BenchBigFileInsertion(t *testing.T) {
 	requireScale(t)
 

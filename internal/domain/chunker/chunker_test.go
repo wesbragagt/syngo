@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/domain/chunker"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // testCfg is the configuration the tests share: small enough that a test file
@@ -244,6 +245,21 @@ func TestConfigFor_DerivesUsableBounds(t *testing.T) {
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("ConfigFor(%d) = %+v: %v", avg, cfg, err)
 		}
+	}
+}
+
+// TestConfigFor_DefaultMatchesTheTransferDefault pins the two defaults
+// together. A daemon that is configured with no chunk size cuts at
+// transfer.DefaultChunkSize, and a chunker asked for no average cuts at
+// DefaultAvg; the two being different would mean a file cut one way and
+// journalled as another.
+func TestConfigFor_DefaultMatchesTheTransferDefault(t *testing.T) {
+	if chunker.DefaultAvg != transfer.DefaultChunkSize {
+		t.Fatalf("chunker.DefaultAvg = %d, transfer.DefaultChunkSize = %d, want the same",
+			chunker.DefaultAvg, transfer.DefaultChunkSize)
+	}
+	if got := chunker.ConfigFor(0); got.Avg != transfer.DefaultChunkSize {
+		t.Fatalf("ConfigFor(0).Avg = %d, want %d", got.Avg, transfer.DefaultChunkSize)
 	}
 }
 

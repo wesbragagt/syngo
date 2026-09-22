@@ -273,7 +273,7 @@ read. It does not need a running daemon.
 $ syncthis config show
 listen = 127.0.0.1:22000
 interface =
-chunk_size = 1048576
+chunk_size = 65536
 max_file_size = 1099511627776
 rescan_interval = 10m0s
 sync_interval = 30s
@@ -288,7 +288,7 @@ unlimited:
 
 ```json
 {
-  "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 1048576,
+  "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 65536,
   "max_file_size": 1099511627776, "rescan_interval": "10m0s", "sync_interval": "30s",
   "log_level": "info", "upload_limit": 4194304, "download_limit": 0,
   "text_merge": false
@@ -1030,10 +1030,10 @@ $ syncthis transfer list --json
     "direction": "in",
     "state": "active",
     "size": 4194304,
-    "chunk_size": 1048576,
-    "chunks_total": 4,
-    "chunks_done": 2,
-    "bytes_done": 2097152,
+    "chunk_size": 65536,
+    "chunks_total": 64,
+    "chunks_done": 62,
+    "bytes_done": 4063232,
     "created_at": "2026-09-21T12:00:00Z",
     "updated_at": "2026-09-21T12:00:03Z",
     "error": null
@@ -1051,10 +1051,10 @@ The same object plus the chunks the transfer still needs.
   "folder_id": "docs",
   "path": "big.bin",
   "state": "active",
-  "chunks_total": 4,
-  "chunks_done": 2,
+  "chunks_total": 64,
+  "chunks_done": 62,
   "chunks_missing": 2,
-  "missing_chunks": [2, 3]
+  "missing_chunks": [62, 63]
 }
 ```
 

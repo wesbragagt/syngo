@@ -505,6 +505,17 @@ and have no `config set` flag: edit the file and restart the daemon.
 `max_file_size` is the largest file this device accepts from a peer, 1 TiB by
 default; a manifest announcing a bigger one is refused whole.
 
+`chunk_size` is the average size a file is cut into, 64 KiB by default. It sets
+both what an edit costs on the wire and what the chunk index costs on disk: at
+the default a 1 MiB insertion into a large file moves under 1.5 MiB and the
+index is about 0.5% of the content, while at 1 MiB chunks the same insertion
+moves 2.3 to 4.0 MiB and the index is 0.03%. Raise it for a folder of large
+files that are written once and never edited in place; the measurements behind
+the default are in [BENCH.md](BENCH.md). Two devices with different values
+still synchronize, but each cuts the same file its own way, so content one of
+them already holds is not recognised as content the other announced: set the
+same value on every device of a mesh.
+
 `chunk_pipeline` is how many chunks of one file this device asks a peer for at
 once. `0`, the default, lets the daemon adapt it between 1 and 8 to what the
 wire and the disk are measured to cost. `1` is the sequential download: one

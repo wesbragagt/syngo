@@ -13,8 +13,19 @@ import (
 // Chunk sizing. Since content-defined chunking the configured size is the
 // average a folder aims for, not the length of every chunk: the chunker cuts
 // between a quarter and four times it, wherever the content says.
+//
+// The default is 64 KiB because that is where the benchmark claim holds: an
+// insertion costs its own bytes plus the chunks it re-cuts, and re-cutting
+// takes one to four chunks depending on where the boundaries fall, so a
+// 1 MiB insertion into a large file stays under the 2 MiB budget only once
+// four average chunks fit in the megabyte of slack. Measured at eight
+// averages and six insertion positions in docs/BENCH.md: 1 MiB is over at
+// every position, 256 KiB at two of six, 64 KiB at none, with 31% to spare.
+// What it costs is measured there too, and paid where it is cheapest: about
+// 0.5% of the content in chunk index rows, and a chunking throughput ceiling
+// of about 240 MiB/s, which is above any network Syncthis synchronizes over.
 const (
-	DefaultChunkSize = 1 << 20
+	DefaultChunkSize = 64 << 10
 	MinChunkSize     = 4096
 )
 

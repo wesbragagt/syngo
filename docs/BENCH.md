@@ -248,6 +248,9 @@ $ make scale SCALE_CYCLES=100 SCALE_TRANSFER_GIB=2 SCALE_FILES_EACH=100
 | `SCALE_TRANSFER_GIB` | `10` | Size of the single-file transfer |
 | `SCALE_CYCLES` | `1000` | Kill-and-restart cycles |
 | `SCALE_RATE_SECONDS` | `120` | Length of the bandwidth measurement window |
+| `SCALE_CHUNKEVAL_KIB` | `1024,256,64,16` | Average chunk sizes the chunk size sweep measures |
+| `SCALE_CHUNKEVAL_MIB` | `1024` | Size of the file the sweep moves at each average |
+| `SCALE_CHUNKEVAL_OFFSET_KIB` | `64` | Where the sweep inserts its megabyte, in KiB from the start |
 
 `SCALE_DIR` must be on a filesystem with room for about three times
 `SCALE_TRANSFER_GIB`: the sender, the receiver and the staged copy each hold
@@ -343,7 +346,10 @@ behaviour instead of a check on it.
 
 #### 10 GiB transfer
 
-One 10 GiB file of random content between two daemon processes, 1 MiB chunks.
+One 10 GiB file of random content between two daemon processes. This run
+predates the chunk size change below and used the 1 MiB average that was the
+default then; the sweep in "Choosing the default chunk size" repeats the memory
+measurement at four averages and finds it flat.
 
 ```
 staged big.bin of 10.00 GiB in 23.5s
@@ -452,7 +458,8 @@ disk and minutes of wall time and are opt-in with the rest of the scale suite
 
 Every one of them configures the daemon with the timings and the chunk size a
 shipped daemon runs at: a 500 ms debounce, a 30 s sync interval, a 10 minute
-rescan interval and a 1 MiB average chunk. The functional tests use far
+rescan interval and the shipped average chunk size, which is 64 KiB since the
+evaluation recorded below and was 1 MiB before it. The functional tests use far
 shorter ones, and a convergence time measured with a 50 ms debounce would be a
 measurement of the test harness. The rescan interval being the shipped ten
 minutes also means no periodic full scan can carry a change inside any window
@@ -462,15 +469,18 @@ measured below: every change travels the watcher, scan, notify and pull path.
 
 Machine: `icebox`, AMD Ryzen 7 9700X (8 cores, 16 threads), 60 GiB RAM, NVMe
 (`/dev/nvme0n1p2`, 190 GiB free at the time of the run), NixOS, Linux 7.0.3
-x86_64, Go 1.26.7. Date: 2026-09-22. Commit: `949b08e`.
+x86_64, Go 1.26.7. Date: 2026-09-22. Commits: `949b08e` for the rows measured
+before the chunk size change, and the commit that made it for the three rows
+re-measured at the 64 KiB default (the insertion, the small edit and the
+document save).
 
 | Claim | Measured | Verdict |
 | --- | --- | --- |
-| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 509.6 ms median over loopback | **not proved**: loopback, not a tailnet |
-| 1 MiB inserted into a 10 GB file transfers less than 2 MiB after caching | 2,254,262 bytes (2.15 MiB) | **fail** |
+| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 507.3 ms median over loopback | **not proved**: loopback, not a tailnet |
+| 1 MiB inserted into a 10 GB file transfers less than 2 MiB after caching | 1,254,397 bytes (1.20 MiB) at the 64 KiB default | pass |
 | A 10 GB rename transfers zero payload bytes | 0 bytes | pass |
 | 100,000-file status under two seconds after incremental change | 301.6 ms slowest, 24.8 ms median | pass |
-| Small edits use at least 90% fewer bytes than a whole-file transfer | 98.43% fewer | pass |
+| Small edits use at least 90% fewer bytes than a whole-file transfer | 99.90% fewer | pass |
 | Compare against the Phase 0 baseline corpus | +1.0% convergence, same bytes | done, see below |
 
 #### Ordinary document change convergence: loopback only
@@ -482,10 +492,13 @@ the other device.
 ```
 10 document saves of 24.0 KiB over loopback with the shipped timings
   (debounce 500ms, sync interval 30s, rescan interval 10m0s):
-  median 509.567781ms, slowest 514.777613ms
-  all [508.15827ms 509.567781ms 508.904977ms 510.314331ms 514.777613ms
-       508.074811ms 507.356933ms 506.152452ms 509.784107ms 510.848507ms]
+  median 507.303793ms, slowest 509.768434ms
+  all [505.602559ms 507.303793ms 508.52687ms 509.768434ms 507.165782ms
+       506.915558ms 506.600721ms 507.309034ms 506.802879ms 507.832961ms]
 ```
+
+Measured at the 64 KiB default. The same benchmark at the old 1 MiB default
+had a median of 509.6 ms: a 24 KiB document is one chunk either way.
 
 The spread is 8 ms across ten saves because the number is almost entirely the
 500 ms debounce: the watcher reports the save, the folder loop waits for the
@@ -502,37 +515,33 @@ The task line stays open until a two-machine run fills it in. A tailnet round
 trip between two machines on the same LAN is a few milliseconds, so the claim
 is plausible with 490 ms of headroom, but plausible is not measured.
 
-#### A 1 MiB insertion into a 10 GiB file: the 2 MiB budget does not hold
+#### A 1 MiB insertion into a 10 GiB file: the 2 MiB budget holds at 64 KiB
 
 ```
-wrote big.bin of 10.00 GiB in 49.3s
-the first copy of 10.00 GiB arrived in 1m3.4s
-wrote big.bin of 10.00 GiB in 29.8s
-a 1.0 MiB insertion into a 10.00 GiB file: 2.1 MiB (2254262 bytes) moved over
-  the network, 10.00 GiB taken from the copy already on disk, in 49.1s
+wrote big.bin of 10.00 GiB in 18.9s
+the first copy of 10.00 GiB arrived in 1m4.9s
+wrote big.bin of 10.00 GiB in 24.5s
+a 1.0 MiB insertion into a 10.00 GiB file: 1.2 MiB (1254397 bytes) moved over
+  the network, 10.00 GiB taken from the copy already on disk, in 51.3s
   (budget 2.0 MiB, 2097152 bytes)
 ```
 
-The insertion costs 2,254,262 bytes against a budget of 2,097,152: 7.5% over.
-Everything else about the measurement is what the design predicts. Of the
-10.00 GiB the receiver installed, all but 2.1 MiB came off its own disk
-through the chunk index, and the file it ended with hashes to what the sender
-holds. The same measurement at 1 GiB moves the same 2.1 MiB, which is the
-point: the cost is a function of the insertion and the chunk size, not of the
-file.
+The insertion costs 1,254,397 bytes against a budget of 2,097,152: 40% under
+it. Of the 10.00 GiB the receiver installed, all but 1.2 MiB came off its own
+disk through the chunk index, and the file it ended with hashes to what the
+sender holds. The same measurement at 1 GiB moves the same 1,254,397 bytes,
+which is the point: the cost is a function of the insertion and the chunk
+size, not of the file.
 
-Why it is over: at the shipped 1 MiB average chunk size, inserting a megabyte
-changes the chunk the insertion lands in and re-cuts around it, so the
-receiver has to fetch its own megabyte of new content plus the chunk or so
-that content landed in. A budget of "insertion plus one average chunk" is
-2 MiB exactly, and the boundaries do not fall that kindly. The budget holds at
-smaller chunk sizes: `TestDedup_InsertionMovesOnlyWhatChanged` measures the
-same insertion at a 16 KiB chunk size, where it moves well under 2 MiB.
+At the 1 MiB average this benchmark ran at before, the same measurement moved
+2,254,262 bytes and the claim failed. What changed is the default, from 1 MiB
+to 64 KiB, and why is the next section: the whole evaluation, both sides of
+the tradeoff, at eight averages and six insertion positions.
 
-The test asserts the claim, 2 MiB, and therefore fails today, the same way the
-idle memory test does. Lowering the bound to what this machine measures would
-turn the test into a description of the current chunk size rather than a check
-on the claim. The task line stays open with this number.
+The first copy of the 10 GiB took 1m4.9s here against 1m3.4s at the old 1 MiB
+average, 2% slower, which is the throughput cost of the change on the workload
+that has nothing to deduplicate: at ten gigabytes the transfer is bound by the
+disk and not by the chunker.
 
 #### A 10 GiB rename: zero payload bytes
 
@@ -575,15 +584,157 @@ operator waits for includes the process start.
 #### Small edits against a whole-file transfer
 
 ```
-a 4.0 KiB edit to a 64.0 MiB file at the shipped 1.0 MiB chunk size moved
-  1.0 MiB over the network, 98.43% fewer bytes than the 64.0 MiB a whole-file
+a 4.0 KiB edit to a 64.0 MiB file at the shipped 64.0 KiB chunk size moved
+  66.0 KiB over the network, 99.90% fewer bytes than the 64.0 MiB a whole-file
   transfer moves
 ```
 
 A four kilobyte rewrite in the middle of a 64 MiB file costs one chunk. The
-claim is 90% fewer; the measurement is 98.43% fewer, and the saving grows with
+claim is 90% fewer; the measurement is 99.90% fewer, and the saving grows with
 the file, because the cost of a small edit is one chunk whatever the file
-size.
+size. At the old 1 MiB default the same edit moved 1.0 MiB, 98.43% fewer: the
+chunk size change made a small edit sixteen times cheaper.
+
+### Choosing the default chunk size
+
+Date: 2026-09-22. Machine as above. Measured by
+`TestScale_BenchChunkSizeInsertionSweep` and
+`TestScale_BenchChunkSizeTransferCost` in `internal/e2e/bench_chunksize_test.go`,
+over a 1 GiB file, run with:
+
+```console
+$ make scale SCALE_CHUNKEVAL_KIB=1024,512,256,128,64 SCALE_CHUNKEVAL_MIB=1024 \
+    SCALE_CHUNKEVAL_OFFSET_KIB=64
+```
+
+The question was whether to lower `DefaultChunkSize` from 1 MiB, make it
+adaptive to the file size, or leave it. Both sides of the tradeoff are measured
+below, because lowering it to make one benchmark pass would be paid for by
+every ordinary transfer that has nothing to deduplicate.
+
+#### What an insertion costs, by average and by position
+
+A 1 MiB insertion into a 1 GiB file, in bytes moved over the network once the
+receiver already holds the file. Six insertion positions, because the cost is
+the insertion plus the chunks its two ends re-cut, and how many chunks that is
+depends on where the boundaries around that position happen to fall. A dash is
+a combination that was not run; the four averages that decide the question were
+run at every position.
+
+| Average | 64 KiB in | 133.8 MiB | 286.1 MiB | 293.0 MiB | 683.6 MiB | 927.7 MiB | Worst |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 MiB | 2,254,262 | 2,459,392 | 3,926,385 | 2,281,798 | 4,009,666 | 3,635,222 | **3,926,385 over** |
+| 768 KiB | 2,060,950 | — | — | 1,763,966 | — | — | 2,060,950 |
+| 512 KiB | 2,060,950 | 1,681,832 | 1,634,001 | 1,579,092 | 3,474,727 | 1,912,163 | **3,474,727 over** |
+| 384 KiB | 1,254,397 | 1,349,821 | — | 3,291,860 | 2,204,934 | — | **3,291,860 over** |
+| 256 KiB | 1,254,397 | 1,349,821 | 1,619,081 | 1,149,411 | 2,237,711 | 2,229,008 | **2,237,711 over** |
+| 128 KiB | 1,390,521 | 1,197,022 | 2,051,261 | 1,149,411 | 1,608,508 | 1,442,005 | 2,051,261 (2.2% spare) |
+| 64 KiB | 1,254,397 | 1,203,371 | 1,454,745 | 1,233,083 | 1,367,899 | 1,163,171 | 1,454,745 (30.6% spare) |
+| 32 KiB | 1,216,754 | — | 1,226,120 | 1,107,147 | — | 1,093,967 | 1,226,120 |
+| 16 KiB | 1,105,808 | — | 1,089,764 | 1,062,239 | — | 1,094,919 | 1,105,808 |
+
+The budget is 2,097,152. Read down the worst column: 1 MiB is over at every
+position measured, by 7% to 91%. 512 KiB, 384 KiB and 256 KiB each hold at
+most positions and blow the budget at one or two of them, which is worse than
+failing everywhere: a claim that holds unless the edit lands in the wrong place
+is not a claim. 128 KiB holds everywhere with 2.2% to spare, which is inside
+the run-to-run variation of where a boundary falls. 64 KiB holds everywhere
+with at least 30% to spare.
+
+The shape is what FastCDC predicts. An insertion carries its own bytes plus the
+chunks it re-cuts, and re-synchronization after an insertion takes one to four
+chunks, so the cost is roughly 1 MiB plus one to four averages. The 2 MiB
+budget leaves 1 MiB of slack, so four averages have to fit inside a megabyte:
+256 KiB is the arithmetic boundary and 64 KiB is the first value with real
+headroom. The measurement agrees with the arithmetic, including on which
+averages fail only sometimes.
+
+#### What a smaller average costs an ordinary transfer
+
+One 1 GiB file with nothing to deduplicate, between two real daemon processes
+over loopback. Time, throughput and peak resident memory are from
+`TestScale_BenchChunkSizeTransferCost`; chunk counts and the chunk index from
+`TestScale_BenchChunkSizeInsertionSweep`, whose database figure is read with
+the database closed so the write-ahead log is checkpointed into the file.
+
+| Average | Chunks per GiB | Wall time | Throughput | Peak RSS sender/receiver | Chunk index | Index per chunk | Index as % of content |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 MiB | 913 | 2.24 s | 456.6 MiB/s | 41.1 / 30.3 MiB | 274.9 KiB | 308 B | 0.026% |
+| 256 KiB | 3,645 | 2.78 s | 368.9 MiB/s | 28.7 / 27.4 MiB | 1.3 MiB | 362 B | 0.123% |
+| 64 KiB | 14,575 | 4.25 s | 240.8 MiB/s | 28.1 / 30.2 MiB | 5.2 MiB | 370 B | 0.503% |
+| 16 KiB | 58,210 | 9.94 s | 103.0 MiB/s | 36.6 / 37.4 MiB | 20.9 MiB | 375 B | 2.039% |
+
+Three findings.
+
+Throughput falls, and the fall does not matter where the product runs. 64 KiB
+chunks a gibibyte at 240.8 MiB/s against 456.6 MiB/s at 1 MiB, 47% slower.
+That ceiling is above a 1 Gbit/s LAN (118 MiB/s) and far above any Tailscale
+path, so it binds only on loopback and on a link faster than 2 Gbit/s. The
+10 GiB benchmark above is the check on that: at ten gigabytes the transfer is
+disk-bound and the change cost it 2%.
+
+The chunk index grows in proportion, and that is the real price. 5.2 MiB per
+gibibyte at 64 KiB against 274.9 KiB at 1 MiB, so a 1 TiB folder of large
+files costs about 5 GiB of database instead of 200 MiB. Per row the cost is
+flat at 308 to 375 bytes whatever the average, so the growth is the row count
+and nothing else. A folder of small files pays nothing for the change: a file
+below the minimum chunk size is one chunk at any average, so 100,000 small
+files is 100,000 rows either way.
+
+Memory does not grow, and at the shipped size it fell. Peak resident memory
+over the 1 GiB transfer is 28 to 30 MiB at every average from 1 MiB to 64 KiB;
+only 16 KiB raises it, to 37 MiB, which is the cost of many more in-flight
+chunk records rather than of buffering. The idle daemon measurement, 30,000
+files watched for a minute, settled at 80.3 MiB before the change and 75.6 MiB
+after it: the chunker's buffer is the maximum chunk size, four times the
+average, so a scan holds 256 KiB per worker instead of 4 MiB. The existing
+finding that 100,000 files miss the 100 MiB target is untouched by the chunk
+size, because that memory is one record per file.
+
+#### The decision
+
+`DefaultChunkSize` and `chunker.DefaultAvg` are lowered from 1 MiB to 64 KiB.
+
+The alternatives were weighed against the same data:
+
+- **Keep 1 MiB.** Rejected: the claim fails at every insertion position by 7%
+  to 91%, and the alternative reading, that the claim should be relaxed to
+  match the chunk size, would give up the property the chunker exists for.
+- **256 KiB**, the cheapest average that passes at most positions. Rejected:
+  it moves 2,237,711 bytes at one of the six positions and 2,229,008 at
+  another. A default whose behaviour depends on where a user's edit lands is
+  not a default.
+- **128 KiB.** Rejected on margin: it holds everywhere measured, but by 2.2% at
+  its worst, which is inside the variation between positions.
+- **Adaptive to file size.** Rejected on the data, not on principle. The
+  workload the budget is about is a small edit inside a large file, so a rule
+  of "larger average for larger files" makes exactly the case that fails worse,
+  and the opposite rule, a smaller average for large files, is what lowering
+  the default already does while costing small files nothing: a file below the
+  minimum chunk size is a single chunk at any average. An adaptive rule would
+  add a second thing both devices must agree on for deduplication to find
+  anything, in exchange for no measured gain.
+- **16 KiB**, the value `TestDedup_InsertionMovesOnlyWhatChanged` runs at.
+  Rejected: it buys 1,105,808 bytes against 64 KiB's 1,454,745, both far inside
+  the budget, and pays 103.0 MiB/s and 2% of the content in index rows for it.
+
+#### Compatibility
+
+This is not a protocol change and needs no version bump. The chunk size is not
+on the wire: `ChunkListReply` carries the boundaries the sending side actually
+cut, and a `ChunkRequest` names a byte range out of that list, so a receiver
+never assumes a size. Version 3 was where deriving boundaries from a size
+stopped, as [PROTOCOL.md](PROTOCOL.md) records. Two devices configured with
+different averages interoperate today and still do.
+
+What the change does affect is deduplication between devices that disagree.
+Each device cuts its own files with its own configured average when it scans,
+so a peer announcing 1 MiB boundaries finds nothing in an index built at
+64 KiB, and the transfer falls back to moving the bytes. It is a performance
+property, not a correctness one, and it applies to any two devices with
+different values whether or not the default moves. A device already running
+with a written `chunk_size` keeps it; only a `config.json` written from now on
+picks 64 KiB. An existing database is not re-cut until the files are rescanned.
 
 ### Comparing against the Phase 0 baseline corpus
 

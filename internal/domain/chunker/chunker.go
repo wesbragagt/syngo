@@ -56,8 +56,11 @@ const (
 	// MaxSize is the largest maximum chunk size a configuration may ask
 	// for. It bounds what one chunk request may make either side buffer.
 	MaxSize = 16 << 20
-	// DefaultAvg is the average chunk size when none is configured.
-	DefaultAvg = 1 << 20
+	// DefaultAvg is the average chunk size when none is configured. It is
+	// transfer.DefaultChunkSize, repeated rather than imported because a
+	// chunker knows nothing about a transfer; the two are checked against
+	// each other by TestConfigFor_DefaultMatchesTheTransferDefault.
+	DefaultAvg = 64 << 10
 )
 
 // ErrConfig reports a chunk size configuration that cannot be used.
