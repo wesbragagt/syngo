@@ -74,6 +74,8 @@ func peerAnswers(cmd recordedCommand) ([]byte, error) {
 		return []byte(`{"device_id": "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRST"}`), nil
 	case strings.Contains(line, "'status'"):
 		return []byte(statusJSON), nil
+	case strings.Contains(line, "'daemon' 'run'"):
+		return []byte("4242\n"), nil
 	default:
 		return nil, nil
 	}
@@ -299,7 +301,7 @@ func TestPrepareClearsThePreviousRunsState(t *testing.T) {
 	if len(removals) != 1 {
 		t.Fatalf("prepare ran %d removals, want exactly 1: %v", len(removals), removals)
 	}
-	want := shellJoin("rm", "-rf", r.root(), r.dataDir())
+	want := shellJoin("rm", "-rf", r.root(), r.dataDir(), r.pidFile())
 	if !strings.Contains(removals[0], want) {
 		t.Errorf("removal %q is not %q: a run clears the folder root and the data directory, nothing else",
 			removals[0], want)
@@ -369,5 +371,65 @@ func TestStopKillsADaemonWhoseStartReportedFailure(t *testing.T) {
 	}
 	if !strings.Contains(findCommand(t, fake, "kill"), r.pidFile()) {
 		t.Error("stop killed nothing after a start that may have left a daemon behind")
+	}
+}
+
+// A pid file an earlier run left behind names whatever process the peer's
+// operating system has since given that number. A run must clear it, and must
+// kill the pid its own start command reported rather than reading a file back.
+func TestStopKillsThePidThisRunStarted(t *testing.T) {
+	fake := &fakeRunner{answer: peerAnswers}
+	r := newTestRemote(t, fake)
+	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if !strings.Contains(findCommand(t, fake, "rm"), r.pidFile()) {
+		t.Errorf("reset left the previous run's pid file in place: %s", findCommand(t, fake, "rm"))
+	}
+
+	if err := r.start(context.Background(), "tailscale0", time.Millisecond); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if r.pid != "4242" {
+		t.Fatalf("pid = %q, want the 4242 the start command reported", r.pid)
+	}
+	if err := r.stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	stopped := findCommand(t, fake, "kill")
+	if !strings.Contains(stopped, "pid='4242'") {
+		t.Errorf("stop command %q does not kill the pid this run started", stopped)
+	}
+	if strings.Contains(stopped, "cat ") {
+		t.Errorf("stop command %q reads a pid file back instead of killing the pid it was told about", stopped)
+	}
+}
+
+// When ssh fails before reporting the pid, the file is the only source left.
+// It is trustworthy only because reset emptied it: whatever is in it now was
+// written by this run.
+func TestStopFallsBackToThePidFileThisRunWrote(t *testing.T) {
+	fake := &fakeRunner{answer: func(cmd recordedCommand) ([]byte, error) {
+		if strings.Contains(cmd.line(), "'daemon' 'run'") {
+			return nil, errors.New("client_loop: send disconnect: Broken pipe")
+		}
+		return peerAnswers(cmd)
+	}}
+	r := newTestRemote(t, fake)
+	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if err := r.start(context.Background(), "tailscale0", time.Millisecond); err == nil {
+		t.Fatal("start = nil, want the failure ssh reported")
+	}
+	if r.pid != "" {
+		t.Fatalf("pid = %q, want none: the start command never reported one", r.pid)
+	}
+	if err := r.stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	stopped := findCommand(t, fake, "kill")
+	if !strings.Contains(stopped, r.pidFile()) {
+		t.Errorf("stop command %q does not fall back to the pid file this run wrote", stopped)
 	}
 }

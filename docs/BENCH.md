@@ -154,14 +154,15 @@ directory removed when the run ends.
   on the tailnet interface and stops it again, including when the run fails
   partway through.
 
-Every run clears the peer's state first: it deletes `<dir>/root` and
-`<dir>/data` and recreates them empty, so the peer starts each run with no
-folder content and a fresh identity. A `--peer-dir` may therefore be reused
-between runs. Nothing else on the peer machine is deleted: the two paths sit
-under the directory the operator named, and a directory that resolves to
-anything less than two levels below the root of the peer machine is refused
-before a run removes anything. The binary in `<dir>/bin` is kept and
-overwritten.
+Every run clears the peer's state first: it deletes `<dir>/root`,
+`<dir>/data` and `<dir>/daemon.pid` and recreates the directories empty, so
+the peer starts each run with no folder content, a fresh identity and no stale
+process id. A `--peer-dir` may therefore be reused between runs. Nothing else
+on the peer machine is deleted: the three paths sit under the directory the
+operator named, and a directory resolving to less than two levels below the
+root of the peer machine is refused before a run removes anything. The binary
+in `<dir>/bin` is kept and overwritten, and so is anything else the operator
+keeps in `<dir>`.
 
 Without this a run would inherit whatever an earlier run left in the peer's
 folder root: the peer serves that content back, this machine pulls it, and the

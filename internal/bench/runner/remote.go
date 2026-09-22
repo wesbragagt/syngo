@@ -36,6 +36,9 @@ type remoteDevice struct {
 	// running reports whether this driver started the daemon and has not
 	// stopped it yet, so stop is safe in a defer and safe to call twice.
 	running bool
+	// pid is the process id the start command reported, empty when ssh
+	// failed before it could. It is what stop kills.
+	pid string
 }
 
 // newRemoteDevice validates the operator's host and directory without
@@ -109,9 +112,14 @@ func (r *remoteDevice) resolve(ctx context.Context) error {
 }
 
 // validateResolvedDir is the last check before a run deletes anything on the
-// peer machine: the resolved directory must be absolute and at least two
-// levels below the root, so "rm -rf" under it can never name "/", "/home" or
-// a home directory itself.
+// peer machine: the resolved directory must be absolute, must not climb out
+// of itself, and must sit at least two levels below the root, so a removal
+// under it can never name "/" or a top-level directory such as "/home".
+//
+// It does not promise that the directory is not a home directory: an explicit
+// --peer-dir of "/home/bench" has two parts and is accepted. What bounds the
+// damage is reset, which removes exactly "<dir>/root" and "<dir>/data" and
+// nothing else, so even that directory keeps everything else it holds.
 func validateResolvedDir(dir string) error {
 	if !strings.HasPrefix(dir, "/") {
 		return fmt.Errorf("the peer directory resolved to %q, which is not an absolute path", dir)
@@ -133,20 +141,24 @@ func validateResolvedDir(dir string) error {
 	return nil
 }
 
-// reset clears the folder root and the data directory the last run left on
-// the peer and recreates them empty, so every run starts from a known state.
+// reset clears the folder root, the data directory and the pid file the last
+// run left on the peer, and recreates the directories empty, so every run
+// starts from a known state.
 //
 // Without it a run inherits whatever an earlier run left there: the peer
 // serves that content back, this machine pulls it, and the recorded
 // convergence time and byte count describe data that is not the corpus under
-// test. It deletes exactly two paths, both under the directory the operator
-// named and both checked by validateResolvedDir, and nothing else on the peer
-// machine is touched.
+// test. The pid file goes with them, because a stale pid names whatever
+// process the peer's operating system has since given that number.
+//
+// It deletes exactly those three paths, all under the directory the operator
+// named and all below a directory checked by validateResolvedDir, and nothing
+// else on the peer machine is touched.
 func (r *remoteDevice) reset(ctx context.Context) error {
 	if err := validateResolvedDir(r.dir); err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, shellJoin("rm", "-rf", r.root(), r.dataDir())); err != nil {
+	if _, err := r.run(ctx, shellJoin("rm", "-rf", r.root(), r.dataDir(), r.pidFile())); err != nil {
 		return fmt.Errorf("clear the previous run's state under %s on %s: %w", r.dir, r.host, err)
 	}
 	if _, err := r.run(ctx, shellJoin("mkdir", "-p", r.dir+"/bin", r.dataDir(), r.root())); err != nil {
@@ -242,16 +254,20 @@ func (r *remoteDevice) start(ctx context.Context, iface string, poll time.Durati
 			"--interface", iface,
 			"--listen", fmt.Sprintf("127.0.0.1:%d", remoteListenPort)) +
 			" >> " + shellQuote(r.logFile()) + " 2>&1 < /dev/null &",
-		"echo $! > " + shellQuote(r.pidFile()),
+		"pid=$!",
+		`echo "$pid" > ` + shellQuote(r.pidFile()),
+		`echo "$pid"`,
 	}, "\n")
 	// The flag is set before the call, not after: ssh can start the daemon
 	// and still fail, and a stop that skipped it would leave a process
 	// running on the peer machine. stop is safe when there is nothing to
 	// kill.
 	r.running = true
-	if _, err := r.run(ctx, script); err != nil {
+	out, err := r.run(ctx, script)
+	if err != nil {
 		return fmt.Errorf("start the daemon on %s: %w", r.host, err)
 	}
+	r.pid = strings.TrimSpace(string(out))
 
 	deadline := time.Now().Add(remoteReadyTimeout)
 	for {
@@ -276,13 +292,25 @@ func (r *remoteDevice) start(ctx context.Context, iface string, poll time.Durati
 // stop kills the daemon this driver started and waits for it to go. It is
 // safe to call in a defer and safe to call twice, so a failed run never
 // leaves a daemon behind on the peer machine.
+//
+// It only ever kills a pid this run is responsible for: the one the start
+// command reported, or, when ssh failed before reporting it, the one in the
+// pid file, which reset emptied at the start of the run and which nothing but
+// this run's start command writes. A pid left by an earlier run is never
+// read, because the number it holds may since have been given to an unrelated
+// process.
 func (r *remoteDevice) stop(ctx context.Context) error {
 	if !r.running {
 		return nil
 	}
 	r.running = false
+	pidExpr := "pid=$(cat " + shellQuote(r.pidFile()) + " 2>/dev/null || true)"
+	if r.pid != "" {
+		pidExpr = "pid=" + shellQuote(r.pid)
+	}
+	r.pid = ""
 	script := strings.Join([]string{
-		"pid=$(cat " + shellQuote(r.pidFile()) + " 2>/dev/null || true)",
+		pidExpr,
 		`if [ -n "$pid" ]; then`,
 		`  kill "$pid" 2>/dev/null || true`,
 		`  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do`,
