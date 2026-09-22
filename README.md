@@ -20,6 +20,14 @@ $ bin/syncthis version
 start two daemons on loopback, with the race detector; `make lint` runs gofmt,
 `go vet` and golangci-lint when it is installed.
 
+`make e2e-docker` runs the container suite: every device gets a container, an
+address and a filesystem of its own, so a test can kill a daemon, cut a link
+between two devices or slow one down, and then check that the folders agree
+again. It needs docker, builds the image itself, and is opt-in; `make test`
+compiles it and skips it. `make e2e-docker-soak MINUTES=30` keeps a cluster
+changing and breaking for half an hour, and `make e2e-docker-clean` removes
+what a run that was interrupted left behind.
+
 ## Quick start
 
 Two devices on one machine, each with its own data directory and folder.

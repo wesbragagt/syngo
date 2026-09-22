@@ -1,0 +1,75 @@
+# The container end-to-end suite. It is not part of any other pipeline: it
+# builds an image, starts one container per device and takes minutes, so it
+# runs on pull requests, nightly and on request.
+name: e2e-docker
+
+on:
+  pull_request: {}
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  e2e-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: internal/e2edocker/Dockerfile
+          load: true
+          tags: syncthis-e2e:dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # A shared runner is slower than a development machine, so every wait
+      # is given three times its usual room. The image is already built, so
+      # the suite is run directly rather than through the make target.
+      - name: Run the container suite
+        env:
+          SYNCTHIS_E2E_DOCKER: "1"
+          SYNCTHIS_E2E_IMAGE: syncthis-e2e:dev
+          SYNCTHIS_E2E_TIMEOUT_SCALE: "3"
+        run: go test ./internal/e2edocker/ -count=1 -p 1 -timeout 90m -skip TestSoak -v
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-docker-artifacts
+          path: bin/e2e-artifacts
+      - if: always()
+        run: make e2e-docker-clean
+
+  soak:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: internal/e2edocker/Dockerfile
+          load: true
+          tags: syncthis-e2e:dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Soak
+        env:
+          SYNCTHIS_E2E_TIMEOUT_SCALE: "3"
+        run: make e2e-docker-soak MINUTES=60
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-docker-soak-artifacts
+          path: bin/e2e-artifacts
+      - if: always()
+        run: make e2e-docker-clean
