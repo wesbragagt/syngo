@@ -152,6 +152,32 @@ func (v Version) Bump(id device.ID) Version {
 	return Version{counters: out}
 }
 
+// Raise returns v with the counter of id at least to. It is how a device that
+// lost its counters, by being restored from an older database, writes a
+// version its peers cannot dominate: the floor it remembers is the highest
+// counter of its own it has ever seen. An empty id, or a counter that is
+// already at least to, returns v unchanged.
+func (v Version) Raise(id device.ID, to uint64) Version {
+	if id == "" || to == 0 || v.Counter(id) >= to {
+		return v
+	}
+	out := make([]Counter, 0, len(v.counters)+1)
+	raised := false
+	for _, c := range v.counters {
+		if c.ID == id {
+			out = append(out, Counter{ID: id, N: to})
+			raised = true
+			continue
+		}
+		out = append(out, c)
+	}
+	if !raised {
+		out = append(out, Counter{ID: id, N: to})
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	}
+	return Version{counters: out}
+}
+
 // Merge returns the component-wise maximum of v and o, which dominates both.
 func (v Version) Merge(o Version) Version {
 	out := make([]Counter, 0, len(v.counters)+len(o.counters))

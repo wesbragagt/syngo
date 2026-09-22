@@ -152,13 +152,23 @@ const persistRetries = 5
 func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifest.Manifest,
 	result *Result, now time.Time) error {
 	base := old.Sequence
+	// The floor is the highest counter this device has ever handed out or
+	// seen a peer hold for it. Every version this scan writes is raised
+	// above it, so a database restored from a backup does not hand out
+	// counters its peers already know, which would make the edit that
+	// follows the restore look older than what they hold.
+	floor, err := s.counterFloor(ctx)
+	if err != nil {
+		return err
+	}
 	for attempt := 0; ; attempt++ {
-		write := s.writeOf(result, old, base, now)
+		write := s.writeOf(result, old, base, now, floor)
 		err := s.store.ApplyScan(ctx, f.ID, write)
 		if err == nil {
 			// The store hands out one sequence number per written
 			// row, in order, starting at the base.
 			result.Sequence = base + uint64(len(write.Upserts)+len(write.Deleted))
+			s.raiseFloor(ctx, write)
 			return nil
 		}
 		if !errors.Is(err, ports.ErrStaleManifest) || attempt >= persistRetries {
@@ -182,11 +192,9 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 // writeOf turns classified changes into the write the store applies. old is
 // the manifest the changes were diffed against: it holds the version vector
 // each new version is raised from.
-func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, now time.Time) ports.ScanWrite {
-	by := device.ID("")
-	if s.identity != nil {
-		by = s.identity.DeviceID()
-	}
+func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, now time.Time,
+	floor uint64) ports.ScanWrite {
+	by := s.self()
 
 	w := ports.ScanWrite{
 		BaseSequence: base,
@@ -194,13 +202,14 @@ func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, no
 		By:           by,
 		At:           now,
 		LastError:    result.Warning(),
+		CounterFloor: floor,
 	}
 	for _, c := range result.Changes {
 		switch c.Type {
 		case manifest.Create, manifest.Modify, manifest.Rename:
 			e := *c.New
 			e.ModifiedBy = by
-			e.Version = versionOf(c, old, by)
+			e.Version = versionOf(c, old, by, floor)
 			w.Upserts = append(w.Upserts, e)
 			if c.Type == manifest.Rename {
 				w.Deleted = append(w.Deleted, c.OldPath)
@@ -213,16 +222,64 @@ func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, no
 }
 
 // versionOf is the vector the new version of a path carries. A content change
-// raises this device's counter over the version the path had here, so the new
+// raises this device's counter over the version the path had here and over the
+// counter floor, so the new
 // version dominates it; a change that only moves permission bits keeps the
 // vector it found, because a mode is not content and must not order two
 // versions. A create raises the vector of whatever the path held before, a
 // tombstone included, so a recreated file dominates its own deletion.
-func versionOf(c manifest.Change, old manifest.Manifest, by device.ID) manifest.Version {
+func versionOf(c manifest.Change, old manifest.Manifest, by device.ID, floor uint64) manifest.Version {
 	if c.Type == manifest.Modify && c.Old != nil && c.New != nil && !manifest.ContentDiffers(*c.Old, *c.New) {
 		return c.Old.Version
 	}
-	return old.Entries[c.Path].Version.Bump(by)
+	// The counter is raised over the floor as well as over the version the
+	// path held, so it is one no peer can already hold for this device.
+	return old.Entries[c.Path].Version.Bump(by).Raise(by, floor+1)
+}
+
+// self is the device this scanner attributes versions to, empty when it has no
+// identity.
+func (s *Scanner) self() device.ID {
+	if s.identity == nil {
+		return ""
+	}
+	return s.identity.DeviceID()
+}
+
+// counterFloor reads the highest counter recorded for this device.
+func (s *Scanner) counterFloor(ctx context.Context) (uint64, error) {
+	self := s.self()
+	if self == "" {
+		return 0, nil
+	}
+	floor, err := s.store.CounterFloor(ctx, self)
+	if err != nil {
+		return 0, fmt.Errorf("counter floor of %s: %w", self.Short(), err)
+	}
+	return floor, nil
+}
+
+// raiseFloor records the highest counter the write handed out. It runs after
+// the write, so a crash between the two leaves a floor below what the entries
+// carry; the next scan raises its versions from the entries themselves, which
+// are at least as high, so nothing is reused.
+func (s *Scanner) raiseFloor(ctx context.Context, w ports.ScanWrite) {
+	self := s.self()
+	if self == "" {
+		return
+	}
+	highest := w.CounterFloor
+	for _, e := range w.Upserts {
+		highest = max(highest, e.Version.Counter(self))
+	}
+	// A tombstone's counter is raised by the store, one above the version
+	// it replaces and never below the floor the write carried.
+	if len(w.Deleted) > 0 {
+		highest = max(highest, w.CounterFloor+1)
+	}
+	if err := s.store.RaiseCounterFloor(ctx, self, highest); err != nil && ctx.Err() == nil {
+		s.log.Warn("counter floor not recorded", "device", self.Short(), "error", err)
+	}
 }
 
 // recordFailure stores err as the folder's last error, keeping the time of the

@@ -123,7 +123,7 @@ func (s *Store) MarkDeleted(ctx context.Context, id folder.ID, paths []string, b
 		batch := paths[start:end]
 
 		err := s.tx(ctx, func(tx *sql.Tx) error {
-			return markDeleted(ctx, tx, id, batch, by, now)
+			return markDeleted(ctx, tx, id, batch, by, now, 0)
 		})
 		if err != nil {
 			return err
@@ -275,7 +275,8 @@ func upsertEntries(ctx context.Context, tx *sql.Tx, id folder.ID, entries []mani
 }
 
 // markDeleted turns paths into tombstones inside tx. Unknown paths are ignored.
-func markDeleted(ctx context.Context, tx *sql.Tx, id folder.ID, paths []string, by device.ID, now time.Time) error {
+func markDeleted(ctx context.Context, tx *sql.Tx, id folder.ID, paths []string, by device.ID,
+	now time.Time, floor uint64) error {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -287,7 +288,7 @@ func markDeleted(ctx context.Context, tx *sql.Tx, id folder.ID, paths []string, 
 		// A tombstone is a content change like any other, so it carries
 		// the vector of the version it replaces raised by one: a peer
 		// still holding that version is then dominated by the deletion.
-		version, err := bumpedVersion(ctx, tx, id, p, by)
+		version, err := bumpedVersion(ctx, tx, id, p, by, floor)
 		if err != nil {
 			return err
 		}
@@ -323,9 +324,10 @@ func storedVersion(ctx context.Context, tx *sql.Tx, id folder.ID, path string) (
 }
 
 // bumpedVersion returns the stored version vector of a path with the counter
-// of by raised by one, in its stored string form. A path that is not stored
+// of by raised by one, and to at least floor+1, in its stored string form. A path that is not stored
 // has no row to update, so its version is irrelevant and reported as empty.
-func bumpedVersion(ctx context.Context, tx *sql.Tx, id folder.ID, path string, by device.ID) (string, error) {
+func bumpedVersion(ctx context.Context, tx *sql.Tx, id folder.ID, path string, by device.ID,
+	floor uint64) (string, error) {
 	var stored string
 	err := tx.QueryRowContext(ctx,
 		`SELECT version FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path).Scan(&stored)
@@ -339,7 +341,7 @@ func bumpedVersion(ctx context.Context, tx *sql.Tx, id folder.ID, path string, b
 	if err != nil {
 		return "", fmt.Errorf("file %q in folder %q: %w", path, id, err)
 	}
-	return v.Bump(by).String(), nil
+	return v.Bump(by).Raise(by, floor+1).String(), nil
 }
 
 // appendChanges records scan classifications inside tx.
@@ -385,7 +387,7 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 		if err := upsertEntries(ctx, tx, id, w.Upserts, w.At.UnixNano()); err != nil {
 			return err
 		}
-		if err := markDeleted(ctx, tx, id, w.Deleted, w.By, w.At); err != nil {
+		if err := markDeleted(ctx, tx, id, w.Deleted, w.By, w.At, w.CounterFloor); err != nil {
 			return err
 		}
 		if err := appendChanges(ctx, tx, id, w.Changes, w.At); err != nil {

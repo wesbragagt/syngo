@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -94,4 +95,36 @@ func scanDevice(row scanner) (device.Device, error) {
 	d.AddedAt = time.Unix(0, addedAt).UTC()
 	d.LastSeenAt = timeFrom(lastSeen)
 	return d, nil
+}
+
+// CounterFloor returns the highest version counter recorded for a device.
+func (s *Store) CounterFloor(ctx context.Context, id device.ID) (uint64, error) {
+	if id == "" {
+		return 0, nil
+	}
+	var floor int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT floor FROM device_counters WHERE device_id = ?`, string(id)).Scan(&floor)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, nil
+	case err != nil:
+		return 0, fmt.Errorf("read counter floor of %q: %w", id, err)
+	}
+	return uint64(floor), nil
+}
+
+// RaiseCounterFloor records to as the floor of a device, never lowering one.
+func (s *Store) RaiseCounterFloor(ctx context.Context, id device.ID, to uint64) error {
+	if id == "" || to == 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO device_counters (device_id, floor) VALUES (?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET floor = MAX(floor, excluded.floor)`,
+		string(id), int64(to))
+	if err != nil {
+		return fmt.Errorf("raise counter floor of %q: %w", id, err)
+	}
+	return nil
 }

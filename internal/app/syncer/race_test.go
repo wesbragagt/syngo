@@ -120,3 +120,26 @@ func TestSync_RecordIsSkippedWhenTheStoredVersionMoved(t *testing.T) {
 		t.Fatalf("sync.record_superseded events = %d, want 1", got)
 	}
 }
+
+// TestSync_AReceivedManifestRaisesTheCounterFloor is what makes a restored
+// database safe: the peer holds counters this device once wrote, so the first
+// contact lifts the floor back above them and the next local change dominates
+// what the peer has.
+func TestSync_AReceivedManifestRaisesTheCounterFloor(t *testing.T) {
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", []byte("what the peer holds"))
+	// The peer's copy of the path carries six versions this device wrote
+	// before it lost them.
+	src.setVersion(t, "a.txt", destID, vector(t, string(destID)+":6"))
+
+	d, conn := newDest(t, src.server)
+	d.sync(t, conn)
+
+	floor, err := d.store.CounterFloor(context.Background(), destID)
+	if err != nil {
+		t.Fatalf("counter floor: %v", err)
+	}
+	if floor != 6 {
+		t.Fatalf("floor = %d, want the counter the peer holds for this device", floor)
+	}
+}

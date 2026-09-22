@@ -138,3 +138,37 @@ func TestConflicts_GetAndResolve(t *testing.T) {
 		t.Fatalf("SetConflictResolved of an unknown id = %v, want ErrNotFound", err)
 	}
 }
+
+// TestCounterFloor_OnlyEverRises covers the floor that keeps a restored
+// database from handing out counters its peers already hold.
+func TestCounterFloor_OnlyEverRises(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openStore(t)
+	const self = device.ID("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+	if got, err := store.CounterFloor(ctx, self); err != nil || got != 0 {
+		t.Fatalf("floor = %d, err %v, want 0 for a device with no record", got, err)
+	}
+	if err := store.RaiseCounterFloor(ctx, self, 7); err != nil {
+		t.Fatalf("raise: %v", err)
+	}
+	if err := store.RaiseCounterFloor(ctx, self, 3); err != nil {
+		t.Fatalf("raise lower: %v", err)
+	}
+	if got, err := store.CounterFloor(ctx, self); err != nil || got != 7 {
+		t.Fatalf("floor = %d, err %v, want the higher of the two", got, err)
+	}
+	if err := store.RaiseCounterFloor(ctx, self, 9); err != nil {
+		t.Fatalf("raise higher: %v", err)
+	}
+	if got, _ := store.CounterFloor(ctx, self); got != 9 {
+		t.Fatalf("floor = %d, want 9", got)
+	}
+	// A device without an id has nothing to record and nothing to report.
+	if err := store.RaiseCounterFloor(ctx, "", 5); err != nil {
+		t.Fatalf("raise without an id: %v", err)
+	}
+	if got, _ := store.CounterFloor(ctx, ""); got != 0 {
+		t.Fatalf("floor without an id = %d, want 0", got)
+	}
+}

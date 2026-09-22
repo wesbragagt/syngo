@@ -25,6 +25,7 @@ type Store struct {
 	sequences map[folder.ID]uint64
 	changes   map[folder.ID][]ports.ChangeRecord
 	devices   map[device.ID]device.Device
+	floors    map[device.ID]uint64
 	transfers map[transfer.ID]transfer.Transfer
 	conflicts []ports.ConflictRecord
 	changeSeq int64
@@ -39,6 +40,7 @@ func NewStore() *Store {
 		sequences: make(map[folder.ID]uint64),
 		changes:   make(map[folder.ID][]ports.ChangeRecord),
 		devices:   make(map[device.ID]device.Device),
+		floors:    make(map[device.ID]uint64),
 		transfers: make(map[transfer.ID]transfer.Transfer),
 	}
 }
@@ -212,6 +214,12 @@ func (s *Store) UpsertEntriesIf(_ context.Context, id folder.ID, entries []manif
 
 // MarkDeleted turns the given paths into tombstones.
 func (s *Store) MarkDeleted(_ context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error {
+	return s.markDeleted(id, paths, by, now, 0)
+}
+
+// markDeleted turns paths into tombstones, raising the counter of by above
+// floor the way a scan write does.
+func (s *Store) markDeleted(id folder.ID, paths []string, by device.ID, now time.Time, floor uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range paths {
@@ -228,7 +236,7 @@ func (s *Store) MarkDeleted(_ context.Context, id folder.ID, paths []string, by 
 		e.Sequence = s.sequences[id]
 		// A deletion is a content change: the tombstone carries the
 		// vector of the version it replaces, raised by one.
-		e.Version = e.Version.Bump(by)
+		e.Version = e.Version.Bump(by).Raise(by, floor+1)
 		s.files[id][p] = e
 	}
 	return nil
@@ -324,7 +332,7 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 	if err := s.UpsertEntries(ctx, id, w.Upserts); err != nil {
 		return err
 	}
-	if err := s.MarkDeleted(ctx, id, w.Deleted, w.By, w.At); err != nil {
+	if err := s.markDeleted(id, w.Deleted, w.By, w.At, w.CounterFloor); err != nil {
 		return err
 	}
 	if err := s.AppendChanges(ctx, id, w.Changes, w.At); err != nil {
@@ -371,6 +379,24 @@ func (s *Store) RecentChanges(_ context.Context, id folder.ID, limit int) ([]por
 		out = append(out, all[i])
 	}
 	return out, nil
+}
+
+// CounterFloor returns the highest version counter recorded for a device.
+func (s *Store) CounterFloor(_ context.Context, id device.ID) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.floors[id], nil
+}
+
+// RaiseCounterFloor records to as the floor of a device, never lowering one.
+func (s *Store) RaiseCounterFloor(_ context.Context, id device.ID, to uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" {
+		return nil
+	}
+	s.floors[id] = max(s.floors[id], to)
+	return nil
 }
 
 // SaveDevice inserts or replaces a device.

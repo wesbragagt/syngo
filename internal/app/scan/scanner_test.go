@@ -814,7 +814,9 @@ func TestScan_RenameBumpsBothPaths(t *testing.T) {
 		t.Fatalf("changes = %v, want a rename", got)
 	}
 
-	e.wantCounter(t, "b.txt", 1)
+	// Both counters are above the floor the first scan left, so a version
+	// this device writes is never one a peer may already hold.
+	e.wantCounter(t, "b.txt", 2)
 	e.wantCounter(t, "a.txt", 2)
 	if !e.entry(t, "a.txt").Deleted {
 		t.Fatal("the old path is not a tombstone")
@@ -859,4 +861,40 @@ func TestScan_RetryAfterAConcurrentScanBumpsFromTheStoredVersion(t *testing.T) {
 	// The retry raises the counter from the version the other scan wrote,
 	// not from the stale one it loaded, so the file is at 2 and not at 3.
 	e.wantCounter(t, "a.txt", 2)
+}
+
+// TestScan_HonoursAndRaisesTheCounterFloor is the hardening against a database
+// restored from a backup: the counters the restored database holds are behind
+// what the peers have, and the floor is what lifts the next version above
+// them, so an edit made after the restore is never dominated by an older one.
+func TestScan_HonoursAndRaisesTheCounterFloor(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	// What the first contact after a restore records: a peer holds version
+	// 8 of this device's counter, eight versions the restored database
+	// knows nothing about.
+	if err := e.store.RaiseCounterFloor(ctx, "DEV1", 8); err != nil {
+		t.Fatalf("raise floor: %v", err)
+	}
+
+	e.write("a.txt", "alpha")
+	e.scan(t, scan.Options{})
+	e.wantCounter(t, "a.txt", 9)
+
+	floor, err := e.store.CounterFloor(ctx, "DEV1")
+	if err != nil {
+		t.Fatalf("counter floor: %v", err)
+	}
+	if floor != 9 {
+		t.Fatalf("floor = %d, want the scan to have raised it to 9", floor)
+	}
+
+	// A deletion is raised over the floor as well, so the tombstone
+	// dominates the version a peer still holds.
+	e.remove(t, "a.txt")
+	e.scan(t, scan.Options{})
+	e.wantCounter(t, "a.txt", 10)
+	if floor, _ = e.store.CounterFloor(ctx, "DEV1"); floor != 10 {
+		t.Fatalf("floor = %d, want the deletion to have raised it to 10", floor)
+	}
 }

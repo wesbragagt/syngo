@@ -58,6 +58,10 @@ type ScanWrite struct {
 	// LastError is the failure summary recorded on the folder, empty when the
 	// scan read everything it wanted to.
 	LastError string
+	// CounterFloor is the lowest counter a version written by By may carry.
+	// It is what the tombstones of the write are raised to, so a deletion
+	// made after a restore dominates the version it deletes everywhere.
+	CounterFloor uint64
 }
 
 // TransferFilter narrows a transfer listing. Zero values mean "no filter".
@@ -149,6 +153,21 @@ type FileStore interface {
 	RecentChanges(ctx context.Context, id folder.ID, limit int) ([]ChangeRecord, error)
 }
 
+// CounterStore persists the highest version counter seen for a device.
+//
+// It is what keeps a device from reusing counters after its database was
+// restored from a backup: the floor outlives the entries themselves, and every
+// version this device writes is raised above it. Peers raise it too, because
+// the counters they hold for this device are versions it once wrote.
+type CounterStore interface {
+	// CounterFloor returns the highest counter recorded for a device, zero
+	// when none was ever recorded.
+	CounterFloor(ctx context.Context, id device.ID) (uint64, error)
+	// RaiseCounterFloor records to as the floor of a device when it is
+	// higher than what is stored. It never lowers a floor.
+	RaiseCounterFloor(ctx context.Context, id device.ID, to uint64) error
+}
+
 // DeviceStore persists known peers.
 type DeviceStore interface {
 	SaveDevice(ctx context.Context, d device.Device) error
@@ -188,6 +207,7 @@ type ConflictStore interface {
 type MetadataStore interface {
 	FolderStore
 	FileStore
+	CounterStore
 	DeviceStore
 	TransferStore
 	ConflictStore

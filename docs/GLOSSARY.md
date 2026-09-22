@@ -93,6 +93,12 @@ high and one is higher: it was written on top of it, so taking it loses
 nothing. The receiver pulls a version that dominates its own and ignores one
 its own dominates.
 
+**Counter floor.** The highest version counter a device has ever seen for
+itself, its own writes and what peers hold for it, kept in `device_counters`.
+Every version it writes is raised above it, so a database restored from a
+backup does not hand out counters its peers already have. See
+[STATE.md](STATE.md#backup-and-restore).
+
 **Concurrent.** Two versions where each is ahead of the other on some device:
 they were written without either seeing the other, which is a conflict. An
 install adopts the vector it took, and the outcome of a conflict adopts the

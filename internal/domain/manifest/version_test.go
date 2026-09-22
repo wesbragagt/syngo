@@ -239,3 +239,28 @@ func TestContentDiffers(t *testing.T) {
 		t.Fatal("an entry differs from itself")
 	}
 }
+
+func TestVersion_Raise(t *testing.T) {
+	base := version(t, manifest.Counter{ID: devA, N: 2}, manifest.Counter{ID: devB, N: 5})
+	cases := []struct {
+		name string
+		in   manifest.Version
+		id   device.ID
+		to   uint64
+		want string
+	}{
+		{name: "raises a counter that is behind", in: base, id: devA, to: 7, want: string(devA) + ":7," + string(devB) + ":5"},
+		{name: "keeps a counter that is ahead", in: base, id: devB, to: 3, want: string(devA) + ":2," + string(devB) + ":5"},
+		{name: "adds a device that is not in the vector", in: base, id: devC, to: 4, want: string(devA) + ":2," + string(devB) + ":5," + string(devC) + ":4"},
+		{name: "a zero floor changes nothing", in: base, id: devA, to: 0, want: string(devA) + ":2," + string(devB) + ":5"},
+		{name: "an empty id changes nothing", in: base, id: "", to: 9, want: string(devA) + ":2," + string(devB) + ":5"},
+		{name: "raises the zero vector", in: manifest.Version{}, id: devA, to: 3, want: string(devA) + ":3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.in.Raise(tc.id, tc.to).String(); got != tc.want {
+				t.Fatalf("Raise(%q, %d) = %q, want %q", tc.id, tc.to, got, tc.want)
+			}
+		})
+	}
+}

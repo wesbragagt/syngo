@@ -91,6 +91,7 @@ type Puller struct {
 type PullStore interface {
 	Store
 	ports.ConflictStore
+	ports.CounterStore
 }
 
 // PullerConfig tunes a puller. Zero fields take the defaults.
@@ -155,6 +156,9 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 	if err != nil {
 		return summary, fmt.Errorf("manifest of %q from %s: %w", f.ID, conn.RemoteID().Short(), err)
 	}
+	if err := p.adoptCounters(ctx, remote); err != nil {
+		return summary, err
+	}
 	local, err := p.store.LoadManifest(ctx, f.ID)
 	if err != nil {
 		return summary, err
@@ -205,6 +209,29 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		"pulled", summary.Pulled, "deleted", summary.Deleted, "modes", summary.Modes,
 		"conflicts", summary.Conflicts, "failed", summary.Failed, "bytes", summary.Bytes)
 	return summary, nil
+}
+
+// adoptCounters raises this device's counter floor to the highest counter of
+// its own that the peer holds. The peer only knows counters this device once
+// wrote, so after a restore from a backup the first contact lifts the floor
+// back above what the peers have, and the next local change dominates their
+// version instead of being dominated by it.
+func (p *Puller) adoptCounters(ctx context.Context, remote manifest.Manifest) error {
+	self := p.self()
+	if self == "" {
+		return nil
+	}
+	var highest uint64
+	for _, e := range remote.Entries {
+		highest = max(highest, e.Version.Counter(self))
+	}
+	if highest == 0 {
+		return nil
+	}
+	if err := p.store.RaiseCounterFloor(ctx, self, highest); err != nil {
+		return fmt.Errorf("adopt counters of %s: %w", self.Short(), err)
+	}
+	return nil
 }
 
 // lockFolder waits until no other cycle is syncing the folder and returns the

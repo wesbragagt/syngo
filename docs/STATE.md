@@ -92,10 +92,11 @@ holds it open.
 | `devices` | known peers and when they were last seen |
 | `transfers`, `transfer_chunks` | the journal of inbound downloads |
 | `conflicts` | detected divergences, one row per path both sides changed |
+| `device_counters` | the highest version counter ever seen for a device |
 
 ### Migrations
 
-The schema is at version 6. `Open` reads `schema_version`, applies every
+The schema is at version 7. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
@@ -106,6 +107,7 @@ migration above it in one transaction and records the new version:
 | 4 | `004_sync_windows.sql` | `folders.sync_windows` |
 | 5 | `005_version.sql` | `files.version`, the version vector of the entry |
 | 6 | `006_sync_error.sql` | `folders.last_sync_error`, `folders.pending_items` |
+| 7 | `007_device_counters.sql` | `device_counters`, the per-device counter floor |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,
@@ -195,6 +197,25 @@ Unlike `synced_mode`, which is local bookkeeping, `version` is sent to peers as
 the `version` field of a manifest entry: it is what lets the other side tell a
 version made on top of its own from one that diverged from it. See
 [PROTOCOL.md](PROTOCOL.md).
+
+### device_counters
+
+One row per device, holding the highest version counter ever seen for it: the
+counters this device handed out in its own scans, and the counters peers hold
+for it in the manifests they send. Every version the scanner writes raises this
+device's counter above its floor, so a counter is never handed out twice.
+
+The floor is what makes a restore from a backup safe. A restored database holds
+counters the peers have long passed; without the floor the first edit after the
+restore would carry a counter the peers already know, be dominated by their
+version of the path and be overwritten. The first manifest received after the
+restore lifts the floor above every counter the peer holds, so the next version
+this device writes dominates instead. See "Backup and restore" below.
+
+The floor is recorded after the write it describes. A crash in between leaves
+it below what the entries carry, which loses nothing: the next version is
+raised from the entry as well as from the floor, and the entry is the higher of
+the two.
 
 ### conflicts
 
@@ -321,3 +342,39 @@ file the database does not know about; the next scan records it as a local
 creation, and because its content equals what the peer has, the following sync
 recognizes it as already in sync and writes the agreement down instead of
 sending it back.
+
+### Backup and restore
+
+The whole state of a device is its data directory: back it up with the daemon
+stopped, so the database has no open transaction, and copy the directory
+whole rather than the database file alone.
+
+```console
+$ syncthis daemon stop
+$ cp -a ~/.local/share/syncthis ~/backups/syncthis-2026-09-22
+```
+
+To restore, put the directory back with the daemon stopped, start the daemon
+and let it reach its peers before editing anything in the synced folders:
+
+```console
+$ syncthis daemon stop
+$ rm -rf ~/.local/share/syncthis && cp -a ~/backups/syncthis-2026-09-22 ~/.local/share/syncthis
+$ syncthis daemon run &
+$ syncthis rescan
+$ syncthis status          # wait until the peers are connected
+```
+
+The rescan re-reads the folders, so a file that changed while the device was
+down is recorded as a local change rather than staying invisible. The contact
+with the peers raises the counter floor above every counter of this device they
+hold, which is what keeps an edit made after the restore from being dominated
+by an older version of the same path.
+
+One window is left: an edit made after the restore and before the first contact
+with a peer, on a path that peer also changed. That edit carries a counter the
+peer already knows and is a conflict rather than a dominant version, so the two
+versions are both kept, one under a conflict name. Nothing is lost either way;
+the order of the two is what cannot be recovered. A device that never receives
+a manifest at all, because every folder it holds is send-only, raises its floor
+only from its own scans, so the rescan above is what lifts it after a restore.

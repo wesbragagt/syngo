@@ -9,6 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
+	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -298,6 +299,32 @@ func TestMigrate_5To6_KeepsFoldersAndLeavesTheSyncErrorEmpty(t *testing.T) {
 	// the scan failure it does carry is the scanner's and stays put.
 	if f.LastSyncError != "" || f.PendingItems != 0 {
 		t.Fatalf("sync error = %q with %d pending items, want neither", f.LastSyncError, f.PendingItems)
+	}
+	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
+	}
+}
+
+// TestMigrate_6To7_StartsWithNoCounterFloor covers the counter floor table: a
+// device that upgrades has no floor on record, and the first scan and the
+// first manifest it receives set one.
+func TestMigrate_6To7_StartsWithNoCounterFloor(t *testing.T) {
+	ctx := context.Background()
+	path := writeVersion5DB(t)
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	const self = device.ID("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+	floor, err := store.CounterFloor(ctx, self)
+	if err != nil {
+		t.Fatalf("counter floor: %v", err)
+	}
+	if floor != 0 {
+		t.Fatalf("floor = %d, want none recorded for an upgraded device", floor)
 	}
 	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
 		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
