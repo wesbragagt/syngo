@@ -29,15 +29,19 @@ const Marker = ".sync-conflict-"
 const timeLayout = "20060102-150405"
 
 // Name returns the name of the conflict copy of rel: the stem, the marker, the
-// time the conflict was detected, the short id of the peer it was detected
-// with, and the original extension. The directory part of rel is kept, so the
-// copy sits next to the file it belongs to.
+// modification time of the version being moved aside, the short id of the
+// device that wrote it, and the original extension. The directory part of rel
+// is kept, so the copy sits next to the file it belongs to.
+//
+// The name describes the version, not the meeting of two devices that noticed
+// it. Every device that moves that version aside therefore writes the same
+// name, and the copies converge into one file instead of one per device pair.
 //
 //	"notes/report.md" -> "notes/report.sync-conflict-20260921-153000-ABCDEFG.md"
-func Name(rel string, at time.Time, peer device.ID) string {
+func Name(rel string, at time.Time, by device.ID) string {
 	dir, base := path.Split(rel)
 	stem, ext := split(base)
-	name := stem + Marker + at.UTC().Format(timeLayout) + "-" + peer.Short() + ext
+	name := stem + Marker + at.UTC().Format(timeLayout) + "-" + by.Short() + ext
 	return dir + name
 }
 

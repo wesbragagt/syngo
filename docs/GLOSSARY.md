@@ -145,14 +145,17 @@ chunk larger than the bucket is still admitted.
 **Conflict.** A path two devices changed independently. Neither version is
 overwritten: the greater content hash keeps the path, the other version is
 written beside it as a **conflict copy** named
-`<stem>.sync-conflict-<date>-<time>-<peer short id><ext>`, and the copy syncs
+`<stem>.sync-conflict-<date>-<time>-<author short id><ext>`, and the copy syncs
 like any other file, so both devices end up with both versions. `conflict
 resolve` is what closes one. See
 [CLI.md](CLI.md#syncthis-conflict-list-folder---all).
 
-**Conflict copy.** The file the losing version is written to. It is an ordinary
-file: it is scanned, sent to peers and can be opened, renamed or deleted like
-any other.
+**Conflict copy.** The file the losing version is written to. Its name comes
+from that version alone, the time it was modified and the device that wrote it,
+so every device moving the same version aside picks the same name and a copy
+that is already there with the same content is reused. It is an ordinary file:
+it is scanned, sent to peers and can be opened, renamed or deleted like any
+other.
 
 **Resolution.** Saying which version wins, with `conflict resolve --keep
 local|remote|both`. The winner is renamed onto the path; `both` changes nothing

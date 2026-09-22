@@ -39,6 +39,22 @@ func conflictCopies(d *dest, rel string) []string {
 	return out
 }
 
+// copyNameOf returns the name the copy of the local version of rel gets: the
+// name is a function of that version alone, its author and its modification
+// time, so every device that moves it aside writes the same one.
+func copyNameOf(t *testing.T, d *dest, rel string) string {
+	t.Helper()
+	e, err := d.store.GetFile(context.Background(), d.folder.ID, rel)
+	if err != nil {
+		t.Fatalf("get %s: %v", rel, err)
+	}
+	by := e.ModifiedBy
+	if by == "" {
+		by = destID
+	}
+	return conflict.Name(rel, e.ModTime, by)
+}
+
 // theConflict returns the single unresolved conflict of the destination.
 func theConflict(t *testing.T, d *dest) ports.ConflictRecord {
 	t.Helper()
@@ -62,6 +78,9 @@ func TestConflict_LocalVersionThatLosesIsKeptAsACopy(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	d.record(t, "a.txt", local, vector(t, "DEST:1"))
+	// The name the losing version will get, read while it is still the one
+	// at the path.
+	want := copyNameOf(t, d, "a.txt")
 
 	summary := d.sync(t, conn)
 	if summary.Conflicts != 1 || summary.Pulled != 0 {
@@ -79,7 +98,6 @@ func TestConflict_LocalVersionThatLosesIsKeptAsACopy(t *testing.T) {
 	if got := d.content(t, copies[0]); string(got) != string(local) {
 		t.Fatalf("%s = %q, want the local version", copies[0], got)
 	}
-	want := conflict.Name("a.txt", d.clock.Now(), peerID)
 	if copies[0] != want {
 		t.Fatalf("conflict copy = %q, want %q", copies[0], want)
 	}
@@ -145,7 +163,7 @@ func TestConflict_LocalVersionThatKeepsThePathIsUntouched(t *testing.T) {
 	}
 }
 
-func TestConflict_CopyNameThatIsTakenGetsACounter(t *testing.T) {
+func TestConflict_CopyNameTakenByOtherContentGetsACounter(t *testing.T) {
 	hasher := fakes.NewHasher()
 	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
 
@@ -154,7 +172,7 @@ func TestConflict_CopyNameThatIsTakenGetsACounter(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	d.record(t, "a.txt", local, vector(t, "DEST:1"))
-	taken := conflict.Name("a.txt", d.clock.Now(), peerID)
+	taken := copyNameOf(t, d, "a.txt")
 	d.record(t, taken, []byte("an older conflict copy"), vector(t, "DEST:1"))
 
 	d.sync(t, conn)
@@ -168,6 +186,49 @@ func TestConflict_CopyNameThatIsTakenGetsACounter(t *testing.T) {
 	}
 	if record := theConflict(t, d); record.ConflictPath != counted {
 		t.Fatalf("conflict names %q, want %q", record.ConflictPath, counted)
+	}
+}
+
+// TestConflict_CopyNameTakenByTheSameContentIsReused covers the copy another
+// device already wrote: it carries the same name, because the name describes
+// the version and not the meeting of two devices, and the same bytes. Writing
+// a second copy beside it would leave the mesh with one copy per device pair.
+func TestConflict_CopyNameTakenByTheSameContentIsReused(t *testing.T) {
+	ctx := context.Background()
+	hasher := fakes.NewHasher()
+	remote, local := ordered(hasher, []byte("the peer's version"), []byte("the local version"))
+
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "a.txt", remote)
+
+	d, conn := newDest(t, src.server)
+	d.record(t, "a.txt", local, vector(t, "DEST:1"))
+	taken := copyNameOf(t, d, "a.txt")
+	d.record(t, taken, local, vector(t, "SOURCE:1"))
+
+	d.sync(t, conn)
+
+	if got := d.content(t, "a.txt"); string(got) != string(remote) {
+		t.Fatalf("a.txt = %q, want the peer's version", got)
+	}
+	copies := conflictCopies(d, "a.txt")
+	if len(copies) != 1 || copies[0] != taken {
+		t.Fatalf("conflict copies = %v, want only the one already there", copies)
+	}
+	if got := d.content(t, taken); string(got) != string(local) {
+		t.Fatalf("%s = %q, want the local version", taken, got)
+	}
+	if record := theConflict(t, d); record.ConflictPath != taken {
+		t.Fatalf("conflict names %q, want %q", record.ConflictPath, taken)
+	}
+	// The reused copy is a version of its own path made here, so the peer
+	// that has it under an older vector is not asked to conflict over it.
+	stored, err := d.store.GetFile(ctx, d.folder.ID, taken)
+	if err != nil {
+		t.Fatalf("stored copy: %v", err)
+	}
+	if !stored.Version.Equals(vector(t, "DEST:1,SOURCE:1")) {
+		t.Fatalf("copy version = %q, want the one it had raised here", stored.Version)
 	}
 }
 

@@ -42,32 +42,47 @@ func needsRemoteContent(item syncplan.Item) bool {
 // the path, and the copy holding what this device had.
 func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
 	item syncplan.Item, t transfer.Transfer) ([]arrived, error) {
-	name := conflict.Name(item.Path, p.clock.Now(), peer)
+	// The copy is named after the version it holds, not after this meeting
+	// of two devices: its author and its modification time. Two devices
+	// moving the same losing version aside therefore write one name, so
+	// the copies converge instead of multiplying with every pair.
+	name := conflict.Name(item.Path, item.Local.ModTime, p.authorOfLocal(*item.Local))
 	// The local version moves aside first, so the path is free for the
 	// peer's version and the local bytes are never overwritten.
 	kept, err := p.installer.KeepLocalAs(ctx, f.Path, item.Path, name, item.Local)
 	if err != nil {
 		return nil, err
 	}
-	installed, err := p.installer.Install(ctx, f.Path, t, nil)
+	// A reused copy leaves the local file at its path, so the install
+	// replaces it and is told which version it is replacing.
+	var expect *manifest.Entry
+	if kept.Reused {
+		expect = item.Local
+	}
+	installed, err := p.installer.Install(ctx, f.Path, t, expect)
 	if err != nil {
+		if kept.Reused {
+			// Nothing was moved: the local version is still at its
+			// path and the copy beside it is untouched.
+			return nil, err
+		}
 		// The path is empty now and the local version sits at a name
 		// nothing recorded, which the next scan would read as the path
 		// having been deleted. It goes back where it was.
-		if restoreErr := p.installer.RestoreKept(ctx, f.Path, kept.Path, item.Path); restoreErr != nil {
+		if restoreErr := p.installer.RestoreKept(ctx, f.Path, kept.Entry.Path, item.Path); restoreErr != nil {
 			p.log.Error("local version left at its conflict name", "folder", f.ID,
-				"path", item.Path, "conflict_path", kept.Path, "error", restoreErr)
+				"path", item.Path, "conflict_path", kept.Entry.Path, "error", restoreErr)
 			// It cannot go back, so the manifest is told where it
 			// is: an unrecorded file would be read as a deletion of
 			// the path and as an addition beside it.
-			if recordErr := p.record(ctx, f.ID, p.keptCopy(ctx, f.ID, kept, item)); recordErr != nil {
+			if recordErr := p.record(ctx, f.ID, p.keptCopy(ctx, f.ID, kept.Entry, item)); recordErr != nil {
 				return nil, errors.Join(err, restoreErr, recordErr)
 			}
 			return nil, errors.Join(err, restoreErr)
 		}
 		return nil, err
 	}
-	if err := p.recordConflict(ctx, f, peer, item, kept.Path); err != nil {
+	if err := p.recordConflict(ctx, f, peer, item, kept.Entry.Path); err != nil {
 		return nil, err
 	}
 	// The version at the path is the outcome of the conflict, so it
@@ -78,7 +93,7 @@ func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
 		author:  authorOf(*item.Remote, peer),
 		version: item.Local.Version.Merge(item.Remote.Version),
 	}
-	return []arrived{outcome, p.keptCopy(ctx, f.ID, kept, item)}, nil
+	return []arrived{outcome, p.keptCopy(ctx, f.ID, kept.Entry, item)}, nil
 }
 
 // keptCopy describes the copy holding the version that gave up the path. It
@@ -92,9 +107,18 @@ func (p *Puller) keptCopy(ctx context.Context, id folder.ID, kept manifest.Entry
 	}
 	return arrived{
 		entry:   kept,
-		author:  item.Local.ModifiedBy,
+		author:  p.authorOfLocal(*item.Local),
 		version: prev.Bump(p.self()),
 	}
+}
+
+// authorOfLocal is the device that produced the local version of a path: the
+// one recorded for it, or this device when the entry predates authorship.
+func (p *Puller) authorOfLocal(local manifest.Entry) device.ID {
+	if local.ModifiedBy == "" {
+		return p.self()
+	}
+	return local.ModifiedBy
 }
 
 // authorOf is the device that produced a remote version: the one the peer

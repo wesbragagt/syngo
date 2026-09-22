@@ -944,14 +944,17 @@ When both sides change a file, nothing is overwritten: one version stays at the
 path and the other is written beside it as
 
 ```
-<stem>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<peer short id><ext>
+<stem>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<author short id><ext>
 ```
 
-for example `report.sync-conflict-20260921-153000-ETI3RRZ.md`. The time is UTC,
-the peer short id is the first seven characters of the device id the conflict
-was detected with, and the extension is kept so the copy opens in the same
-application. A name that is already taken gets a counter before the extension
-(`…-ETI3RRZ-1.md`).
+for example `report.sync-conflict-20260921-153000-ETI3RRZ.md`. The time is the
+modification time of the version being moved aside, in UTC, the short id is the
+first seven characters of the device that wrote that version, and the extension
+is kept so the copy opens in the same application. The name therefore describes
+the version and not the pair of devices that met: every device that moves the
+same version aside writes the same name, so a copy that already holds exactly
+that content is reused. A name taken by different content gets a counter before
+the extension (`…-ETI3RRZ-1.md`).
 
 Which version keeps the path is decided by the content, not by a clock: the
 greater content hash wins. Both devices reach that answer from the same two

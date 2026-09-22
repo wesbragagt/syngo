@@ -166,16 +166,21 @@ once per cycle updates one row instead of adding one every time. `resolved` is
 set by `conflict resolve` and is the only field that changes afterwards.
 
 A conflict copy is a file of the folder like any other: it is recorded in
-`files` with its own hash as `synced_hash`, so the scan that follows sees
-nothing new and the peer picks the copy up as an ordinary file. Its name is
+`files` with a version vector of its own, so the scan that follows sees nothing
+new and the peer picks the copy up as an ordinary file. Its name is
 
 ```
-<stem>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<peer short id><ext>
+<stem>.sync-conflict-<YYYYMMDD>-<HHMMSS>-<author short id><ext>
 ```
 
-in UTC, with a counter before the extension when that name is taken. Which of
-the two versions keeps the path is decided by the content: the greater hash
-wins, so both devices reach the same answer and only one of them writes a copy.
+built from the modification time and the author of the version being moved
+aside, in UTC. The name is a function of that version alone, so two devices
+that move the same version aside write the same name and end up with one copy
+rather than one per pair; a copy already holding exactly that content is reused
+instead of written again, and only a name taken by different content gets a
+counter before the extension. Which of the two versions keeps the path is
+decided by the content: the greater hash wins, so both devices reach the same
+answer and only one of them writes a copy.
 
 ### transfers and transfer_chunks
 

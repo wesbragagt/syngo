@@ -122,51 +122,71 @@ func (i *Installer) Install(_ context.Context, root string, t transfer.Transfer,
 	return i.installAt(root, t.Path, t, expectLocal)
 }
 
+// KeptCopy is where the local version of a conflicted path ended up.
+type KeptCopy struct {
+	// Entry describes the copy holding the local version; its Path is the
+	// name the copy got.
+	Entry manifest.Entry
+	// Reused reports that the copy was already on disk with exactly this
+	// content, so nothing was moved and the local file is still at its
+	// path, waiting to be replaced by the install.
+	Reused bool
+}
+
 // KeepLocalAs moves the local file at rel aside to a conflict name, so the
 // peer's version can take its place without the local change being lost. The
 // local file must still be the version the plan was made against; one that
-// changed since is left alone. A conflict name that is taken gets a counter.
-// It returns the entry describing the copy, whose Path is the name it got.
+// changed since is left alone.
+//
+// A conflict name that is taken by the very same content is reused: two
+// devices that move the same losing version aside name it identically, so the
+// copy is one file on all of them instead of one per device. Nothing is
+// renamed in that case, because the bytes are already there; the install that
+// follows replaces the local file at its path. A name taken by other content
+// gets a counter.
 func (i *Installer) KeepLocalAs(_ context.Context, root, rel, conflictRel string,
-	local *manifest.Entry) (manifest.Entry, error) {
+	local *manifest.Entry) (KeptCopy, error) {
 	full, err := i.safeJoin(root, rel)
 	if err != nil {
-		return manifest.Entry{}, err
+		return KeptCopy{}, err
 	}
 	info, err := i.fs.Lstat(full)
 	if err != nil {
-		return manifest.Entry{}, fmt.Errorf("stat %s: %w", full, err)
+		return KeptCopy{}, fmt.Errorf("stat %s: %w", full, err)
 	}
 	if local == nil || local.Kind != manifest.KindFile || info.IsDir() || info.IsSymlink() ||
 		info.Size != local.Size || info.ModTime.UnixNano() != local.ModTime.UnixNano() {
-		return manifest.Entry{}, fmt.Errorf("%s: %w", full, ErrChangedUnderneath)
+		return KeptCopy{}, fmt.Errorf("%s: %w", full, ErrChangedUnderneath)
 	}
 
-	free, err := i.freeName(root, conflictRel)
+	free, reused, err := i.freeName(root, conflictRel, local.Hash)
 	if err != nil {
-		return manifest.Entry{}, err
+		return KeptCopy{}, err
 	}
 	kept, err := i.safeJoin(root, free)
 	if err != nil {
-		return manifest.Entry{}, err
+		return KeptCopy{}, err
 	}
-	if err := i.fs.MkdirAll(path.Dir(kept), defaultDirMode); err != nil {
-		return manifest.Entry{}, fmt.Errorf("create parent of %s: %w", kept, err)
-	}
-	// The rename is atomic, so the local version is either at its path or
-	// at the conflict name, never nowhere.
-	if err := i.fs.Rename(full, kept); err != nil {
-		return manifest.Entry{}, fmt.Errorf("keep %s as %s: %w", full, kept, err)
-	}
-	if err := i.fs.SyncDir(path.Dir(kept)); err != nil {
-		return manifest.Entry{}, fmt.Errorf("flush directory of %s: %w", kept, err)
-	}
-
 	entry := manifest.Entry{
 		Path: free, Kind: manifest.KindFile, Size: local.Size, ModTime: local.ModTime,
 		Mode: local.Mode, Hash: local.Hash, SyncedHash: local.Hash,
 	}
-	return i.described(kept, entry), nil
+	if reused {
+		return KeptCopy{Entry: i.described(kept, entry), Reused: true}, nil
+	}
+
+	if err := i.fs.MkdirAll(path.Dir(kept), defaultDirMode); err != nil {
+		return KeptCopy{}, fmt.Errorf("create parent of %s: %w", kept, err)
+	}
+	// The rename is atomic, so the local version is either at its path or
+	// at the conflict name, never nowhere.
+	if err := i.fs.Rename(full, kept); err != nil {
+		return KeptCopy{}, fmt.Errorf("keep %s as %s: %w", full, kept, err)
+	}
+	if err := i.fs.SyncDir(path.Dir(kept)); err != nil {
+		return KeptCopy{}, fmt.Errorf("flush directory of %s: %w", kept, err)
+	}
+	return KeptCopy{Entry: i.described(kept, entry)}, nil
 }
 
 // RestoreKept undoes KeepLocalAs: it moves the copy back to the path it was
@@ -192,19 +212,32 @@ func (i *Installer) RestoreKept(_ context.Context, root, keptRel, rel string) er
 }
 
 // freeName returns rel, or the first counted variant of it that no file holds.
-func (i *Installer) freeName(root, rel string) (string, error) {
+// A candidate that is a file holding hash is not in the way: it is the same
+// version under the name it would get anyway, and reused says so. The file is
+// hashed rather than looked up, because what the manifest says about a copy
+// another device wrote may be older than the copy itself.
+func (i *Installer) freeName(root, rel string, hash manifest.Hash) (name string, reused bool, err error) {
 	candidate := rel
 	for n := 1; n <= maxConflictNames; n++ {
-		_, err := i.fs.Lstat(path.Join(root, candidate))
+		full := path.Join(root, candidate)
+		info, err := i.fs.Lstat(full)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			return candidate, nil
+			return candidate, false, nil
 		case err != nil:
-			return "", fmt.Errorf("stat %s: %w", path.Join(root, candidate), err)
+			return "", false, fmt.Errorf("stat %s: %w", full, err)
+		}
+		if !info.IsDir() && !info.IsSymlink() {
+			switch got, err := i.hashFile(full); {
+			case err != nil:
+				return "", false, err
+			case got == hash:
+				return candidate, true, nil
+			}
 		}
 		candidate = conflict.WithCounter(rel, n)
 	}
-	return "", fmt.Errorf("%s: no free name left beside it: %w", rel, ErrChangedUnderneath)
+	return "", false, fmt.Errorf("%s: no free name left beside it: %w", rel, ErrChangedUnderneath)
 }
 
 // installAt verifies the finished partial file of t and moves it to rel.
