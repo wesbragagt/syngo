@@ -38,6 +38,9 @@ type dest struct {
 	// two of them sees the one order it was written against. A test about
 	// the pipeline itself sets it.
 	pipeline int
+	// budget is how many bytes of chunk content this device holds at once,
+	// zero for the default.
+	budget int64
 }
 
 // newDest returns a receiving device connected to handler, asking for one
@@ -51,13 +54,20 @@ func newDest(t *testing.T, handler ports.PeerHandler) (*dest, *fakes.PeerConn) {
 // given width.
 func newDestWith(t *testing.T, handler ports.PeerHandler, chunkPipeline int) (*dest, *fakes.PeerConn) {
 	t.Helper()
+	return newDestBudget(t, handler, chunkPipeline, 0)
+}
+
+// newDestBudget returns a receiving device with a pinned pipeline and a given
+// byte budget. A zero budget takes the default.
+func newDestBudget(t *testing.T, handler ports.PeerHandler, chunkPipeline int, budget int64) (*dest, *fakes.PeerConn) {
+	t.Helper()
 	f := testFolder("docs", false)
 	f.Path = "/home/dest/docs"
 
 	d := &dest{
 		store: fakes.NewStore(), fs: fakes.NewFileSystem(), hasher: fakes.NewHasher(),
 		clock: fakes.NewClock(time.Time{}), events: fakes.NewEvents(), folder: f,
-		pipeline: chunkPipeline,
+		pipeline: chunkPipeline, budget: budget,
 	}
 	d.fs.AddDir(f.Path, 0o755)
 	if err := d.store.SaveFolder(context.Background(), f); err != nil {
@@ -71,7 +81,10 @@ func newDestWith(t *testing.T, handler ports.PeerHandler, chunkPipeline int) (*d
 // The store and the filesystem survive, the in-memory state does not.
 func (d *dest) restart() {
 	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, fakes.NewIdentity(destID, "dest"), d.events,
-		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 2, ChunkPipeline: d.pipeline}, nil)
+		syncer.PullerConfig{
+			ChunkSize: chunkSize, Concurrency: 2,
+			ChunkPipeline: d.pipeline, ChunkBytesInFlight: d.budget,
+		}, nil)
 }
 
 // sync runs one sync cycle and fails the test when it does not finish.
