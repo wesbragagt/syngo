@@ -236,8 +236,25 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 	if err := jsonconfig.Save(dev.HostData, config); err != nil {
 		c.T.Fatalf("write config of %s: %v", dev.Name, err)
 	}
+	// A container running as a user of its own has to be able to write the
+	// mounts and read the configuration the host put there; the host has
+	// to be able to read back what that user wrote.
+	if spec.UID != 0 || spec.GID != 0 {
+		for _, dir := range []string{dev.HostData, dev.HostRoot, dev.HostExtra} {
+			if err := os.Chmod(dir, 0o777); err != nil {
+				c.T.Fatalf("open %s to every user: %v", dir, err)
+			}
+		}
+		// init rewrites the configuration it was given, so the file
+		// the host wrote has to be writable by the container's user
+		// too.
+		if err := os.Chmod(filepath.Join(dev.HostData, jsonconfig.FileName), 0o666); err != nil {
+			c.T.Fatalf("make the config of %s writable: %v", dev.Name, err)
+		}
+	}
 
-	// The container runs as the host user, so everything the daemon
+	// A container runs as the host user unless the test asked otherwise,
+	// so everything the daemon
 	// writes on the two bind mounts is owned by whoever runs the test:
 	// the host can hash the tree, read .syncthis and delete the temporary
 	// directory afterwards. Commands that need capabilities (iptables,
@@ -655,29 +672,16 @@ func (d *Device) Tree() map[string]tree.Entry {
 }
 
 // PartFiles lists the partial downloads sitting in the state directory. A
-// converged folder has none.
+// converged folder has none. The listing is made inside the container rather
+// than on the host, because the daemon creates its state directory for itself
+// alone and a device running as another user would refuse the host the look.
 func (d *Device) PartFiles() []string {
 	d.c.T.Helper()
+	res := d.c.d.exec(d.Ctr, "", "sh", "-c",
+		"find "+containerRoot+"/.syncthis -type f -name '*.part' 2>/dev/null || true")
 	var parts []string
-	root := filepath.Join(d.HostRoot, ".syncthis")
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if !entry.IsDir() && strings.HasSuffix(path, ".part") {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return relErr
-			}
-			parts = append(parts, rel)
-		}
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
-		d.c.T.Fatalf("%s: walk %s: %v", d.Name, root, err)
+	for _, line := range strings.Fields(res.stdout) {
+		parts = append(parts, strings.TrimPrefix(line, containerRoot+"/.syncthis/"))
 	}
 	return parts
 }

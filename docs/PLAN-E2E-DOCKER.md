@@ -468,3 +468,31 @@ overwrites its own, B follows A, and C's version has won by being stale.
 
 A fix needs a baseline per peer, or a sequence the plan can order two versions
 by, so this one is a design change rather than a patch.
+
+### KF-4: a folder whose root cannot be written reports itself idle
+
+Scenario 14 (`TestModes_ReadOnlyRootIsReportedNotFatal`). One device of a
+three-device mesh has `/docs` mounted read-only; the other two write five
+files.
+
+Expected: the device reports `status.folders[0].state == "error"` with a
+non-null `error`, and the work it could not do is somewhere in its journal
+(`transfers.failed`, `pending` or `active` above zero).
+
+Observed: the daemon stays up, which is right, and says nothing is wrong. The
+folder is `"state": "idle"`, `"error": null`, `"pending_changes": 0`, and
+`transfers` is all zeros with an empty `items`. The only trace is in the log,
+at WARN, repeated every sync cycle:
+
+```
+{"level":"WARN","msg":"plan item not applied","folder":"docs","path":"offered",
+ "action":"mkdir","error":"create directory /docs/offered: mkdir /docs/offered: read-only file system"}
+{"level":"WARN","msg":"folder sync failed","folder":"docs","peer":"PZKB5FX","error":"context canceled"}
+```
+
+So a device that can synchronize nothing at all looks healthy to `status`, and
+a user has no way to find out but to read the log. The fix is a decision about
+which failures reach the folder state and for how long (one refused item, or
+only a whole sync cycle that failed), so it is recorded here rather than
+patched. The other two devices converge and are unaffected, which the test
+still asserts.

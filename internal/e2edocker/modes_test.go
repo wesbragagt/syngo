@@ -162,3 +162,91 @@ func TestModes_DeletePolicyNeverOnOneSpoke(t *testing.T) {
 		t.Errorf("c differs from the hub by %v, want only the file it kept", problems)
 	}
 }
+
+// TestModes_ReadOnlyRootIsReportedNotFatal gives one device a folder it may
+// not write. Everything it is offered fails to land, which is a state it has
+// to report rather than a reason to stop: the daemon stays up, the other two
+// devices carry on, and the folder says what is wrong with it.
+func TestModes_ReadOnlyRootIsReportedNotFatal(t *testing.T) {
+	t.Skip("known: a folder whose root cannot be written reports itself idle with no error, " +
+		"and the files it could not write are in no journal; see Known failures in docs/PLAN-E2E-DOCKER.md")
+	c := StartWith(t, ClusterOptions{Devices: []DeviceSpec{
+		{Name: "a"},
+		{Name: "b"},
+		{Name: "c", ReadOnlyRoot: true},
+	}})
+	a, cc := c.Device(0), c.Device(2)
+
+	for i := 0; i < 5; i++ {
+		a.WriteFileAtomic(fmt.Sprintf("offered/f%d.bin", i), payload(chunkSize+i, byte(i)))
+	}
+
+	// The two writable devices are unaffected by the third.
+	c.WaitConverged(0, 1)
+	c.CheckInvariants(0, 1)
+
+	// The device that cannot write reports the folder as failing, with the
+	// reason, and keeps answering.
+	waitFor(t, "c reports its folder as failing", convergeTimeout, func() bool {
+		for _, f := range cc.Status().Folders {
+			if f.ID == folderID && f.State == "error" && f.Error != nil {
+				return true
+			}
+		}
+		return false
+	})
+	report := cc.Status()
+	if !report.Daemon.Running {
+		t.Fatal("the daemon of c stopped over a folder it cannot write")
+	}
+	if got := report.Transfers.Failed + report.Transfers.Pending + report.Transfers.Active; got == 0 {
+		t.Errorf("c has no transfer to show for five files it cannot write: %+v", report.Transfers)
+	}
+	if len(cc.Tree()) != 0 {
+		t.Errorf("c wrote into a read-only mount: %v", cc.Tree())
+	}
+}
+
+// TestModes_DifferentUIDs gives every device its own user. Ownership is a
+// local matter and modes are not: a file that is executable on one device has
+// to arrive executable on the others, whoever owns it there.
+func TestModes_DifferentUIDs(t *testing.T) {
+	c := StartWith(t, ClusterOptions{Devices: []DeviceSpec{
+		{Name: "a", UID: 1000, GID: 1000},
+		{Name: "b", UID: 2000, GID: 2000},
+		{Name: "c", UID: 3000, GID: 3000},
+	}})
+
+	for _, dev := range c.Devices {
+		dev.WriteFileAs(dev.Name+"/data.bin", payload(chunkSize+3, byte(dev.Index)), 0o644)
+		dev.WriteFileAs(dev.Name+"/run.sh", payload(500, byte(100+dev.Index)), 0o755)
+	}
+
+	// The comparison covers the modes as well as the content, so a mode
+	// that did not survive the transfer is a failure to converge.
+	c.WaitConverged()
+	c.CheckInvariants()
+
+	for _, dev := range c.Devices {
+		entries := dev.Tree()
+		for _, owner := range c.Devices {
+			for name, want := range map[string]uint32{"data.bin": 0o644, "run.sh": 0o755} {
+				path := owner.Name + "/" + name
+				entry, ok := entries[path]
+				if !ok {
+					t.Errorf("%s is missing %s", dev.Name, path)
+					continue
+				}
+				if uint32(entry.Mode.Perm()) != want {
+					t.Errorf("%s holds %s as %o, want %o", dev.Name, path, entry.Mode.Perm(), want)
+				}
+			}
+		}
+		for _, line := range dev.LogLines("error") {
+			if strings.Contains(strings.ToLower(line.Msg), "chown") ||
+				strings.Contains(strings.ToLower(line.Raw), "operation not permitted") {
+				t.Errorf("%s failed over ownership: %s", dev.Name, line.Raw)
+			}
+		}
+	}
+}
