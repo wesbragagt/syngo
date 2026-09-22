@@ -121,9 +121,14 @@ func newScaleNode(t *testing.T, dir, short, name string, mode folder.Mode, cfg s
 	return n
 }
 
-// scalePair makes one node trust another, in that direction only. It writes
-// the device row directly, which is what `peer add` persists, so no pairing
-// handshake has to be driven from a test.
+// scalePair makes one node trust another, in that direction only, and
+// authorizes it for the folder. It writes the rows directly, which is what
+// `peer add` and `folder share` persist, so no pairing handshake has to be
+// driven from a test.
+//
+// The grant is not optional: a serving device answers a manifest or chunk
+// request only from a device its folder names, so a pair that only trusts
+// each other connects, stays connected and moves nothing.
 func scalePair(t *testing.T, from, to *scaleNode) {
 	t.Helper()
 	app, err := compose.Build(context.Background(), compose.Options{DataDir: from.dataDir})
@@ -140,6 +145,9 @@ func scalePair(t *testing.T, from, to *scaleNode) {
 	})
 	if err != nil {
 		t.Fatalf("pair %s with %s: %v", from.name, to.name, err)
+	}
+	if err := app.Folders.Grant(context.Background(), folderID, to.id); err != nil {
+		t.Fatalf("share folder %s of %s with %s: %v", folderID, from.name, to.name, err)
 	}
 }
 

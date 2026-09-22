@@ -75,6 +75,11 @@ SCALE_RATE_SECONDS ?= 120
 SCALE_FILES_EACH   ?= 500
 SCALE_IDLE_SECONDS ?= 300
 SCALE_BIGFILE_GIB  ?= 10
+# The chunk size evaluation: the averages it sweeps, in KiB, and the size of
+# the file it moves at each one, in MiB.
+SCALE_CHUNKEVAL_KIB ?= 1024,256,64,16
+SCALE_CHUNKEVAL_MIB ?= 1024
+SCALE_CHUNKEVAL_OFFSET_KIB ?= 64
 
 scale:
 	@mkdir -p $(SCALE_DIR)
@@ -86,6 +91,9 @@ scale:
 	SYNCTHIS_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
 	SYNCTHIS_SCALE_IDLE_SECONDS=$(SCALE_IDLE_SECONDS) \
 	SYNCTHIS_SCALE_BIGFILE_GIB=$(SCALE_BIGFILE_GIB) \
+	SYNCTHIS_SCALE_CHUNKEVAL_KIB=$(SCALE_CHUNKEVAL_KIB) \
+	SYNCTHIS_SCALE_CHUNKEVAL_MIB=$(SCALE_CHUNKEVAL_MIB) \
+	SYNCTHIS_SCALE_CHUNKEVAL_OFFSET_KIB=$(SCALE_CHUNKEVAL_OFFSET_KIB) \
 	  go test ./internal/e2e/ -run 'TestScale_' -count=1 -p 1 -v -timeout 180m
 
 # Containers and networks of a run killed before its cleanups ran.
