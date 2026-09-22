@@ -27,6 +27,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           syncthis = pkgs.callPackage ./nix/package.nix { inherit version commit; };
+          vmTests = import ./nix/vm-tests.nix { inherit self pkgs; };
         in
         {
           packages = {
@@ -69,6 +70,11 @@
                 })
               ];
             }).config.system.build.toplevel;
+
+            # Booting the module is the only thing that proves the daemon
+            # runs: the toplevel above builds a system that was never started.
+            vm-module = vmTests.module;
+            vm-module-pair = vmTests.pair;
           };
         })
     // {
