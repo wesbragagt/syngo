@@ -107,6 +107,42 @@ path and a byte range. The index is advisory: the puller re-reads and re-hashes
 what it points at, so a row that has gone stale since the last scan costs a
 read rather than a wrong file.
 
+## The transfer pipeline
+
+A download asks for several chunks of one file at once. Chunks are independent:
+each covers a byte range of its own, is verified against the hash the sender
+announced before anything is recorded, and is journalled on its own row. So
+order is not preserved and does not have to be; completeness is, and the
+journal is what states it. A process killed mid-download resumes from the
+journal exactly as a sequential one did, because a chunk's row is written after
+its bytes and `resume` re-reads and re-hashes every row it finds.
+
+Three numbers bound what this costs, and all three live in `domain/pipeline`,
+with no I/O behind them:
+
+- `pipeline.Limiter` is how many chunk requests are outstanding. It compares
+  what a chunk costs on the wire against what it costs on this disk, because
+  the overlap of the two is the only thing concurrency buys: the limit rises
+  when the wire dominates by more than a factor of two, falls when the disk
+  does, and stays inside `[Floor, Ceiling]` = `[1, 8]`. The floor is the
+  sequential download this replaced, so the pipeline can never be worse than
+  what it replaced. `config.json`'s `chunk_pipeline` pins it, which is what a
+  constrained device and a measurement ask for.
+- `pipeline.Gate` admits holders against that limit, one gate per file. It
+  re-reads the limit on every chunk, so a limit that moved while a large file
+  was downloading takes effect without restarting anything.
+- `pipeline.Budget` is the byte semaphore, and it is the backpressure. A chunk
+  is charged against it from before it is asked for until after it is written
+  and hashed, so a disk that cannot keep up holds the bytes and the fetchers
+  wait rather than asking for more. The default is 64 MiB across every file and
+  every folder of the device, which is the memory bound of the download side.
+
+The wire carries this because every frame names the request it answers
+(`docs/PROTOCOL.md`, version 4). The serving side answers at most 16 requests
+of one peer at a time and checks the peer's folder authorization on each of
+them, so a client that pipelines is not a way around the check: there is no
+per-connection decision for a second request to inherit.
+
 ## Glossary
 
 The domain language, one page: [GLOSSARY.md](GLOSSARY.md). It defines the words

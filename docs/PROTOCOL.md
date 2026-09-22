@@ -1,4 +1,4 @@
-# Syncthis peer protocol, version 3
+# Syncthis peer protocol, version 4
 
 This is what `internal/adapters/tcpwire` implements. It is the contract between
 two daemons; the application layer sees it through `internal/app/ports`.
@@ -23,12 +23,23 @@ exercise the production path.
 ## Frame
 
 ```
-uint32 BE  length      = 1 + 4 + len(header) + len(payload)   // at most 64 MiB
+uint32 BE  length      = 1 + 8 + 4 + len(header) + len(payload)   // at most 64 MiB
 uint8      type
+uint64 BE  request_id
 uint32 BE  header_len
 [bytes]    header      JSON object (UTF-8)
 [bytes]    payload     raw bytes; empty except for ChunkData and ChunkListReply
 ```
+
+`request_id` correlates a reply with the request it answers. The client picks
+it, starting at one and never repeating on a connection; the server echoes it
+unchanged on the frame that answers, whatever that frame's type is. Zero means
+the frame answers nothing: `Hello`, `Rejected`, `ManifestChanged` and
+`FoldersChanged` all carry zero.
+
+This is what lets a client have several requests outstanding at once. A reply
+that arrives after its caller gave up names an id nobody is waiting for and is
+dropped, so a request that times out no longer costs the connection.
 
 A frame longer than 64 MiB is refused without reading its body and the
 connection is closed: the reader cannot find the next boundary. A frame whose
@@ -45,7 +56,7 @@ timeout is dropped.
 
 | Type | Name | Direction | Header |
 |---|---|---|---|
-| 0x01 | Hello | both, first frame after TLS | `{"protocol_version":3,"device_id":"…","device_name":"…","folders":[{"id":"…","mode":"…"}]}` |
+| 0x01 | Hello | both, first frame after TLS | `{"protocol_version":4,"device_id":"…","device_name":"…","folders":[{"id":"…","mode":"…"}]}` |
 | 0x02 | Rejected | server → client, then close | `{"reason":"unknown_device"\|"protocol_version"\|"id_mismatch"}` |
 | 0x03 | Ping | client → server | `{"nonce":123}` |
 | 0x04 | Pong | server → client | `{"nonce":123}` |
@@ -161,7 +172,8 @@ message. A peer cannot tell the two apart, and nothing it sends widens what it
 may read. Checking per request rather than per handshake is also what makes a
 revocation stop a transfer that is already running.
 
-This needs no wire change and the protocol stays at version 2. `Hello` and
+This needed no wire change when it was added and the protocol stayed at version
+2 for it. `Hello` and
 `FoldersChanged` already carry a folder list, and this only narrows what goes
 into it; `folder_unknown` is already the refusal for a folder the peer cannot
 have. No frame, field or code is added, removed or reinterpreted, so a device
@@ -247,27 +259,33 @@ a peer removed while it is connected stops being served at once.
    its leaf certificate.
 2. Both sides write `Hello` immediately and read the other's. A `Hello` that
    announces a device ID other than the certificate's is answered with
-   `Rejected{id_mismatch}`; a protocol version other than 3 with
+   `Rejected{id_mismatch}`; a protocol version other than 4 with
    `Rejected{protocol_version}`. The connection closes either way. Both sides
    check, and there is no mixed-version operation: a version-1 peer sends no
-   version vectors, so its entries cannot be ordered, and a version-2 peer
-   derives chunk boundaries from a size, so it would answer a byte-range
-   request with the wrong bytes. Every device of a mesh upgrades together.
+   version vectors, so its entries cannot be ordered, a version-2 peer derives
+   chunk boundaries from a size, so it would answer a byte-range request with
+   the wrong bytes, and a version-3 peer puts no request id in its frames, so
+   it reads every field of every frame at the wrong offset. Every device of a
+   mesh upgrades together.
 3. The server looks the client up in its `devices` table. An unknown device is
    answered with `Rejected{unknown_device}` and closed. The rejection comes
    *after* the server's own `Hello`, on purpose: a `peer add` probe from an
    unpaired device learns the server's identity and name that way, which is how
    pairing starts. Each side runs `peer add` against the other.
-4. The client then drives the connection: one request in flight at a time. The
-   client read loop routes `ManifestChanged` and `FoldersChanged` frames to a
-   notification channel and every other frame to the pending request. Frames
-   carry no request id, so a reply has nowhere to go once its caller has given
-   up: a request that times out ends the connection rather than leaving a late
-   reply to answer the next question. The peer loop dials again.
+4. The client then drives the connection, with as many requests in flight as it
+   likes. The client read loop routes `ManifestChanged` and `FoldersChanged`
+   frames to a notification channel and every other frame to the request whose
+   `request_id` it names; a frame naming nobody is dropped. The server answers
+   at most 16 requests of one peer at a time, in whatever order they finish,
+   and its read loop does no application work, so a chunk waiting on the disk
+   or on the upload limiter does not hold up the one behind it. Those 16 slots
+   are also what bounds how much one peer can make a device read into memory
+   at once.
 5. The client pings after 30 seconds of silence; both sides give up on a
    connection that says nothing for 90 seconds.
 6. Each daemon dials every known peer and pulls from it, so a pair of devices
-   has two connections, one per direction. Nothing is multiplexed.
+   has two connections, one per direction. Requests are multiplexed on each of
+   them; connections are not pooled.
 
 ## Fuzzing
 

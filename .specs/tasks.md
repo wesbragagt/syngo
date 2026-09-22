@@ -133,8 +133,8 @@ Goal: beat the baseline on the target workload.
 
 - [x] Implement content-defined chunking.
 - [x] Implement cross-file and cross-folder chunk deduplication.
-- [ ] Implement parallel transfer pipelines with backpressure.
-- [ ] Implement adaptive concurrency based on disk and network measurements.
+- [x] Implement parallel transfer pipelines with backpressure.
+- [x] Implement adaptive concurrency based on disk and network measurements.
 - [x] Implement rename detection without re-uploading content.
 - [x] Replace full scans with journal watermarks where possible.
 - [ ] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured 509.6 ms median over loopback, which is a lower bound; the tailnet path needs a two-machine run. See docs/BENCH.md.

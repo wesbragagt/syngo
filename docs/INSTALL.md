@@ -500,10 +500,18 @@ a running daemon to reload.
 | `sync_interval` | how often a connected peer is asked what changed, 30s by default |
 | `log_level` | `debug` logs paths; `info` does not |
 
-`chunk_size` and `max_file_size` are read from `config.json` and have no
-`config set` flag: edit the file and restart the daemon. `max_file_size` is the
-largest file this device accepts from a peer, 1 TiB by default; a manifest
-announcing a bigger one is refused whole.
+`chunk_size`, `max_file_size` and `chunk_pipeline` are read from `config.json`
+and have no `config set` flag: edit the file and restart the daemon.
+`max_file_size` is the largest file this device accepts from a peer, 1 TiB by
+default; a manifest announcing a bigger one is refused whole.
+
+`chunk_pipeline` is how many chunks of one file this device asks a peer for at
+once. `0`, the default, lets the daemon adapt it between 1 and 8 to what the
+wire and the disk are measured to cost. `1` is the sequential download: one
+chunk asked for at a time, which is what a device short of memory or CPU
+should pin it to. Values outside 1 to 8 are held inside that range rather than
+refused. It bounds the requests, not the memory: the download side holds at
+most 64 MiB of chunk content at a time whatever this is set to.
 
 ```console
 $ syncthis config set --download-limit 4MiB
