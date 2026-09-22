@@ -66,6 +66,7 @@ func TestFetch_StopsWithinOneChunkWhenTheWindowCloses(t *testing.T) {
 	served := 0
 	conn := fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(ctx context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			chunk, err := src.server.Chunk(ctx, peer, req)
 			if err != nil {
@@ -117,6 +118,7 @@ func TestSyncFolder_ContinuesFromTheJournalInsideTheWindow(t *testing.T) {
 	served := 0
 	closing := fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(ctx context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			chunk, err := src.server.Chunk(ctx, peer, req)
 			if err != nil {
@@ -139,8 +141,8 @@ func TestSyncFolder_ContinuesFromTheJournalInsideTheWindow(t *testing.T) {
 	if summary := d.sync(t, conn); summary.Pulled != 1 {
 		t.Fatalf("summary = %+v, want the file finished", summary)
 	}
-	if got := chunkIndexes(conn); len(got) != 2 || got[0] != 2 || got[1] != 3 {
-		t.Fatalf("the reopened cycle asked for chunks %v, want [2 3]", got)
+	if got, want := chunkIndexes(conn), src.indexesFrom(t, "big.bin", 2); !sameIndexes(got, want) {
+		t.Fatalf("the reopened cycle asked for chunks %v, want %v", got, want)
 	}
 	if string(d.content(t, "big.bin")) != string(data) {
 		t.Fatal("the finished file does not match the source")

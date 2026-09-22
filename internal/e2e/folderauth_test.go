@@ -99,11 +99,24 @@ func TestFolderAuth_APeerAuthorizedForOneFolderCannotReachAnother(t *testing.T) 
 	}
 	t.Logf("c asking a for %s directly: %v", folderID, err)
 
-	// 3. Asking for a chunk of it is refused too, without naming the file.
-	_, err = conn.RequestChunk(ctx, ports.ChunkRequest{
-		FolderID: folderID, Path: "secret.txt", Index: 0, ChunkSize: testChunkSize,
-	})
+	// 3. Asking how the file was cut is refused, so c never sees a
+	// boundary, and asking for a chunk of it is refused too, without
+	// naming the file.
 	var refusal *ports.ChunkError
+	list, err := conn.RequestChunks(ctx, ports.ChunkListRequest{
+		FolderID: folderID, Path: "secret.txt",
+	})
+	if len(list) != 0 {
+		t.Fatalf("a described %d chunks of %s to c, which is not authorized for it", len(list), folderID)
+	}
+	if !errors.As(err, &refusal) || refusal.Reason != ports.ChunkFolderUnknown {
+		t.Fatalf("chunk list of %s from a = %v, want a %s refusal", folderID, err, ports.ChunkFolderUnknown)
+	}
+	t.Logf("c asking a how it cut a file of %s: %v", folderID, err)
+
+	_, err = conn.RequestChunk(ctx, ports.ChunkRequest{
+		FolderID: folderID, Path: "secret.txt", Index: 0, Offset: 0, Length: testChunkSize,
+	})
 	if !errors.As(err, &refusal) || refusal.Reason != ports.ChunkFolderUnknown {
 		t.Fatalf("chunk of %s from a = %v, want a %s refusal", folderID, err, ports.ChunkFolderUnknown)
 	}

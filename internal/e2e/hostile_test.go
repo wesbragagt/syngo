@@ -16,6 +16,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // hostilePeer is a peer that speaks the protocol but answers with whatever a
@@ -108,6 +109,24 @@ func (p *hostilePeer) Manifest(_ context.Context, _ device.ID, id folder.ID) (ma
 	return m, nil
 }
 
+// Chunks says the peer holds each offered file in one chunk. A hostile peer
+// may announce anything; what these tests check is what the receiver does with
+// it, so the simplest honest list is served and the entries stay hostile.
+func (p *hostilePeer) Chunks(_ context.Context, _ device.ID, req ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	data, ok := p.files[req.Path]
+	if !ok {
+		return nil, &ports.ChunkError{
+			FolderID: req.FolderID, Path: req.Path, Reason: ports.ChunkNotFound,
+		}
+	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	return []transfer.Chunk{{
+		Index: 0, Offset: 0, Length: len(data), Hash: blake3hash.New().SumBytes(data),
+	}}, nil
+}
+
 // Chunk serves a piece of a file the peer offered.
 func (p *hostilePeer) Chunk(_ context.Context, _ device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 	data, ok := p.files[req.Path]
@@ -116,8 +135,8 @@ func (p *hostilePeer) Chunk(_ context.Context, _ device.ID, req ports.ChunkReque
 			FolderID: req.FolderID, Path: req.Path, Index: req.Index, Reason: ports.ChunkNotFound,
 		}
 	}
-	offset := int64(req.Index) * int64(req.ChunkSize)
-	end := min(offset+int64(req.ChunkSize), int64(len(data)))
+	offset := req.Offset
+	end := min(offset+int64(req.Length), int64(len(data)))
 	piece := data[offset:end]
 	return ports.ChunkData{
 		Index: req.Index, Offset: offset, Data: piece, ChunkHash: blake3hash.New().SumBytes(piece),

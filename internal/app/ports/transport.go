@@ -9,6 +9,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // Transport errors. Adapters wrap these so callers can use errors.Is.
@@ -89,13 +90,25 @@ type HelloInfo struct {
 	Folders  []FolderAdvert
 }
 
-// ChunkRequest asks a peer for one chunk of a file.
+// ChunkRequest asks a peer for one chunk of a file. Since chunking became
+// content-defined the request carries the boundary itself: the receiver got it
+// from the sender's chunk list, so neither side derives it from a size.
 type ChunkRequest struct {
-	FolderID  folder.ID
-	Path      string
-	Hash      manifest.Hash
-	Index     int
-	ChunkSize int
+	FolderID folder.ID
+	Path     string
+	Hash     manifest.Hash
+	Index    int
+	Offset   int64
+	Length   int
+}
+
+// ChunkListRequest asks a peer how it cut a file. Hash is the whole-file hash
+// the receiver is downloading, so a file that moved on is refused rather than
+// described in two inconsistent halves.
+type ChunkListRequest struct {
+	FolderID folder.ID
+	Path     string
+	Hash     manifest.Hash
 }
 
 // ChunkData is one chunk of file content returned by a peer.
@@ -137,6 +150,10 @@ type PeerConn interface {
 	RemoteHello() HelloInfo
 	Ping(ctx context.Context) (time.Duration, error)
 	RequestManifest(ctx context.Context, id folder.ID) (manifest.Manifest, error)
+	// RequestChunks returns how the peer cut a file: one entry per chunk,
+	// with its offset, its length and its hash. It returns a *ChunkError
+	// when the peer refuses the request.
+	RequestChunks(ctx context.Context, req ChunkListRequest) ([]transfer.Chunk, error)
 	// RequestChunk returns a *ChunkError when the peer refuses the request.
 	RequestChunk(ctx context.Context, req ChunkRequest) (ChunkData, error)
 	// Notifications reports folders the peer says have changed.
@@ -175,6 +192,7 @@ type PeerHandler interface {
 	// answered with no folders.
 	Hello(ctx context.Context, peer device.ID) HelloInfo
 	Manifest(ctx context.Context, peer device.ID, id folder.ID) (manifest.Manifest, error)
+	Chunks(ctx context.Context, peer device.ID, req ChunkListRequest) ([]transfer.Chunk, error)
 	Chunk(ctx context.Context, peer device.ID, req ChunkRequest) (ChunkData, error)
 }
 

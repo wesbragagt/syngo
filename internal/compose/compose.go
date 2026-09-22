@@ -250,10 +250,10 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 	}
 	if identity != nil {
 		app.Status = status.New(store, identity, clock, dir)
-		app.Scan = scan.New(fs, app.Hasher, store, clock, identity, events, logger)
+		app.Scan = scan.New(fs, app.Hasher, store, clock, identity, events, cfg.ChunkSize, logger)
 		app.Repair = repair.New(fs, app.Hasher, store, clock, identity)
 
-		handler := syncer.New(store, fs, app.Hasher, identity, logger)
+		handler := syncer.New(store, fs, app.Hasher, identity, cfg.ChunkSize, logger)
 		handler.SetUploadLimiter(upload)
 		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, identity, events,
 			syncer.PullerConfig{ChunkSize: cfg.ChunkSize, Download: download}, logger)

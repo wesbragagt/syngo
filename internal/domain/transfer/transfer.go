@@ -10,7 +10,9 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
-// Chunk sizing limits.
+// Chunk sizing. Since content-defined chunking the configured size is the
+// average a folder aims for, not the length of every chunk: the chunker cuts
+// between a quarter and four times it, wherever the content says.
 const (
 	DefaultChunkSize = 1 << 20
 	MinChunkSize     = 4096
@@ -54,11 +56,21 @@ type Transfer struct {
 	UpdatedAt time.Time
 }
 
-// NewInbound builds a pending transfer for entry e, with one unverified chunk
-// per chunk of the file.
-func NewInbound(id ID, f folder.ID, e manifest.Entry, peer device.ID, chunkSize int, tempPath string, now time.Time) Transfer {
+// NewInbound builds a pending transfer for entry e over the chunk list the
+// sender announced. Every chunk starts unverified, keeping the hash the sender
+// gave it: that hash is what the receiver looks up in what it already holds
+// before asking for the bytes, and what it checks the bytes against either way.
+//
+// chunkSize is the average this device asked for, recorded for the journal
+// only; the boundaries are the sender's.
+func NewInbound(id ID, f folder.ID, e manifest.Entry, peer device.ID, chunks []Chunk,
+	chunkSize int, tempPath string, now time.Time) Transfer {
 	if chunkSize < MinChunkSize {
 		chunkSize = DefaultChunkSize
+	}
+	owned := make([]Chunk, len(chunks))
+	for i, c := range chunks {
+		owned[i] = Chunk{Index: i, Offset: c.Offset, Length: c.Length, Hash: c.Hash}
 	}
 	return Transfer{
 		ID:        id,
@@ -72,7 +84,7 @@ func NewInbound(id ID, f folder.ID, e manifest.Entry, peer device.ID, chunkSize 
 		ChunkSize: chunkSize,
 		TempPath:  tempPath,
 		State:     StatePending,
-		Chunks:    newChunks(e.Size, chunkSize),
+		Chunks:    owned,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -122,10 +134,12 @@ func (t *Transfer) MarkVerified(idx int, h manifest.Hash, now time.Time) error {
 	return nil
 }
 
-// ResetChunks clears all verification state, for when the partial file is lost.
+// ResetChunks clears the verification state, for when the partial file is
+// lost. The hashes stay: they are what the sender announced, not what this
+// device measured, so they are still the list of what has to be found or
+// fetched.
 func (t *Transfer) ResetChunks() {
 	for i := range t.Chunks {
-		t.Chunks[i].Hash = manifest.Hash{}
 		t.Chunks[i].Verified = false
 	}
 }

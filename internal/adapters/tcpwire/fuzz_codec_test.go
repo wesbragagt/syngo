@@ -105,15 +105,15 @@ func FuzzManifestReply(f *testing.F) {
 // request carries a hash that round-trips through its text form.
 func FuzzChunkRequest(f *testing.F) {
 	seeds := []string{
-		`{"folder_id":"photos","path":"a.txt","hash":"` + strings.Repeat("ab", 32) + `","index":0,"chunk_size":262144}`,
-		`{"folder_id":"photos","path":"a.txt","hash":"","index":0,"chunk_size":0}`,
+		`{"folder_id":"photos","path":"a.txt","hash":"` + strings.Repeat("ab", 32) + `","index":0,"offset":0,"length":262144}`,
+		`{"folder_id":"photos","path":"a.txt","hash":"","index":0,"offset":0,"length":0}`,
 		// Known-bad shapes.
 		``,
 		`{`,
 		`{"hash":"zz"}`,
 		`{"hash":"` + strings.Repeat("ab", 31) + `"}`,
 		`{"path":"../escape","hash":""}`,
-		`{"index":-1,"chunk_size":-1,"hash":""}`,
+		`{"index":-1,"offset":-1,"length":-1,"hash":""}`,
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -148,7 +148,7 @@ func FuzzChunkRequest(f *testing.F) {
 			t.Fatalf("chunk request hash %q does not round-trip through %q", h.Hash, text)
 		}
 		if got := toWireChunkRequest(req); got.Path != h.Path || got.Hash != text ||
-			got.Index != h.Index || got.ChunkSize != h.ChunkSize {
+			got.Index != h.Index || got.Offset != h.Offset || got.Length != h.Length {
 			t.Fatalf("chunk request did not round-trip: %+v, want %+v", got, h)
 		}
 	})
@@ -159,9 +159,9 @@ func FuzzChunkRequest(f *testing.F) {
 // folder list.
 func FuzzHelloHeader(f *testing.F) {
 	seeds := []string{
-		`{"protocol_version":2,"device_id":"` + fuzzDeviceID + `","device_name":"laptop",` +
+		`{"protocol_version":3,"device_id":"` + fuzzDeviceID + `","device_name":"laptop",` +
 			`"folders":[{"id":"photos","mode":"sendreceive"}]}`,
-		`{"protocol_version":2,"device_id":"` + fuzzDeviceID + `","device_name":"","folders":null}`,
+		`{"protocol_version":3,"device_id":"` + fuzzDeviceID + `","device_name":"","folders":null}`,
 		// Known-bad shapes.
 		``,
 		`{}`,

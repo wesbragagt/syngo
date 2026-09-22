@@ -92,11 +92,34 @@ func TestChunk_UnauthorizedPeerIsRefusedAsUnknown(t *testing.T) {
 	stranger := s.stranger(t)
 
 	_, err := s.server.Chunk(ctx, stranger, ports.ChunkRequest{
-		FolderID: s.folder.ID, Path: entry.Path, Hash: entry.Hash, Index: 0, ChunkSize: 1 << 16,
+		FolderID: s.folder.ID, Path: entry.Path, Hash: entry.Hash,
+		Index: 0, Offset: 0, Length: int(entry.Size),
 	})
 	var refusal *ports.ChunkError
 	if !errors.As(err, &refusal) || refusal.Reason != ports.ChunkFolderUnknown {
 		t.Fatalf("chunk for an unauthorized peer = %v, want a %s refusal", err, ports.ChunkFolderUnknown)
+	}
+}
+
+// TestChunks_UnauthorizedPeerIsRefusedAsUnknown covers the request that came
+// with content-defined chunking: the chunk list is content too, since the
+// boundaries describe the bytes. It is refused for an unauthorized peer
+// exactly as the content itself is.
+func TestChunks_UnauthorizedPeerIsRefusedAsUnknown(t *testing.T) {
+	ctx := context.Background()
+	s := newSource(t, folder.ModeSendReceive)
+	entry := s.addFile(t, "secret.txt", []byte("not yours"))
+	stranger := s.stranger(t)
+
+	chunks, err := s.server.Chunks(ctx, stranger, ports.ChunkListRequest{
+		FolderID: s.folder.ID, Path: entry.Path, Hash: entry.Hash,
+	})
+	if len(chunks) != 0 {
+		t.Fatalf("chunk list for an unauthorized peer = %+v, want nothing", chunks)
+	}
+	var refusal *ports.ChunkError
+	if !errors.As(err, &refusal) || refusal.Reason != ports.ChunkFolderUnknown {
+		t.Fatalf("chunk list for an unauthorized peer = %v, want a %s refusal", err, ports.ChunkFolderUnknown)
 	}
 }
 
@@ -120,11 +143,18 @@ func TestSendable_RevokingTakesEffectOnTheNextRequest(t *testing.T) {
 		t.Fatalf("manifest after the revocation = %v, want ErrFolderUnknown", err)
 	}
 	_, err := s.server.Chunk(ctx, askerID, ports.ChunkRequest{
-		FolderID: s.folder.ID, Path: entry.Path, Hash: entry.Hash, Index: 0, ChunkSize: 1 << 16,
+		FolderID: s.folder.ID, Path: entry.Path, Hash: entry.Hash,
+		Index: 0, Offset: 0, Length: int(entry.Size),
 	})
 	var refusal *ports.ChunkError
 	if !errors.As(err, &refusal) || refusal.Reason != ports.ChunkFolderUnknown {
 		t.Fatalf("chunk after the revocation = %v, want a %s refusal", err, ports.ChunkFolderUnknown)
+	}
+	_, err = s.server.Chunks(ctx, askerID, ports.ChunkListRequest{
+		FolderID: s.folder.ID, Path: entry.Path, Hash: entry.Hash,
+	})
+	if !errors.As(err, &refusal) || refusal.Reason != ports.ChunkFolderUnknown {
+		t.Fatalf("chunk list after the revocation = %v, want a %s refusal", err, ports.ChunkFolderUnknown)
 	}
 	// The other device keeps what it was granted.
 	if _, err := s.server.Manifest(ctx, fakes.SelfID, s.folder.ID); err != nil {

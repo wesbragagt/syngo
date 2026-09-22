@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/chunker"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/ignore"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 const (
@@ -85,6 +87,12 @@ type walker struct {
 	cur     manifest.Manifest
 	result  *Result
 	visited int
+	// indexed are the paths the chunk index already covers, so an unchanged
+	// file is not read again just to describe how it is cut.
+	indexed map[string]struct{}
+	// chunks is how this walk cut each file it read, by path. It becomes
+	// the chunk index of the folder.
+	chunks map[string][]transfer.Chunk
 }
 
 // collect walks the subtree sub of the folder root, adding every entry that
@@ -183,22 +191,24 @@ func (w *walker) addSymlink(rel string, info ports.FileInfo) error {
 	return nil
 }
 
-// addFile records a file, hashing it unless the stored entry still matches
-// what is on disk.
+// addFile records a file, reading it unless the stored entry still matches what
+// is on disk and the chunk index already covers it. One read produces both the
+// whole-file hash and the chunk list: the file is cut as it streams past.
 func (w *walker) addFile(rel string, info ports.FileInfo) error {
 	e := manifest.Entry{
 		Path: rel, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime,
 		Mode: uint32(info.Mode.Perm()), Inode: info.Inode,
 	}
 
-	if prev, ok := w.old.Entries[rel]; ok && unchanged(prev, info) {
+	_, covered := w.indexed[rel]
+	if prev, ok := w.old.Entries[rel]; ok && unchanged(prev, info) && (covered || info.Size == 0) {
 		e.Hash = prev.Hash
 		e.SyncedMode = prev.SyncedMode
 		w.add(w.carrying(e))
 		return nil
 	}
 
-	hash, err := w.hash(path.Join(w.folder.Path, rel))
+	hash, chunks, err := w.hashAndChunk(path.Join(w.folder.Path, rel))
 	if err != nil {
 		w.skip(rel, err)
 		return nil
@@ -207,25 +217,45 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 	if prev, ok := w.old.Entries[rel]; ok {
 		e.SyncedMode = prev.SyncedMode
 	}
+	w.chunks[rel] = chunks
 	w.result.Hashed++
 	w.result.Bytes += info.Size
 	w.add(w.carrying(e))
 	return nil
 }
 
-// hash reads a file and returns the hash of its contents.
-func (w *walker) hash(p string) (manifest.Hash, error) {
+// hashAndChunk reads a file once and returns both the hash of its contents and
+// how the chunker cut it, each chunk with its own hash.
+//
+// The whole-file hash is fed from the same chunks, so it is the hash of exactly
+// the bytes the chunk list describes: a file that changes under the read cannot
+// produce a hash and a chunk list that disagree.
+func (w *walker) hashAndChunk(p string) (manifest.Hash, []transfer.Chunk, error) {
 	rc, err := w.scanner.fs.Open(p)
 	if err != nil {
-		return manifest.Hash{}, err
+		return manifest.Hash{}, nil, err
 	}
 	defer func() { _ = rc.Close() }()
 
-	h, err := w.scanner.hasher.Sum(rc)
+	whole := w.scanner.hasher.Stream()
+	var chunks []transfer.Chunk
+	err = chunker.Split(rc, w.scanner.chunks, func(span chunker.Span, data []byte) error {
+		if _, werr := whole.Write(data); werr != nil {
+			return werr
+		}
+		if len(chunks) >= transfer.MaxChunks {
+			return fmt.Errorf("%s: more than %d chunks", p, transfer.MaxChunks)
+		}
+		chunks = append(chunks, transfer.Chunk{
+			Index: span.Index, Offset: span.Offset, Length: span.Length,
+			Hash: w.scanner.hasher.SumBytes(data),
+		})
+		return nil
+	})
 	if err != nil {
-		return manifest.Hash{}, fmt.Errorf("hash %s: %w", p, err)
+		return manifest.Hash{}, nil, fmt.Errorf("hash %s: %w", p, err)
 	}
-	return h, nil
+	return whole.Sum(), chunks, nil
 }
 
 // skip records an entry the scan could not read. The stored version, if there

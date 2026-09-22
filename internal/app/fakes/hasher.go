@@ -2,8 +2,10 @@ package fakes
 
 import (
 	"crypto/sha256"
+	"hash"
 	"io"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
@@ -23,6 +25,22 @@ func (Hasher) Sum(r io.Reader) (manifest.Hash, error) {
 	var out manifest.Hash
 	copy(out[:], h.Sum(nil))
 	return out, nil
+}
+
+// Stream returns an incremental SHA-256 digest.
+func (Hasher) Stream() ports.Stream { return &stream{h: sha256.New()} }
+
+// stream is an incremental SHA-256 digest.
+type stream struct{ h hash.Hash }
+
+// Write adds bytes to the digest. It never fails.
+func (s *stream) Write(p []byte) (int, error) { return s.h.Write(p) }
+
+// Sum returns the hash of everything written so far.
+func (s *stream) Sum() manifest.Hash {
+	var out manifest.Hash
+	copy(out[:], s.h.Sum(nil))
+	return out
 }
 
 // SumBytes returns the hash of b.

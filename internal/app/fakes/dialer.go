@@ -10,6 +10,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // PeerScript is what a fake dialer answers for one address.
@@ -143,11 +144,12 @@ type PeerConn struct {
 	Handler ports.PeerHandler
 	Latency time.Duration
 
-	mu        sync.Mutex
-	pings     int
-	closed    bool
-	manifests []folder.ID
-	chunks    []ports.ChunkRequest
+	mu         sync.Mutex
+	pings      int
+	closed     bool
+	manifests  []folder.ID
+	chunks     []ports.ChunkRequest
+	chunkLists []ports.ChunkListRequest
 
 	changes   chan folder.ID
 	done      chan struct{}
@@ -204,6 +206,28 @@ func (c *PeerConn) RequestManifest(ctx context.Context, id folder.ID) (manifest.
 		return manifest.Manifest{}, errors.New("this fake peer serves no manifests")
 	}
 	return handler.Manifest(ctx, SelfID, id)
+}
+
+// RequestChunks returns how the handler cut a file.
+func (c *PeerConn) RequestChunks(ctx context.Context, req ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	c.mu.Lock()
+	c.chunkLists = append(c.chunkLists, req)
+	handler := c.Handler
+	c.mu.Unlock()
+	if handler == nil {
+		return nil, errors.New("this fake peer serves no chunks")
+	}
+	// Asked as SelfID, the device on this side of the connection, exactly
+	// as the manifest and the chunk requests are: the chunk list is served
+	// to whoever is asking, not to the device being asked.
+	return handler.Chunks(ctx, SelfID, req)
+}
+
+// ChunkListRequests returns every chunk list request the connection carried.
+func (c *PeerConn) ChunkListRequests() []ports.ChunkListRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]ports.ChunkListRequest(nil), c.chunkLists...)
 }
 
 // RequestChunk returns one chunk from the handler.

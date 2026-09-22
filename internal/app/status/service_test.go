@@ -39,7 +39,9 @@ func newService(t *testing.T) (*status.Service, *fakes.Store) {
 		t.Fatalf("SaveDevice error: %v", err)
 	}
 	big := manifest.Entry{Path: "big.iso", Kind: manifest.KindFile, Size: 2 * transfer.MinChunkSize, ModTime: at}
-	tr := transfer.NewInbound("t1", "docs", big, "PEERID", transfer.MinChunkSize, "/tmp/t1.part", at)
+	tr := transfer.NewInbound("t1", "docs", big, "PEERID",
+		transfer.FixedChunks(big.Size, transfer.MinChunkSize), transfer.MinChunkSize,
+		"/tmp/t1.part", at)
 	tr.State = transfer.StateActive
 	if err := tr.MarkVerified(0, manifest.Hash{1}, at); err != nil {
 		t.Fatalf("MarkVerified error: %v", err)

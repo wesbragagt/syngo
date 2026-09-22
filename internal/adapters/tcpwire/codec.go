@@ -1,22 +1,27 @@
 package tcpwire
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/chunker"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
-// ProtocolVersion is the only version this implementation speaks. Version 2
-// carries a version vector on every manifest entry; a version-1 peer sends
-// none, and a receiver cannot order its entries, so the versions do not
+// ProtocolVersion is the only version this implementation speaks. Version 3
+// carries chunk boundaries: chunking is content-defined, so the sender says
+// where it cut a file and a chunk request names a byte range rather than an
+// index and a chunk size. A version-2 peer derives boundaries from a size and
+// would answer a range request with the wrong bytes, so the versions do not
 // interoperate and every device of a mesh upgrades together.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 // Reasons a connection is rejected during the handshake.
 const (
@@ -192,13 +197,81 @@ type manifestChangedHeader struct {
 	Sequence uint64 `json:"sequence"`
 }
 
-// chunkRequestHeader is the ChunkRequest frame header.
+// chunkRequestHeader is the ChunkRequest frame header. The byte range is the
+// one the sender announced in its chunk list; neither side derives it from a
+// size.
 type chunkRequestHeader struct {
-	FolderID  string `json:"folder_id"`
-	Path      string `json:"path"`
-	Hash      string `json:"hash"`
-	Index     int    `json:"index"`
-	ChunkSize int    `json:"chunk_size"`
+	FolderID string `json:"folder_id"`
+	Path     string `json:"path"`
+	Hash     string `json:"hash"`
+	Index    int    `json:"index"`
+	Offset   int64  `json:"offset"`
+	Length   int    `json:"length"`
+}
+
+// chunkListRequestHeader is the ChunkListRequest frame header.
+type chunkListRequestHeader struct {
+	FolderID string `json:"folder_id"`
+	Path     string `json:"path"`
+	Hash     string `json:"hash"`
+}
+
+// chunkListReplyHeader is the ChunkListReply frame header. The list itself is
+// the payload: a 10 GiB file is ten thousand chunks at the default size, and
+// JSON would spend three times the bytes and the parse time on them.
+type chunkListReplyHeader struct {
+	FolderID string `json:"folder_id"`
+	Path     string `json:"path"`
+	Count    int    `json:"count"`
+}
+
+// chunkEntrySize is how many bytes one chunk takes in a ChunkListReply payload:
+// a big-endian uint32 length followed by the 32-byte hash. The offsets and the
+// indexes are not sent: chunks are contiguous and in order, so both follow.
+const chunkEntrySize = 4 + manifest.HashSize
+
+// encodeChunkList packs a chunk list into a ChunkListReply payload.
+func encodeChunkList(chunks []transfer.Chunk) []byte {
+	out := make([]byte, 0, len(chunks)*chunkEntrySize)
+	for _, c := range chunks {
+		out = binary.BigEndian.AppendUint32(out, uint32(c.Length))
+		out = append(out, c.Hash[:]...)
+	}
+	return out
+}
+
+// ErrMalformedChunkList reports a ChunkListReply whose payload does not hold
+// the announced number of chunks, or whose chunks are not usable.
+var ErrMalformedChunkList = errors.New("malformed chunk list")
+
+// decodeChunkList unpacks a ChunkListReply payload, rebuilding the offset and
+// the index of every chunk from the order they arrive in. maxChunks is the
+// largest list the caller accepts; the count is read before the payload is
+// walked, so a peer cannot make this device allocate more than that.
+func decodeChunkList(h chunkListReplyHeader, payload []byte, maxChunks int) ([]transfer.Chunk, error) {
+	switch {
+	case h.Count < 0 || h.Count > maxChunks:
+		return nil, fmt.Errorf("%w: %d chunks, the limit is %d", ErrMalformedChunkList, h.Count, maxChunks)
+	case len(payload) != h.Count*chunkEntrySize:
+		return nil, fmt.Errorf("%w: %d chunks announced, payload has %d bytes",
+			ErrMalformedChunkList, h.Count, len(payload))
+	}
+	chunks := make([]transfer.Chunk, 0, h.Count)
+	var offset int64
+	for i := range h.Count {
+		entry := payload[i*chunkEntrySize:]
+		length := int64(binary.BigEndian.Uint32(entry[:4]))
+		if length <= 0 || length > chunker.MaxSize {
+			return nil, fmt.Errorf("%w: chunk %d is %d bytes", ErrMalformedChunkList, i, length)
+		}
+		var hash manifest.Hash
+		copy(hash[:], entry[4:chunkEntrySize])
+		chunks = append(chunks, transfer.Chunk{
+			Index: i, Offset: offset, Length: int(length), Hash: hash,
+		})
+		offset += length
+	}
+	return chunks, nil
 }
 
 // chunkDataHeader is the ChunkData frame header; the payload is the chunk.
@@ -330,11 +403,12 @@ func wireCounters(m map[string]uint64) []manifest.Counter {
 // toWireChunkRequest converts a chunk request into its wire form.
 func toWireChunkRequest(req ports.ChunkRequest) chunkRequestHeader {
 	return chunkRequestHeader{
-		FolderID:  string(req.FolderID),
-		Path:      req.Path,
-		Hash:      req.Hash.String(),
-		Index:     req.Index,
-		ChunkSize: req.ChunkSize,
+		FolderID: string(req.FolderID),
+		Path:     req.Path,
+		Hash:     req.Hash.String(),
+		Index:    req.Index,
+		Offset:   req.Offset,
+		Length:   req.Length,
 	}
 }
 
@@ -345,10 +419,11 @@ func fromWireChunkRequest(h chunkRequestHeader) (ports.ChunkRequest, error) {
 		return ports.ChunkRequest{}, fmt.Errorf("chunk request for %q: %w", h.Path, err)
 	}
 	return ports.ChunkRequest{
-		FolderID:  folder.ID(h.FolderID),
-		Path:      h.Path,
-		Hash:      hash,
-		Index:     h.Index,
-		ChunkSize: h.ChunkSize,
+		FolderID: folder.ID(h.FolderID),
+		Path:     h.Path,
+		Hash:     hash,
+		Index:    h.Index,
+		Offset:   h.Offset,
+		Length:   h.Length,
 	}, nil
 }

@@ -650,7 +650,13 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 				"folder", f.ID, "path", item.Path, "source", source.from, "error", err)
 		}
 	}
-	t, err := p.transferFor(ctx, f, item, conn.RemoteID())
+	// Whatever the whole-file copy did not satisfy falls through to a
+	// chunk-by-chunk pull, which tries this device's own chunks first.
+	chunks, err := p.chunkList(ctx, conn, f, item)
+	if err != nil {
+		return 0, err
+	}
+	t, err := p.transferFor(ctx, f, item, conn.RemoteID(), chunks)
 	if err != nil {
 		return 0, err
 	}
@@ -675,6 +681,17 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 	for _, a := range installed {
 		if err := p.record(ctx, f.ID, a); err != nil {
 			return 0, err
+		}
+		// The download is the one moment this device knows how a file
+		// is cut without reading it: every chunk was verified against
+		// the hash the sender announced. Indexing here is what lets the
+		// next file that shares content with this one take it from
+		// disk, without waiting for a scan.
+		if a.entry.Kind == manifest.KindFile && !a.entry.Deleted &&
+			a.entry.Hash == t.Hash && a.entry.Size == t.Size {
+			if err := p.store.SetFileChunks(ctx, f.ID, a.entry.Path, t.Chunks); err != nil {
+				return 0, err
+			}
 		}
 	}
 	if err := p.store.SetTransferState(ctx, t.ID, transfer.StateDone, "", p.clock.Now()); err != nil {
@@ -816,19 +833,42 @@ func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
 	return []arrived{fromRemote(entry, item, peer)}, nil
 }
 
+// chunkList asks the peer how it cut the file this item wants. Boundaries are
+// content-defined, so only the side holding the bytes knows where they fall;
+// the list is what the receiver looks its own content up in and what it asks
+// for the rest by.
+//
+// The peer supplies it, so it is checked against the size the peer announced
+// before anything is built from it: a list that does not partition the file, or
+// one longer than a transfer may be, refuses this file alone.
+func (p *Puller) chunkList(ctx context.Context, conn ports.PeerConn, f folder.Folder,
+	item syncplan.Item) ([]transfer.Chunk, error) {
+	remote := *item.Remote
+	if remote.Size == 0 {
+		return nil, nil
+	}
+	chunks, err := conn.RequestChunks(ctx, ports.ChunkListRequest{
+		FolderID: f.ID, Path: item.Path, Hash: remote.Hash,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(chunks) > transfer.MaxChunks {
+		return nil, fmt.Errorf("%s: %d chunks, the limit is %d: %w",
+			item.Path, len(chunks), transfer.MaxChunks, ErrTooManyChunks)
+	}
+	if err := transfer.ValidateChunks(remote.Size, chunks); err != nil {
+		return nil, fmt.Errorf("chunk list of %s: %w: %w", item.Path, err, ErrIntegrity)
+	}
+	return chunks, nil
+}
+
 // transferFor returns the journal entry to continue, or starts a new one. A
 // live transfer for another version of the same path is given up on first,
 // because only one transfer per path may be live.
 func (p *Puller) transferFor(ctx context.Context, f folder.Folder, item syncplan.Item,
-	peer device.ID) (transfer.Transfer, error) {
+	peer device.ID, chunks []transfer.Chunk) (transfer.Transfer, error) {
 	remote := *item.Remote
-	// The chunk list is built from the size the peer announced, and every
-	// chunk becomes a journal row, so a file that would need more chunks
-	// than a transfer may have is refused before anything is allocated.
-	if n := transfer.ChunkCount(remote.Size, p.chunkSize); n > transfer.MaxChunks {
-		return transfer.Transfer{}, fmt.Errorf("%s: %d chunks, the limit is %d: %w",
-			item.Path, n, transfer.MaxChunks, ErrTooManyChunks)
-	}
 	existing, err := p.store.FindLiveTransfer(ctx, f.ID, item.Path)
 	switch {
 	case err == nil:
@@ -857,7 +897,7 @@ func (p *Puller) transferFor(ctx context.Context, f folder.Folder, item syncplan
 		return transfer.Transfer{}, err
 	}
 
-	t := transfer.NewInbound(id, f.ID, remote, peer, p.chunkSize, tempPath, p.clock.Now())
+	t := transfer.NewInbound(id, f.ID, remote, peer, chunks, p.chunkSize, tempPath, p.clock.Now())
 	if err := p.store.SaveTransfer(ctx, t); err != nil {
 		return transfer.Transfer{}, err
 	}
@@ -908,8 +948,10 @@ func (p *Puller) resume(ctx context.Context, t *transfer.Transfer) error {
 			return fmt.Errorf("read %s at %d: %w", t.TempPath, c.Offset, err)
 		}
 		if len(data) != c.Length || p.hasher.SumBytes(data) != c.Hash {
+			// The hash stays: it is what the sender announced the
+			// chunk should be, so it is still what has to be found
+			// locally or fetched.
 			t.Chunks[i].Verified = false
-			t.Chunks[i].Hash = manifest.Hash{}
 			changed = true
 		}
 	}
@@ -950,17 +992,29 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 			return ErrOutsideWindow
 		}
 		chunk := t.Chunks[idx]
-		// The budget is taken before the request, not after the reply:
-		// a peer that is never asked sends nothing, so nothing has to
-		// be buffered here while the limit is waited out.
-		if p.download != nil {
-			if err := p.download.Wait(ctx, chunk.Length); err != nil {
-				return err
-			}
-		}
-		data, err := p.chunk(ctx, conn, *t, chunk)
+		// What this device already holds is never asked for. The
+		// lookup is by chunk hash across every folder, so another
+		// version of this file, another file, or a file of a different
+		// folder all answer it.
+		data, err := p.localChunk(ctx, chunk)
 		if err != nil {
 			return err
+		}
+		if data == nil {
+			// The budget is taken before the request, not after the
+			// reply: a peer that is never asked sends nothing, so
+			// nothing has to be buffered here while the limit is
+			// waited out. Bytes taken from the local disk cost the
+			// network nothing and are not charged.
+			if p.download != nil {
+				if err := p.download.Wait(ctx, chunk.Length); err != nil {
+					return err
+				}
+			}
+			data, err = p.chunk(ctx, conn, *t, chunk)
+			if err != nil {
+				return err
+			}
 		}
 		if _, err := temp.WriteAt(data, chunk.Offset); err != nil {
 			return fmt.Errorf("write %s at %d: %w", t.TempPath, chunk.Offset, err)
@@ -994,13 +1048,57 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 	return nil
 }
 
+// localChunk looks a chunk up in what this device already holds and returns
+// its bytes, or nil when the content is not here. This is the deduplication:
+// content already on this disk is copied from it instead of being pulled,
+// whatever file and whatever folder it sits in.
+//
+// The index is only as fresh as the last scan, so the bytes are read back and
+// hashed before they are used. A stale row, a file that changed since, a file
+// that is gone: all of them cost one read and then fall through to the peer.
+func (p *Puller) localChunk(ctx context.Context, c transfer.Chunk) ([]byte, error) {
+	if c.Hash.IsZero() {
+		return nil, nil
+	}
+	place, err := p.store.FindChunk(ctx, c.Hash)
+	if errors.Is(err, ports.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if place.Length != c.Length {
+		return nil, nil
+	}
+	f, err := p.store.GetFolder(ctx, place.FolderID)
+	if err != nil {
+		// The folder the index named is gone; the chunk comes from the
+		// peer like any other.
+		return nil, nil
+	}
+	data, err := p.fs.ReadAt(path.Join(f.Path, place.Path), place.Offset, place.Length)
+	if err != nil || len(data) != c.Length || p.hasher.SumBytes(data) != c.Hash {
+		p.log.Debug("chunk index row did not hold the content it named",
+			"folder", place.FolderID, "path", place.Path, "offset", place.Offset)
+		return nil, nil
+	}
+	p.log.Debug("chunk taken from local content", "folder", place.FolderID,
+		"path", place.Path, "offset", place.Offset, "length", place.Length)
+	p.publish("transfer.chunk_deduplicated", map[string]any{
+		"folder_id": string(place.FolderID), "path": place.Path,
+		"offset": place.Offset, "length": place.Length,
+	})
+	return data, nil
+}
+
 // chunk asks the peer for one chunk and verifies it before it is written. A
 // chunk that does not hash to what the peer announced is asked for again; a
 // peer that keeps sending broken data fails the transfer.
 func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Transfer,
 	c transfer.Chunk) ([]byte, error) {
 	req := ports.ChunkRequest{
-		FolderID: t.FolderID, Path: t.Path, Hash: t.Hash, Index: c.Index, ChunkSize: t.ChunkSize,
+		FolderID: t.FolderID, Path: t.Path, Hash: t.Hash,
+		Index: c.Index, Offset: c.Offset, Length: c.Length,
 	}
 
 	var last error
@@ -1016,6 +1114,11 @@ func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Tran
 		case p.hasher.SumBytes(data.Data) != data.ChunkHash:
 			last = fmt.Errorf("chunk %d of %s: content does not match its hash: %w",
 				c.Index, t.Path, ErrIntegrity)
+		case !c.Hash.IsZero() && data.ChunkHash != c.Hash:
+			// The chunk list said what this chunk hashes to, so
+			// bytes that hash to something else are not it.
+			last = fmt.Errorf("chunk %d of %s: hashes to %s, the chunk list said %s: %w",
+				c.Index, t.Path, data.ChunkHash, c.Hash, ErrIntegrity)
 		default:
 			return data.Data, nil
 		}

@@ -390,6 +390,22 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 		if err := markDeleted(ctx, tx, id, w.Deleted, w.By, w.At, w.CounterFloor); err != nil {
 			return err
 		}
+		// The chunk index goes in with the entries that describe the
+		// same bytes: a folder never records content it cannot say how
+		// it cut. A path the scan did not read keeps the rows it has.
+		for path, chunks := range w.Chunks {
+			if err := setFileChunks(ctx, tx, id, path, chunks); err != nil {
+				return err
+			}
+		}
+		// A tombstone keeps its file row, so the cascade does not fire
+		// and the index would go on offering bytes of a file that is
+		// gone.
+		for _, path := range w.Deleted {
+			if err := deleteFileChunks(ctx, tx, id, path); err != nil {
+				return err
+			}
+		}
 		if err := appendChanges(ctx, tx, id, w.Changes, w.At); err != nil {
 			return err
 		}

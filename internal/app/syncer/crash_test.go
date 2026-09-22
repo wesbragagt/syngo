@@ -20,6 +20,7 @@ func interruptAfter(src *source, n int, cancel context.CancelFunc) *fakes.PeerCo
 	served := 0
 	return fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(c context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			served++
 			if served > n {
@@ -120,7 +121,7 @@ func TestCrash_InstalledFileWithoutItsRowIsReconciledByScan(t *testing.T) {
 	d, conn := newDest(t, src.server)
 	d.fs.AddFile(d.folder.Path+"/big.bin", data, 0o644)
 
-	scanner := scan.New(d.fs, d.hasher, d.store, d.clock, fakes.NewIdentity("DEST", "dest"), d.events, nil)
+	scanner := scan.New(d.fs, d.hasher, d.store, d.clock, fakes.NewIdentity("DEST", "dest"), d.events, chunkSize, nil)
 	result, err := scanner.Scan(ctx, d.folder, scan.Options{})
 	if err != nil {
 		t.Fatalf("scan after the crash: %v", err)

@@ -22,6 +22,10 @@ import (
 // root is the folder path every test scans.
 const root = "/docs"
 
+// testChunkSize is the average chunk size these scans cut with. It is small so
+// a test fixture of a few kilobytes is still cut into several chunks.
+const testChunkSize = 4 << 10
+
 // countingHasher counts the files a scan actually reads, and optionally runs a
 // hook before each hash so a test can cancel mid-walk.
 type countingHasher struct {
@@ -37,6 +41,17 @@ func (h *countingHasher) Sum(r io.Reader) (manifest.Hash, error) {
 		h.before(h.calls)
 	}
 	return h.inner.Sum(r)
+}
+
+// Stream returns an incremental digest, counting the call. The scan reads a
+// file exactly once, cutting and hashing it as it streams past, so one stream
+// is one file read: the same event Sum used to count.
+func (h *countingHasher) Stream() ports.Stream {
+	h.calls++
+	if h.before != nil {
+		h.before(h.calls)
+	}
+	return h.inner.Stream()
 }
 
 // SumBytes hashes b.
@@ -80,7 +95,7 @@ func newEnv(t *testing.T, customize ...func(*folder.Folder)) *env {
 	if err := e.store.SaveFolder(context.Background(), f); err != nil {
 		t.Fatalf("save folder: %v", err)
 	}
-	e.scanner = scan.New(e.fs, e.hasher, e.store, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+	e.scanner = scan.New(e.fs, e.hasher, e.store, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, testChunkSize, nil)
 	return e
 }
 
@@ -517,7 +532,7 @@ func (f unreadableFS) Open(p string) (io.ReadCloser, error) {
 // scannerOver returns a scanner using fsys instead of the environment's own
 // filesystem, with everything else shared.
 func (e *env) scannerOver(fsys ports.FileSystem) *scan.Scanner {
-	return scan.New(fsys, e.hasher, e.store, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+	return scan.New(fsys, e.hasher, e.store, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, testChunkSize, nil)
 }
 
 // folderState returns the stored scan state of the environment's folder.
@@ -639,7 +654,7 @@ func TestScan_ConcurrentScansLogEachChangeOnce(t *testing.T) {
 	e.write("sub/b.txt", "beta")
 
 	hooked := &hookedStore{Store: e.store}
-	slow := scan.New(e.fs, e.hasher, hooked, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+	slow := scan.New(e.fs, e.hasher, hooked, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, testChunkSize, nil)
 	hooked.after = func() {
 		// A second scanner finishes completely while the first one is still
 		// walking the folder.
@@ -848,7 +863,7 @@ func TestScan_RetryAfterAConcurrentScanBumpsFromTheStoredVersion(t *testing.T) {
 	// the first has to re-diff against what that one wrote.
 	e.overwrite(t, "a.txt", "alpha two")
 	hooked := &hookedStore{Store: e.store}
-	slow := scan.New(e.fs, e.hasher, hooked, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, nil)
+	slow := scan.New(e.fs, e.hasher, hooked, e.clock, fakes.NewIdentity("DEV1", "test"), e.events, testChunkSize, nil)
 	hooked.after = func() {
 		if _, err := e.scanner.Scan(context.Background(), e.folder, scan.Options{}); err != nil {
 			t.Errorf("concurrent scan: %v", err)

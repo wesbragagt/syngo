@@ -63,7 +63,7 @@ func TestPull_WaitsForEveryChunkOnTheDownloadLimiter(t *testing.T) {
 	}
 
 	waits := limiter.Waits()
-	if want := transfer.ChunkCount(int64(len(data)), chunkSize); len(waits) != want {
+	if want := len(src.chunkList(t, "big.bin")); len(waits) != want {
 		t.Fatalf("%d waits, want one per chunk (%d)", len(waits), want)
 	}
 	total := 0
@@ -92,25 +92,33 @@ func TestPull_NilLimiterNeverWaits(t *testing.T) {
 
 func TestChunk_WaitsForItsLengthOnTheUploadLimiter(t *testing.T) {
 	src := newSource(t, folder.ModeSendReceive)
-	data := payload(chunkSize+9, 4)
+	data := payload(chunkSize*4+9, 4)
 	entry := src.addFile(t, "big.bin", data)
 
+	chunks := src.chunkList(t, "big.bin")
+	if len(chunks) < 2 {
+		t.Fatalf("the fixture is %d chunks, the test needs several", len(chunks))
+	}
 	limiter := fakes.NewLimiter()
 	src.server.SetUploadLimiter(limiter)
 
-	first, err := src.chunkOf(context.Background(), "big.bin", entry.Hash, 0)
-	if err != nil {
-		t.Fatalf("chunk 0: %v", err)
-	}
-	last, err := src.chunkOf(context.Background(), "big.bin", entry.Hash, 1)
-	if err != nil {
-		t.Fatalf("chunk 1: %v", err)
+	var want []int
+	for _, c := range chunks {
+		served, err := src.chunkOf(context.Background(), "big.bin", entry.Hash, c.Index)
+		if err != nil {
+			t.Fatalf("chunk %d: %v", c.Index, err)
+		}
+		want = append(want, len(served.Data))
 	}
 
-	want := []int{len(first.Data), len(last.Data)}
 	got := limiter.Waits()
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("waits = %v, want one per chunk of its own length %v", got, want)
+	if len(got) != len(want) {
+		t.Fatalf("waits = %v, want one per chunk %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("waits = %v, want one per chunk of its own length %v", got, want)
+		}
 	}
 }
 

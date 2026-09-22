@@ -208,6 +208,15 @@ func (l liar) Manifest(ctx context.Context, peer device.ID, id folder.ID) (manif
 	return m, nil
 }
 
+// Chunks describes the real file behind the announced hash, so the receiver
+// gets a usable chunk list and the lie is only found at the whole-file check.
+func (l liar) Chunks(ctx context.Context, peer device.ID, req ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	if req.Hash == l.fake {
+		req.Hash = l.real
+	}
+	return l.PeerHandler.Chunks(ctx, peer, req)
+}
+
 // Chunk serves the real bytes behind the announced hash.
 func (l liar) Chunk(ctx context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 	if req.Hash == l.fake {
@@ -217,10 +226,23 @@ func (l liar) Chunk(ctx context.Context, peer device.ID, req ports.ChunkRequest)
 }
 
 // payload returns n bytes of recognizable content.
+// payload returns n deterministic bytes.
+//
+// The bytes come from a splitmix64 recurrence rather than a counter, because
+// chunking is content-defined: a sequence that repeats every 256 bytes gives
+// the rolling hash the same window over and over, so it either cuts every 256
+// bytes or never, and a fixture meant to be several chunks long turns out to be
+// one. Pseudorandom bytes cut near the configured average, which is what a real
+// file does.
 func payload(n int, seed byte) []byte {
 	out := make([]byte, n)
+	state := uint64(seed) + 1
 	for i := range out {
-		out[i] = byte(i) ^ seed
+		state += 0x9e3779b97f4a7c15
+		z := state
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+		z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+		out[i] = byte(z ^ (z >> 31))
 	}
 	return out
 }
@@ -315,6 +337,7 @@ func TestSync_ResumeSkipsVerifiedChunks(t *testing.T) {
 	counted := 0
 	stopping := fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(c context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			counted++
 			if counted > 2 {
@@ -338,8 +361,8 @@ func TestSync_ResumeSkipsVerifiedChunks(t *testing.T) {
 	// The second cycle, after a restart, only asks for what is missing.
 	d.restart()
 	d.sync(t, conn)
-	if got := chunkIndexes(conn); len(got) != 2 || got[0] != 2 || got[1] != 3 {
-		t.Fatalf("second cycle asked for chunks %v, want [2 3]", got)
+	if got, want := chunkIndexes(conn), src.indexesFrom(t, "big.bin", 2); !sameIndexes(got, want) {
+		t.Fatalf("second cycle asked for chunks %v, want %v", got, want)
 	}
 	if string(d.content(t, "big.bin")) != string(data) {
 		t.Fatal("resumed file does not match the source")
@@ -359,6 +382,7 @@ func TestSync_ResumeRehashDetectsCorruptTemp(t *testing.T) {
 	counted := 0
 	stopping := fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(c context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			counted++
 			if counted > 2 {
@@ -380,13 +404,15 @@ func TestSync_ResumeRehashDetectsCorruptTemp(t *testing.T) {
 	if !ok {
 		t.Fatalf("partial file %s is missing", live.TempPath)
 	}
-	partial[chunkSize+3] ^= 0xff
+	// The byte is chosen inside the second chunk, wherever the chunker put
+	// its boundary.
+	partial[live.Chunks[1].Offset+3] ^= 0xff
 	d.fs.AddFile(live.TempPath, partial, 0o600)
 
 	d.restart()
 	d.sync(t, conn)
-	if got := chunkIndexes(conn); len(got) != 2 || got[0] != 1 || got[1] != 2 {
-		t.Fatalf("second cycle asked for chunks %v, want [1 2]: the damaged one and the missing one", got)
+	if got, want := chunkIndexes(conn), src.indexesFrom(t, "big.bin", 1); !sameIndexes(got, want) {
+		t.Fatalf("second cycle asked for chunks %v, want %v: the damaged one and the missing ones", got, want)
 	}
 	if string(d.content(t, "big.bin")) != string(data) {
 		t.Fatal("installed file does not match the source")
@@ -403,6 +429,7 @@ func TestSync_ResumeMissingTempResetsAll(t *testing.T) {
 	counted := 0
 	stopping := fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(c context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			counted++
 			if counted > 1 {
@@ -500,6 +527,7 @@ func TestSync_HashChangedOnSenderFailsCleanly(t *testing.T) {
 
 	d, conn := newDest(t, handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(c context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			if req.Index == 0 {
 				return src.server.Chunk(c, peer, req)
@@ -672,6 +700,7 @@ func TestSync_RefusesToInstallOverAFileThatChangedUnderneath(t *testing.T) {
 	d, conn := newDest(t, nil)
 	conn.Handler = handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(c context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			// The user writes the file while it is downloaded.
 			d.fs.AddFile(d.folder.Path+"/a.txt", []byte("written by the user"), 0o644)
@@ -710,7 +739,8 @@ func TestSync_NewTransferPrunesAnOlderFailedRow(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	stale := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
-		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
+		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
+		d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
 	stale.State = transfer.StateFailed
 	stale.Error = "chunk 1 did not hash right"
 	if err := d.store.SaveTransfer(ctx, stale); err != nil {
@@ -740,7 +770,8 @@ func TestResumeAll_PutsActiveTransfersBackToPending(t *testing.T) {
 	d, _ := newDest(t, src.server)
 	t0 := d.clock.Now()
 	stale := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
-		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/abc.part", t0)
+		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
+		d.folder.Path+"/.syncthis/tmp/abc.part", t0)
 	stale.State = transfer.StateActive
 	if err := d.store.SaveTransfer(ctx, stale); err != nil {
 		t.Fatalf("save transfer: %v", err)
@@ -765,7 +796,8 @@ func TestResumeAll_LeavesFailedRowsAlone(t *testing.T) {
 
 	d, _ := newDest(t, src.server)
 	failed := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
-		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
+		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
+		d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
 	failed.State = transfer.StateFailed
 	failed.Error = "chunk 1 did not hash right"
 	if err := d.store.SaveTransfer(ctx, failed); err != nil {
@@ -785,6 +817,10 @@ func TestResumeAll_LeavesFailedRowsAlone(t *testing.T) {
 type handlerFunc struct {
 	manifest func(context.Context, device.ID, folder.ID) (manifest.Manifest, error)
 	chunk    func(context.Context, device.ID, ports.ChunkRequest) (ports.ChunkData, error)
+	// chunks is optional: a handler that leaves it nil serves the chunk
+	// list of the source server it wraps, which is what nearly every test
+	// wants.
+	chunks func(context.Context, device.ID, ports.ChunkListRequest) ([]transfer.Chunk, error)
 }
 
 // Hello announces a single send-receive folder.
@@ -803,6 +839,11 @@ func (h handlerFunc) Manifest(ctx context.Context, peer device.ID, id folder.ID)
 // Chunk delegates to the configured function.
 func (h handlerFunc) Chunk(ctx context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 	return h.chunk(ctx, peer, req)
+}
+
+// Chunks delegates to the configured function.
+func (h handlerFunc) Chunks(ctx context.Context, peer device.ID, req ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	return h.chunks(ctx, peer, req)
 }
 
 func TestSync_MissingFolderRootPullsNothing(t *testing.T) {
@@ -1291,7 +1332,8 @@ func TestResumeAll_DropsFinishedRowsAndTheirTempFiles(t *testing.T) {
 	temp := d.folder.Path + "/.syncthis/tmp/abc.part"
 	d.fs.AddFile(temp, payload(chunkSize, 21), 0o600)
 	done := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
-		peerID, chunkSize, temp, d.clock.Now())
+		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
+		temp, d.clock.Now())
 	done.State = transfer.StateDone
 	if err := d.store.SaveTransfer(ctx, done); err != nil {
 		t.Fatalf("save transfer: %v", err)
@@ -1321,7 +1363,8 @@ func TestSync_DropsRowsTheNewPlanNoLongerWants(t *testing.T) {
 	temp := d.folder.Path + "/.syncthis/tmp/orphan.part"
 	d.fs.AddFile(temp, payload(chunkSize, 9), 0o600)
 	orphan := transfer.NewInbound("orphan", d.folder.ID, manifest.Entry{Path: "gone.bin", Size: chunkSize},
-		peerID, chunkSize, temp, d.clock.Now())
+		peerID, transfer.FixedChunks(chunkSize, chunkSize), chunkSize,
+		temp, d.clock.Now())
 	orphan.State = transfer.StatePending
 	if err := d.store.SaveTransfer(ctx, orphan); err != nil {
 		t.Fatalf("save transfer: %v", err)
@@ -1350,7 +1393,8 @@ func TestSync_KeepsFailedRowsOfPathsThePlanDropped(t *testing.T) {
 
 	d, conn := newDest(t, src.server)
 	failed := transfer.NewInbound("bad", d.folder.ID, manifest.Entry{Path: "gone.bin", Size: chunkSize},
-		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/bad.part", d.clock.Now())
+		peerID, transfer.FixedChunks(chunkSize, chunkSize), chunkSize,
+		d.folder.Path+"/.syncthis/tmp/bad.part", d.clock.Now())
 	failed.State = transfer.StateFailed
 	failed.Error = "chunk 0 did not hash right"
 	if err := d.store.SaveTransfer(ctx, failed); err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
 var _ ports.Listener = (*Listener)(nil)
@@ -347,6 +348,8 @@ func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 			reply, err = c.pong(frame)
 		case MsgManifestRequest:
 			reply, err = c.manifest(ctx, frame)
+		case MsgChunkListRequest:
+			reply, err = c.chunkList(ctx, frame)
 		case MsgChunkRequest:
 			reply, err = c.chunk(ctx, frame)
 		default:
@@ -386,6 +389,36 @@ func (c *serverConn) manifest(ctx context.Context, frame Frame) (Frame, error) {
 		return frameOf(MsgError, errorHeader{Code: errorCode(err), Message: err.Error()}, nil)
 	}
 	return frameOf(MsgManifestReply, toWireManifest(m), nil)
+}
+
+// chunkList answers a chunk list request, or reports why it cannot.
+func (c *serverConn) chunkList(ctx context.Context, frame Frame) (Frame, error) {
+	var header chunkListRequestHeader
+	if err := decodeHeader(frame, &header); err != nil {
+		return Frame{}, err
+	}
+	hash, err := manifest.ParseHash(header.Hash)
+	if err != nil {
+		return Frame{}, fmt.Errorf("chunk list request for %q: %w", header.Path, err)
+	}
+
+	chunks, err := c.handler.Chunks(ctx, c.remote, ports.ChunkListRequest{
+		FolderID: folder.ID(header.FolderID), Path: header.Path, Hash: hash,
+	})
+	var refused *ports.ChunkError
+	switch {
+	case errors.As(err, &refused):
+		return frameOf(MsgChunkError, chunkErrorHeader{
+			FolderID: string(refused.FolderID), Path: refused.Path,
+			Index: refused.Index, Reason: string(refused.Reason),
+		}, nil)
+	case err != nil:
+		c.log.Debug("chunk list refused", "folder", header.FolderID, "path", header.Path, "error", err)
+		return frameOf(MsgError, errorHeader{Code: errorCode(err), Message: err.Error()}, nil)
+	}
+	return frameOf(MsgChunkListReply, chunkListReplyHeader{
+		FolderID: header.FolderID, Path: header.Path, Count: len(chunks),
+	}, encodeChunkList(chunks))
 }
 
 // chunk answers a chunk request, or reports why it cannot.

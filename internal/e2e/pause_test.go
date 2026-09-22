@@ -76,7 +76,10 @@ func TestPause_HaltsTransferAndResumeCompletesIt(t *testing.T) {
 
 	// The resumed transfer asked for the missing chunks only, so every
 	// chunk of the file was verified exactly once.
-	total := transferChunks(hugeFileSize, testChunkSize)
+	// Chunking is content-defined, so how many chunks the file is depends
+	// on its bytes; the journal of the paused transfer says how many, and
+	// that is the number each of which must be verified exactly once.
+	total := paused.ChunksTotal
 	if verified := b.Events.Count("transfer.chunk_verified"); verified != total {
 		t.Fatalf("%d chunks verified in total, want %d: verified chunks were fetched again",
 			verified, total)

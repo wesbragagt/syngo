@@ -161,7 +161,9 @@ func TestFolders_CRUD_AndCascade(t *testing.T) {
 	if err := store.UpsertEntries(ctx, "docs", []manifest.Entry{entry}); err != nil {
 		t.Fatalf("UpsertEntries error: %v", err)
 	}
-	tr := transfer.NewInbound("t1", "docs", entry, "PEER", transfer.MinChunkSize, "/tmp/t1.part", testTime)
+	tr := transfer.NewInbound("t1", "docs", entry, "PEER",
+		transfer.FixedChunks(entry.Size, transfer.MinChunkSize), transfer.MinChunkSize,
+		"/tmp/t1.part", testTime)
 	if err := store.SaveTransfer(ctx, tr); err != nil {
 		t.Fatalf("SaveTransfer error: %v", err)
 	}

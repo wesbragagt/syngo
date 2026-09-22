@@ -15,18 +15,20 @@ type MsgType uint8
 
 // Message types. The numbers are part of the wire protocol.
 const (
-	MsgHello           MsgType = 0x01
-	MsgRejected        MsgType = 0x02
-	MsgPing            MsgType = 0x03
-	MsgPong            MsgType = 0x04
-	MsgManifestRequest MsgType = 0x10
-	MsgManifestReply   MsgType = 0x11
-	MsgManifestChanged MsgType = 0x12
-	MsgFoldersChanged  MsgType = 0x13
-	MsgChunkRequest    MsgType = 0x20
-	MsgChunkData       MsgType = 0x21
-	MsgChunkError      MsgType = 0x22
-	MsgError           MsgType = 0xF0
+	MsgHello            MsgType = 0x01
+	MsgRejected         MsgType = 0x02
+	MsgPing             MsgType = 0x03
+	MsgPong             MsgType = 0x04
+	MsgManifestRequest  MsgType = 0x10
+	MsgManifestReply    MsgType = 0x11
+	MsgManifestChanged  MsgType = 0x12
+	MsgFoldersChanged   MsgType = 0x13
+	MsgChunkRequest     MsgType = 0x20
+	MsgChunkData        MsgType = 0x21
+	MsgChunkError       MsgType = 0x22
+	MsgChunkListRequest MsgType = 0x23
+	MsgChunkListReply   MsgType = 0x24
+	MsgError            MsgType = 0xF0
 )
 
 // String names the message type for logs and errors.
@@ -54,6 +56,10 @@ func (t MsgType) String() string {
 		return "chunk_data"
 	case MsgChunkError:
 		return "chunk_error"
+	case MsgChunkListRequest:
+		return "chunk_list_request"
+	case MsgChunkListReply:
+		return "chunk_list_reply"
 	case MsgError:
 		return "error"
 	default:

@@ -28,6 +28,8 @@ type Store struct {
 	grants    map[folder.ID]map[device.ID]struct{}
 	floors    map[device.ID]uint64
 	transfers map[transfer.ID]transfer.Transfer
+	// chunks is the chunk index: folder, then path, then the chunk list.
+	chunks    map[folder.ID]map[string][]transfer.Chunk
 	conflicts []ports.ConflictRecord
 	changeSeq int64
 	closed    bool
@@ -44,6 +46,7 @@ func NewStore() *Store {
 		grants:    make(map[folder.ID]map[device.ID]struct{}),
 		floors:    make(map[device.ID]uint64),
 		transfers: make(map[transfer.ID]transfer.Transfer),
+		chunks:    make(map[folder.ID]map[string][]transfer.Chunk),
 	}
 }
 
@@ -340,6 +343,16 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 	}
 	if err := s.AppendChanges(ctx, id, w.Changes, w.At); err != nil {
 		return err
+	}
+	for path, chunks := range w.Chunks {
+		if err := s.SetFileChunks(ctx, id, path, chunks); err != nil {
+			return err
+		}
+	}
+	for _, path := range w.Deleted {
+		if err := s.SetFileChunks(ctx, id, path, nil); err != nil {
+			return err
+		}
 	}
 	return s.SetFolderScan(ctx, id, w.At, w.LastError)
 }
@@ -669,6 +682,75 @@ func (s *Store) ListConflicts(_ context.Context, id folder.ID, includeResolved b
 			continue
 		}
 		out = append(out, c)
+	}
+	return out, nil
+}
+
+// SetFileChunks replaces the chunk index of one path.
+func (s *Store) SetFileChunks(_ context.Context, id folder.ID, path string, chunks []transfer.Chunk) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chunks[id] == nil {
+		s.chunks[id] = make(map[string][]transfer.Chunk)
+	}
+	if len(chunks) == 0 {
+		delete(s.chunks[id], path)
+		return nil
+	}
+	s.chunks[id][path] = append([]transfer.Chunk(nil), chunks...)
+	return nil
+}
+
+// FileChunks returns how a file of this device was cut, or ErrNotFound.
+func (s *Store) FileChunks(_ context.Context, id folder.ID, path string) ([]transfer.Chunk, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chunks, ok := s.chunks[id][path]
+	if !ok {
+		return nil, fmt.Errorf("chunks of %q in folder %q: %w", path, id, ports.ErrNotFound)
+	}
+	return append([]transfer.Chunk(nil), chunks...), nil
+}
+
+// FindChunk returns somewhere this device holds a chunk with that hash. The
+// folders and paths are visited in sorted order, so a test that plants the
+// same content twice knows which copy it gets.
+func (s *Store) FindChunk(_ context.Context, h manifest.Hash) (ports.ChunkPlacement, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	folders := make([]string, 0, len(s.chunks))
+	for id := range s.chunks {
+		folders = append(folders, string(id))
+	}
+	sort.Strings(folders)
+	for _, id := range folders {
+		byPath := s.chunks[folder.ID(id)]
+		paths := make([]string, 0, len(byPath))
+		for path := range byPath {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			for _, c := range byPath[path] {
+				if c.Hash == h {
+					return ports.ChunkPlacement{
+						FolderID: folder.ID(id), Path: path,
+						Offset: c.Offset, Length: c.Length,
+					}, nil
+				}
+			}
+		}
+	}
+	return ports.ChunkPlacement{}, fmt.Errorf("chunk %s: %w", h.String(), ports.ErrNotFound)
+}
+
+// IndexedPaths returns the paths of a folder the chunk index covers.
+func (s *Store) IndexedPaths(_ context.Context, id folder.ID) (map[string]struct{}, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]struct{}, len(s.chunks[id]))
+	for path := range s.chunks[id] {
+		out[path] = struct{}{}
 	}
 	return out, nil
 }

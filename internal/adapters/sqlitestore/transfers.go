@@ -67,11 +67,12 @@ func (s *Store) saveTransferRow(ctx context.Context, t transfer.Transfer) error 
 func saveChunks(ctx context.Context, tx *sql.Tx, id transfer.ID, chunks []transfer.Chunk) error {
 	for _, c := range chunks {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO transfer_chunks (transfer_id, idx, hash, verified)
-			VALUES (?, ?, ?, ?)
+			INSERT INTO transfer_chunks (transfer_id, idx, hash, verified, start_offset, byte_length)
+			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT(transfer_id, idx) DO UPDATE SET
-				hash = excluded.hash, verified = excluded.verified`,
-			string(id), c.Index, c.Hash.String(), boolToInt(c.Verified)); err != nil {
+				hash = excluded.hash, verified = excluded.verified,
+				start_offset = excluded.start_offset, byte_length = excluded.byte_length`,
+			string(id), c.Index, c.Hash.String(), boolToInt(c.Verified), c.Offset, c.Length); err != nil {
 			return fmt.Errorf("save chunk %d of transfer %q: %w", c.Index, id, err)
 		}
 	}
@@ -211,9 +212,11 @@ func (s *Store) DeleteTransfer(ctx context.Context, id transfer.ID) error {
 }
 
 // loadChunks fills in the chunk list of a transfer. The list has as many
-// chunks as the transfer row says, and the rows only supply the hash and the
-// verified flag: offsets and lengths follow from the size and the chunk size,
-// and a row a torn save never wrote is an unverified chunk.
+// chunks as the transfer row says, and each row carries where the sender cut
+// it. A row a torn save never wrote is an unverified chunk; one written before
+// chunking became content-defined has no boundary of its own and is read back
+// the old way, from the transfer's size and chunk size, so a download that was
+// in flight during the upgrade resumes instead of starting over.
 func (s *Store) loadChunks(ctx context.Context, t *transfer.Transfer, count int) error {
 	chunks := make([]transfer.Chunk, count)
 	for i := range chunks {
@@ -222,11 +225,12 @@ func (s *Store) loadChunks(ctx context.Context, t *transfer.Transfer, count int)
 		if remaining := t.Size - offset; remaining < int64(length) {
 			length = int(remaining)
 		}
-		chunks[i] = transfer.Chunk{Index: i, Offset: offset, Length: length}
+		chunks[i] = transfer.Chunk{Index: i, Offset: offset, Length: max(length, 0)}
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT idx, hash, verified FROM transfer_chunks WHERE transfer_id = ? ORDER BY idx`, string(t.ID))
+		`SELECT idx, hash, verified, start_offset, byte_length FROM transfer_chunks
+		WHERE transfer_id = ? ORDER BY idx`, string(t.ID))
 	if err != nil {
 		return fmt.Errorf("load chunks of transfer %q: %w", t.ID, err)
 	}
@@ -234,11 +238,12 @@ func (s *Store) loadChunks(ctx context.Context, t *transfer.Transfer, count int)
 
 	for rows.Next() {
 		var (
-			idx      int
-			hashHex  string
-			verified int
+			idx            int
+			hashHex        string
+			verified       int
+			offset, length sql.NullInt64
 		)
-		if err := rows.Scan(&idx, &hashHex, &verified); err != nil {
+		if err := rows.Scan(&idx, &hashHex, &verified, &offset, &length); err != nil {
 			return fmt.Errorf("load chunks of transfer %q: %w", t.ID, err)
 		}
 		if idx < 0 || idx >= len(chunks) {
@@ -252,6 +257,10 @@ func (s *Store) loadChunks(ctx context.Context, t *transfer.Transfer, count int)
 		}
 		chunks[idx].Hash = hash
 		chunks[idx].Verified = verified != 0
+		if offset.Valid && length.Valid {
+			chunks[idx].Offset = offset.Int64
+			chunks[idx].Length = int(length.Int64)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("load chunks of transfer %q: %w", t.ID, err)

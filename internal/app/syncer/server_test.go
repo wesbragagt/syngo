@@ -53,7 +53,7 @@ func newSource(t *testing.T, mode folder.Mode) *source {
 	if err := s.store.SaveFolder(context.Background(), f); err != nil {
 		t.Fatalf("save folder: %v", err)
 	}
-	s.server = syncer.New(s.store, s.fs, s.hasher, fakes.NewIdentity("SOURCE", "nas"), nil)
+	s.server = syncer.New(s.store, s.fs, s.hasher, fakes.NewIdentity("SOURCE", "nas"), chunkSize, nil)
 	s.grant(t, f.ID)
 	return s
 }
@@ -98,11 +98,82 @@ func (s *source) addFile(t *testing.T, rel string, data []byte) manifest.Entry {
 	return e
 }
 
-// chunkOf asks the source for one chunk.
-func (s *source) chunkOf(ctx context.Context, path string, hash manifest.Hash, idx int) (ports.ChunkData, error) {
-	return s.server.Chunk(ctx, "PEER", ports.ChunkRequest{
-		FolderID: s.folder.ID, Path: path, Hash: hash, Index: idx, ChunkSize: chunkSize,
+// chunkListOf asks the source how it cut a file.
+func (s *source) chunkListOf(ctx context.Context, path string, hash manifest.Hash) ([]transfer.Chunk, error) {
+	return s.server.Chunks(ctx, "PEER", ports.ChunkListRequest{
+		FolderID: s.folder.ID, Path: path, Hash: hash,
 	})
+}
+
+// chunkAt asks the source for one byte range, the way a receiver does once it
+// holds the chunk list.
+func (s *source) chunkAt(ctx context.Context, path string, hash manifest.Hash,
+	idx int, offset int64, length int) (ports.ChunkData, error) {
+	return s.server.Chunk(ctx, "PEER", ports.ChunkRequest{
+		FolderID: s.folder.ID, Path: path, Hash: hash,
+		Index: idx, Offset: offset, Length: length,
+	})
+}
+
+// chunkOf asks the source for chunk idx of a file, taking the boundary from
+// the chunk list the source serves. A file the source refuses to describe
+// refuses here with the same error, which is what a receiver would see.
+func (s *source) chunkOf(ctx context.Context, path string, hash manifest.Hash, idx int) (ports.ChunkData, error) {
+	chunks, err := s.chunkListOf(ctx, path, hash)
+	if err != nil {
+		return ports.ChunkData{}, err
+	}
+	if idx >= len(chunks) {
+		return ports.ChunkData{}, &ports.ChunkError{
+			FolderID: s.folder.ID, Path: path, Index: idx, Reason: ports.ChunkNotFound,
+		}
+	}
+	c := chunks[idx]
+	return s.chunkAt(ctx, path, hash, idx, c.Offset, c.Length)
+}
+
+// chunkList returns how the source cut a file it holds. Chunking is
+// content-defined, so how many chunks a fixture is depends on its bytes: a test
+// about which chunks a cycle asks for reads the real list rather than assuming
+// one chunk per configured chunk size.
+func (s *source) chunkList(t *testing.T, rel string) []transfer.Chunk {
+	t.Helper()
+	e, err := s.store.GetFile(context.Background(), s.folder.ID, rel)
+	if err != nil {
+		t.Fatalf("stored entry of %s: %v", rel, err)
+	}
+	chunks, err := s.chunkListOf(context.Background(), rel, e.Hash)
+	if err != nil {
+		t.Fatalf("chunk list of %s: %v", rel, err)
+	}
+	return chunks
+}
+
+// indexesFrom returns the chunk indexes of a file from first to the end.
+func (s *source) indexesFrom(t *testing.T, rel string, first int) []int {
+	t.Helper()
+	chunks := s.chunkList(t, rel)
+	if first >= len(chunks) {
+		t.Fatalf("%s is %d chunks, the test needs more than %d", rel, len(chunks), first)
+	}
+	out := make([]int, 0, len(chunks)-first)
+	for i := first; i < len(chunks); i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
+// sameIndexes reports whether two chunk index lists are equal.
+func sameIndexes(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // refusal returns the chunk error behind err.
@@ -177,40 +248,49 @@ func TestManifest_UnknownFolderAndPausedFolderAreRefused(t *testing.T) {
 	}
 }
 
-func TestChunk_LastChunkShort(t *testing.T) {
+// TestChunks_ListPartitionsTheFileAndEveryChunkServesItsBytes is what replaced
+// the fixed-size arithmetic: the receiver no longer derives a boundary from a
+// size, it reads the list the sender serves, and every entry of that list names
+// bytes the sender then hands over unchanged.
+func TestChunks_ListPartitionsTheFileAndEveryChunkServesItsBytes(t *testing.T) {
 	ctx := context.Background()
 	s := newSource(t, folder.ModeSendReceive)
-	data := make([]byte, chunkSize+7)
+	data := make([]byte, 8*chunkSize+7)
 	for i := range data {
-		data[i] = byte(i)
+		data[i] = byte(i * 7)
 	}
 	e := s.addFile(t, "big.bin", data)
 
-	first, err := s.chunkOf(ctx, "big.bin", e.Hash, 0)
+	chunks, err := s.chunkListOf(ctx, "big.bin", e.Hash)
 	if err != nil {
-		t.Fatalf("chunk 0: %v", err)
+		t.Fatalf("chunk list: %v", err)
 	}
-	if len(first.Data) != chunkSize || first.Offset != 0 {
-		t.Fatalf("chunk 0 = %d bytes at %d, want %d at 0", len(first.Data), first.Offset, chunkSize)
+	if len(chunks) < 2 {
+		t.Fatalf("%d chunks, want the file cut into several", len(chunks))
 	}
-	if first.ChunkHash != s.hasher.SumBytes(data[:chunkSize]) {
-		t.Fatal("chunk 0 hash does not describe its bytes")
+	if err := transfer.ValidateChunks(e.Size, chunks); err != nil {
+		t.Fatalf("the served list does not partition the file: %v", err)
 	}
 
-	last, err := s.chunkOf(ctx, "big.bin", e.Hash, 1)
-	if err != nil {
-		t.Fatalf("chunk 1: %v", err)
-	}
-	if len(last.Data) != 7 || last.Offset != chunkSize {
-		t.Fatalf("chunk 1 = %d bytes at %d, want 7 at %d", len(last.Data), last.Offset, chunkSize)
-	}
-	if string(last.Data) != string(data[chunkSize:]) {
-		t.Fatal("chunk 1 does not hold the tail of the file")
+	for _, c := range chunks {
+		got, err := s.chunkOf(ctx, "big.bin", e.Hash, c.Index)
+		if err != nil {
+			t.Fatalf("chunk %d: %v", c.Index, err)
+		}
+		want := data[c.Offset : c.Offset+int64(c.Length)]
+		if got.Offset != c.Offset || string(got.Data) != string(want) {
+			t.Fatalf("chunk %d = %d bytes at %d, want %d at %d",
+				c.Index, len(got.Data), got.Offset, c.Length, c.Offset)
+		}
+		if got.ChunkHash != c.Hash || got.ChunkHash != s.hasher.SumBytes(want) {
+			t.Fatalf("chunk %d hash does not describe its bytes", c.Index)
+		}
 	}
 
-	_, err = s.chunkOf(ctx, "big.bin", e.Hash, 2)
-	if refused := refusal(t, err); refused.Reason != ports.ChunkNotFound {
-		t.Fatalf("reason = %s, want not_found for an index past the end", refused.Reason)
+	// A range past the end is not content this device holds.
+	_, err = s.chunkAt(ctx, "big.bin", e.Hash, len(chunks), e.Size, 16)
+	if refused := refusal(t, err); refused.Reason != ports.ChunkHashChanged {
+		t.Fatalf("reason = %s, want hash_changed for a range past the end", refused.Reason)
 	}
 }
 
@@ -218,10 +298,11 @@ func TestChunk_EmptyFileHasNoChunks(t *testing.T) {
 	s := newSource(t, folder.ModeSendReceive)
 	e := s.addFile(t, "empty.txt", nil)
 
-	if got := transfer.ChunkCount(e.Size, chunkSize); got != 0 {
-		t.Fatalf("chunk count = %d, want 0", got)
+	chunks, err := s.chunkListOf(context.Background(), "empty.txt", e.Hash)
+	if err != nil || len(chunks) != 0 {
+		t.Fatalf("chunk list = %v, %v, want no chunks and no error", chunks, err)
 	}
-	_, err := s.chunkOf(context.Background(), "empty.txt", e.Hash, 0)
+	_, err = s.chunkOf(context.Background(), "empty.txt", e.Hash, 0)
 	if refused := refusal(t, err); refused.Reason != ports.ChunkNotFound {
 		t.Fatalf("reason = %s, want not_found", refused.Reason)
 	}
@@ -257,7 +338,7 @@ func TestChunk_NotFoundAndPolicyRefusals(t *testing.T) {
 	}
 
 	_, err = s.server.Chunk(ctx, "PEER", ports.ChunkRequest{
-		FolderID: "other", Path: "a.txt", Index: 0, ChunkSize: chunkSize,
+		FolderID: "other", Path: "a.txt", Index: 0, Offset: 0, Length: chunkSize,
 	})
 	if refused := refusal(t, err); refused.Reason != ports.ChunkFolderUnknown {
 		t.Fatalf("reason = %s, want folder_unknown", refused.Reason)

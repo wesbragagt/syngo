@@ -33,7 +33,8 @@ func newService(t *testing.T, list ...transfer.Transfer) *transfers.Service {
 func journalRow(id transfer.ID, path string, state transfer.State, n, done int) transfer.Transfer {
 	at := time.Date(2026, time.September, 21, 10, 0, 0, 0, time.UTC)
 	entry := manifest.Entry{Path: path, Kind: manifest.KindFile, Size: int64(n) * chunkSize, ModTime: at}
-	t := transfer.NewInbound(id, "docs", entry, "PEER", chunkSize, "/tmp/"+string(id)+".part", at)
+	t := transfer.NewInbound(id, "docs", entry, "PEER",
+		transfer.FixedChunks(entry.Size, chunkSize), chunkSize, "/tmp/"+string(id)+".part", at)
 	t.State = state
 	for i := range done {
 		_ = t.MarkVerified(i, manifest.Hash{}, at)

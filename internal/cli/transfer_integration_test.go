@@ -52,7 +52,8 @@ func seedTransfer(t *testing.T, e env, id transfer.ID, path string, state transf
 	entry := manifest.Entry{
 		Path: path, Kind: manifest.KindFile, Size: int64(chunks) * testChunkSize, ModTime: at,
 	}
-	row := transfer.NewInbound(id, "docs", entry, "PEERDEVICE", testChunkSize,
+	row := transfer.NewInbound(id, "docs", entry, "PEERDEVICE",
+		transfer.FixedChunks(entry.Size, testChunkSize), testChunkSize,
 		e.folderPath+"/.syncthis/tmp/"+string(id)+".part", at)
 	row.State = state
 	for i := range done {

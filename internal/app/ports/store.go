@@ -62,6 +62,11 @@ type ScanWrite struct {
 	// It is what the tombstones of the write are raised to, so a deletion
 	// made after a restore dominates the version it deletes everywhere.
 	CounterFloor uint64
+	// Chunks is how the scan cut each file it read, by path. A path that
+	// is in Upserts but not here kept the chunks the index already has,
+	// which is what an unchanged file does. The chunk index is part of the
+	// scan's write so a folder never records content it cannot describe.
+	Chunks map[string][]transfer.Chunk
 }
 
 // TransferFilter narrows a transfer listing. Zero values mean "no filter".
@@ -217,6 +222,41 @@ type TransferStore interface {
 	DeleteTransfer(ctx context.Context, id transfer.ID) error
 }
 
+// ChunkPlacement is where a chunk of content this device already holds can be
+// read: which folder, which file, and the byte range inside it.
+type ChunkPlacement struct {
+	FolderID folder.ID
+	Path     string
+	Offset   int64
+	Length   int
+}
+
+// ChunkStore is the index of what this device already holds, chunk by chunk.
+//
+// It is what makes a download skip content that is already on this disk,
+// wherever it is: another version of the same file, another file of the same
+// folder, or a file of a different folder entirely. The index is written by
+// the scanner, because the scanner is what reads a file's bytes, and read by
+// the puller before it asks a peer for anything.
+type ChunkStore interface {
+	// FileChunks returns how a file of this device was cut, in index
+	// order, or ErrNotFound when the index has nothing for that path.
+	FileChunks(ctx context.Context, id folder.ID, path string) ([]transfer.Chunk, error)
+	// FindChunk returns somewhere this device holds a chunk with that
+	// hash, or ErrNotFound. The caller re-reads and re-hashes the bytes
+	// before using them: the index is only as fresh as the last scan.
+	FindChunk(ctx context.Context, h manifest.Hash) (ChunkPlacement, error)
+	// SetFileChunks replaces the chunk index of one path. It is called
+	// with the path's file row already written, so the index never names
+	// content the folder does not have.
+	SetFileChunks(ctx context.Context, id folder.ID, path string, chunks []transfer.Chunk) error
+	// IndexedPaths returns the paths of a folder the chunk index covers.
+	// A scan uses it to tell a file it has already chunked from one whose
+	// content it knows but whose chunks it does not, which is every file
+	// of a database written before the index existed.
+	IndexedPaths(ctx context.Context, id folder.ID) (map[string]struct{}, error)
+}
+
 // ConflictStore persists detected conflicts.
 type ConflictStore interface {
 	SaveConflict(ctx context.Context, c ConflictRecord) error
@@ -236,6 +276,7 @@ type MetadataStore interface {
 	CounterStore
 	DeviceStore
 	TransferStore
+	ChunkStore
 	ConflictStore
 	Close() error
 }

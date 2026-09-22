@@ -15,6 +15,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 var _ ports.Dialer = (*Dialer)(nil)
@@ -274,6 +275,53 @@ func (c *conn) RequestManifest(ctx context.Context, id folder.ID) (manifest.Mani
 		return manifest.Manifest{}, fmt.Errorf("peer answered for folder %q, want %q", m.FolderID, id)
 	}
 	return m, nil
+}
+
+// RequestChunks asks the peer how it cut a file: every chunk's length and
+// hash, in order. Boundaries are content-defined, so this is the only way the
+// receiver learns them. A peer that refuses answers with a *ports.ChunkError.
+func (c *conn) RequestChunks(ctx context.Context, req ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	frame, err := frameOf(MsgChunkListRequest, chunkListRequestHeader{
+		FolderID: string(req.FolderID), Path: req.Path, Hash: req.Hash.String(),
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	reply, err := c.request(ctx, frame)
+	if err != nil {
+		return nil, fmt.Errorf("chunk list of %s: %w", req.Path, err)
+	}
+
+	switch reply.Type {
+	case MsgChunkError:
+		var header chunkErrorHeader
+		if err := decodeHeader(reply, &header); err != nil {
+			return nil, err
+		}
+		return nil, &ports.ChunkError{
+			FolderID: folder.ID(header.FolderID),
+			Path:     header.Path,
+			Index:    header.Index,
+			Reason:   ports.ChunkErrorReason(header.Reason),
+		}
+	case MsgChunkListReply:
+	default:
+		return nil, fmt.Errorf("chunk list of %s: expected %s, got %s",
+			req.Path, MsgChunkListReply, reply.Type)
+	}
+
+	var header chunkListReplyHeader
+	if err := decodeHeader(reply, &header); err != nil {
+		return nil, err
+	}
+	chunks, err := decodeChunkList(header, reply.Payload, transfer.MaxChunks)
+	if err != nil {
+		// A list this side cannot read means the peers no longer agree
+		// on the protocol, so the connection goes with it.
+		c.fail(err)
+		return nil, fmt.Errorf("chunk list of %s: %w", req.Path, err)
+	}
+	return chunks, nil
 }
 
 // RequestChunk asks the peer for one chunk of a file. A peer that refuses

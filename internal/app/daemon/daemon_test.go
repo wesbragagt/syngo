@@ -21,6 +21,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // folderRoot is the path the test folder claims to live at. Nothing touches
@@ -156,6 +157,11 @@ func (h folderAnnouncer) Hello(ctx context.Context, _ device.ID) ports.HelloInfo
 // Manifest serves nothing.
 func (folderAnnouncer) Manifest(context.Context, device.ID, folder.ID) (manifest.Manifest, error) {
 	return manifest.Manifest{}, errors.New("this fake peer handler serves no manifests")
+}
+
+// Chunks serves nothing.
+func (folderAnnouncer) Chunks(context.Context, device.ID, ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	return nil, errors.New("this fake peer handler serves no chunks")
 }
 
 // Chunk serves nothing.
@@ -1273,6 +1279,11 @@ func TestResume_SyncsAtOnce(t *testing.T) {
 // peer says it serves.
 type staticAnnouncer struct {
 	folders []folder.ID
+}
+
+// Chunks serves nothing.
+func (staticAnnouncer) Chunks(context.Context, device.ID, ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	return nil, errors.New("this fake peer handler serves no chunks")
 }
 
 // Hello announces the fixed folder list.

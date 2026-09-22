@@ -56,12 +56,6 @@ func runCLI(t *testing.T, dataDir string, args ...string) (int, string) {
 // contains reports whether output holds s.
 func contains(output, s string) bool { return strings.Contains(output, s) }
 
-// transferChunks returns how many chunks a file of the given size is split
-// into.
-func transferChunks(size, chunkSize int) int {
-	return (size + chunkSize - 1) / chunkSize
-}
-
 // partFiles lists the partial downloads of a folder.
 func partFiles(t *testing.T, root string) []string {
 	t.Helper()
@@ -107,9 +101,22 @@ func TestResume_ReceiverRestartKeepsVerifiedChunks(t *testing.T) {
 		t.Fatalf("chunks done = %d of %d, want a transfer that is neither empty nor finished",
 			interrupted.ChunksDone, interrupted.ChunksTotal)
 	}
-	if interrupted.BytesDone != int64(interrupted.ChunksDone)*int64(interrupted.ChunkSize) {
-		t.Fatalf("bytes done = %d, want %d verified chunks of %d bytes",
-			interrupted.BytesDone, interrupted.ChunksDone, interrupted.ChunkSize)
+	// Chunks are content-defined now, so the bytes done are the sum of the
+	// verified chunks' own lengths rather than a multiple of the configured
+	// size. What still has to hold is that they are some of the file and not
+	// all of it, and that they fit inside the chunker's size bounds: at
+	// least one byte per verified chunk and at most four times the average,
+	// which is where the chunker truncates.
+	switch {
+	case interrupted.BytesDone <= 0 || interrupted.BytesDone >= interrupted.Size:
+		t.Fatalf("bytes done = %d of %d, want part of the file",
+			interrupted.BytesDone, interrupted.Size)
+	case interrupted.BytesDone < int64(interrupted.ChunksDone):
+		t.Fatalf("bytes done = %d for %d chunks, want at least one byte each",
+			interrupted.BytesDone, interrupted.ChunksDone)
+	case interrupted.BytesDone > int64(interrupted.ChunksDone)*int64(4*interrupted.ChunkSize):
+		t.Fatalf("bytes done = %d for %d chunks of at most %d bytes",
+			interrupted.BytesDone, interrupted.ChunksDone, 4*interrupted.ChunkSize)
 	}
 	if state := interrupted.State; state != "active" && state != "pending" {
 		t.Fatalf("state = %q, want the transfer to be resumable", state)
@@ -272,7 +279,8 @@ func TestResume_LeftoverJournalRowsAreClearedOnRestart(t *testing.T) {
 			temp := filepath.Join(b.Root, ".syncthis", "tmp", string(row.id)+".part")
 			writeFileIn(t, filepath.Dir(temp), filepath.Base(temp), payload(512, 3))
 			entry := manifest.Entry{Path: row.path, Kind: manifest.KindFile, Size: 4096}
-			leftover := transfer.NewInbound(row.id, folderID, entry, a.ID, 1024, temp, time.Now())
+			leftover := transfer.NewInbound(row.id, folderID, entry, a.ID,
+				transfer.FixedChunks(entry.Size, 1024), 1024, temp, time.Now())
 			leftover.State = row.state
 			if err := store.SaveTransfer(context.Background(), leftover); err != nil {
 				t.Fatalf("plant the %s row: %v", row.state, err)

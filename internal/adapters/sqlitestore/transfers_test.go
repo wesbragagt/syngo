@@ -18,7 +18,9 @@ func inbound(id transfer.ID, path string, size int64) transfer.Transfer {
 		Path: path, Kind: manifest.KindFile, Size: size, Hash: hashOf(1),
 		Mode: 0o644, ModTime: testTime,
 	}
-	return transfer.NewInbound(id, "docs", entry, "PEERID", transfer.MinChunkSize, "/tmp/"+string(id)+".part", testTime)
+	return transfer.NewInbound(id, "docs", entry, "PEERID",
+		transfer.FixedChunks(entry.Size, transfer.MinChunkSize), transfer.MinChunkSize,
+		"/tmp/"+string(id)+".part", testTime)
 }
 
 // storeWithFolder returns a store that already holds the docs folder.

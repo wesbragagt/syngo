@@ -109,7 +109,8 @@ func (e *env) entry(t *testing.T, rel string) manifest.Entry {
 func (e *env) addTransfer(t *testing.T, id, rel, tempPath string) transfer.Transfer {
 	t.Helper()
 	entry := manifest.Entry{Path: rel, Kind: manifest.KindFile, Size: 8192, Hash: e.hasher.SumBytes([]byte(rel))}
-	tr := transfer.NewInbound(transfer.ID(id), e.folder.ID, entry, "PEER1", transfer.MinChunkSize, tempPath, e.clock.Now())
+	tr := transfer.NewInbound(transfer.ID(id), e.folder.ID, entry, "PEER1",
+		transfer.FixedChunks(entry.Size, transfer.MinChunkSize), transfer.MinChunkSize, tempPath, e.clock.Now())
 	tr.State = transfer.StateActive
 	if err := tr.MarkVerified(0, e.hasher.SumBytes([]byte("chunk")), e.clock.Now()); err != nil {
 		t.Fatalf("mark verified: %v", err)
@@ -324,7 +325,8 @@ func TestRun_RefusesARootThatIsNoLongerADirectory(t *testing.T) {
 func (e *env) addFailedTransfer(t *testing.T, id, rel, tempPath string, hash manifest.Hash) transfer.Transfer {
 	t.Helper()
 	entry := manifest.Entry{Path: rel, Kind: manifest.KindFile, Size: 8192, Hash: hash}
-	tr := transfer.NewInbound(transfer.ID(id), e.folder.ID, entry, "PEER1", transfer.MinChunkSize, tempPath, e.clock.Now())
+	tr := transfer.NewInbound(transfer.ID(id), e.folder.ID, entry, "PEER1",
+		transfer.FixedChunks(entry.Size, transfer.MinChunkSize), transfer.MinChunkSize, tempPath, e.clock.Now())
 	tr.State = transfer.StateFailed
 	tr.Error = "chunk 1 did not hash right"
 	if err := e.store.SaveTransfer(context.Background(), tr); err != nil {
@@ -416,7 +418,8 @@ func TestRepair_DryRunListsPrunableTransfersWithoutDeletingThem(t *testing.T) {
 func TestRepair_PrunesAFinishedTransferWhoseRowOutlivedIt(t *testing.T) {
 	e := newEnv(t)
 	entry := e.addFile(t, "big.bin", "what the peer offered")
-	tr := transfer.NewInbound("t1", e.folder.ID, entry, "PEER1", transfer.MinChunkSize,
+	tr := transfer.NewInbound("t1", e.folder.ID, entry, "PEER1",
+		transfer.FixedChunks(entry.Size, transfer.MinChunkSize), transfer.MinChunkSize,
 		root+"/.syncthis/tmp/t1.part", e.clock.Now())
 	tr.State = transfer.StateDone
 	if err := e.store.SaveTransfer(context.Background(), tr); err != nil {

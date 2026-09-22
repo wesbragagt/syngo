@@ -12,6 +12,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // syncHandler answers manifest and chunk requests from fixed values.
@@ -20,6 +21,7 @@ type syncHandler struct {
 	manifest manifest.Manifest
 	err      error
 	chunk    ports.ChunkData
+	chunks   []transfer.Chunk
 	chunkErr error
 }
 
@@ -32,6 +34,14 @@ func (h *syncHandler) Manifest(_ context.Context, _ device.ID, id folder.ID) (ma
 		return manifest.Manifest{}, fmt.Errorf("folder %q: %w", id, h.err)
 	}
 	return h.manifest, nil
+}
+
+// Chunks returns the configured chunk list or error.
+func (h *syncHandler) Chunks(context.Context, device.ID, ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	if h.chunkErr != nil {
+		return nil, h.chunkErr
+	}
+	return h.chunks, nil
 }
 
 // Chunk returns the configured chunk or error.
@@ -153,7 +163,8 @@ func TestRequestChunk_RoundTrip(t *testing.T) {
 	conn, _ := connectTo(t, &syncHandler{chunk: want})
 
 	got, err := conn.RequestChunk(context.Background(), ports.ChunkRequest{
-		FolderID: "docs", Path: "big.bin", Hash: hashOf(t, "content"), Index: 3, ChunkSize: 4096,
+		FolderID: "docs", Path: "big.bin", Hash: hashOf(t, "content"), Index: 3,
+		Offset: 12288, Length: 4096,
 	})
 	if err != nil {
 		t.Fatalf("request chunk: %v", err)
@@ -172,7 +183,7 @@ func TestRequestChunk_RefusalCarriesTheReason(t *testing.T) {
 	}})
 
 	_, err := conn.RequestChunk(context.Background(), ports.ChunkRequest{
-		FolderID: "docs", Path: "big.bin", Index: 2, ChunkSize: 4096,
+		FolderID: "docs", Path: "big.bin", Index: 2, Offset: 8192, Length: 4096,
 	})
 	var refused *ports.ChunkError
 	if !errors.As(err, &refused) {

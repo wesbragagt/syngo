@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/chunker"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // ErrRootMissing reports a folder root that does not exist or is not a
@@ -30,16 +32,21 @@ type Scanner struct {
 	clock    ports.Clock
 	identity ports.Identity
 	events   ports.EventSink
-	log      *slog.Logger
+	// chunks is how files are cut for the chunk index. The scan is what
+	// reads a file's bytes, so it is where the cutting costs nothing extra.
+	chunks chunker.Config
+	log    *slog.Logger
 }
 
-// New returns a scanner. log may be nil.
+// New returns a scanner. chunkSize is the average chunk size this device cuts
+// with; zero takes the default. log may be nil.
 func New(fs ports.FileSystem, hasher ports.Hasher, store ports.MetadataStore, clock ports.Clock,
-	identity ports.Identity, events ports.EventSink, log *slog.Logger) *Scanner {
+	identity ports.Identity, events ports.EventSink, chunkSize int, log *slog.Logger) *Scanner {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Scanner{fs: fs, hasher: hasher, store: store, clock: clock, identity: identity, events: events, log: log}
+	return &Scanner{fs: fs, hasher: hasher, store: store, clock: clock, identity: identity,
+		events: events, chunks: chunker.ConfigFor(chunkSize), log: log}
 }
 
 // Scan walks f, classifies the changes since the last scan and, unless the
@@ -67,9 +74,20 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 		return Result{}, err
 	}
 
+	// A file whose stored entry still describes what is on disk is not read
+	// again, so the index has to say which of those it already covers: in a
+	// database written before the chunk index existed that is none of them,
+	// and the first scan after the upgrade fills it in without a
+	// re-download.
+	indexed, err := s.store.IndexedPaths(ctx, f.ID)
+	if err != nil {
+		return Result{}, err
+	}
+
 	w := &walker{
 		scanner: s, folder: f, opts: o, matcher: matcher,
 		old: old, cur: manifest.New(f.ID), result: &result,
+		indexed: indexed, chunks: make(map[string][]transfer.Chunk),
 	}
 	subtrees := cleanPaths(o.Paths)
 	if len(subtrees) == 0 {
@@ -101,7 +119,7 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 		// in one transaction. The line marks the boundary: everything
 		// logged before it read the tree, everything after it wrote.
 		s.log.Debug("scan writing", "folder", f.ID, "changes", len(result.Changes))
-		if err := s.persist(ctx, f, old, w.cur, &result, now); err != nil {
+		if err := s.persist(ctx, f, old, w.cur, w.chunks, &result, now); err != nil {
 			return Result{}, err
 		}
 	}
@@ -150,7 +168,7 @@ const persistRetries = 5
 // the write; the scan then reloads the manifest, re-diffs the tree it already
 // walked and tries again, so the change log never records the same scan twice.
 func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifest.Manifest,
-	result *Result, now time.Time) error {
+	chunks map[string][]transfer.Chunk, result *Result, now time.Time) error {
 	base := old.Sequence
 	// The floor is the highest counter this device has ever handed out or
 	// seen a peer hold for it. Every version this scan writes is raised
@@ -163,6 +181,7 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 	}
 	for attempt := 0; ; attempt++ {
 		write := s.writeOf(result, old, base, now, floor)
+		write.Chunks = chunks
 		err := s.store.ApplyScan(ctx, f.ID, write)
 		if err == nil {
 			// The store hands out one sequence number per written

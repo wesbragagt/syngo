@@ -22,6 +22,7 @@ func pauseAfter(t *testing.T, src *source, d *dest, n int) *fakes.PeerConn {
 	served := 0
 	return fakes.NewPeerConn(peerID, "nas", handlerFunc{
 		manifest: src.server.Manifest,
+		chunks:   src.server.Chunks,
 		chunk: func(ctx context.Context, peer device.ID, req ports.ChunkRequest) (ports.ChunkData, error) {
 			data, err := src.server.Chunk(ctx, peer, req)
 			if err != nil {

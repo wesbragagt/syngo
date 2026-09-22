@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // identity is a key pair with the device ID derived from it. The test builds
@@ -86,6 +88,11 @@ func (h handler) Hello(context.Context, device.ID) ports.HelloInfo { return h.in
 // Manifest is not reachable in this milestone.
 func (h handler) Manifest(context.Context, device.ID, folder.ID) (manifest.Manifest, error) {
 	return manifest.Manifest{}, errors.New("not implemented")
+}
+
+// Chunks is not reachable in this milestone.
+func (h handler) Chunks(context.Context, device.ID, ports.ChunkListRequest) ([]transfer.Chunk, error) {
+	return nil, errors.New("not implemented")
 }
 
 // Chunk is not reachable in this milestone.
@@ -323,7 +330,22 @@ func TestHandshake_ClientAnnouncingAnotherDeviceRejected(t *testing.T) {
 	}
 }
 
+// TestHandshake_OtherProtocolVersionRejected covers every version this build
+// does not speak, version 2 included: a version-2 peer derives chunk
+// boundaries from a size and would answer a byte-range request with the wrong
+// bytes, so it is rejected rather than served.
 func TestHandshake_OtherProtocolVersionRejected(t *testing.T) {
+	for _, version := range []int{1, 2, 4} {
+		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
+			rejectsVersion(t, version)
+		})
+	}
+}
+
+// rejectsVersion completes a TLS handshake, announces the given protocol
+// version and asserts the server rejects it for that reason.
+func rejectsVersion(t *testing.T, version int) {
+	t.Helper()
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
 	ln := startServer(t, server, server.hello(""), (&lookups{allow: true}).fn(), 0)
 
@@ -334,7 +356,8 @@ func TestHandshake_OtherProtocolVersionRejected(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	header := `{"protocol_version":1,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
+	header := fmt.Sprintf(`{"protocol_version":%d,"device_id":"`, version) +
+		string(client.id) + `","device_name":"client","folders":[]}`
 	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(header)}); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
@@ -523,7 +546,7 @@ func TestFoldersChanged_FromTheClientIsAcceptedAndIgnored(t *testing.T) {
 		t.Fatalf("set deadline: %v", err)
 	}
 
-	hello := `{"protocol_version":2,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
+	hello := `{"protocol_version":3,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
 	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(hello)}); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}

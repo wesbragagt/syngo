@@ -55,7 +55,7 @@ func helloFrameBytes(t MsgType, header string) []byte {
 // the current protocol version, and that this side writes its own Hello first
 // whatever the peer sends.
 func FuzzExchangeHello(f *testing.F) {
-	good := `{"protocol_version":2,"device_id":"` + string(fuzzPeerID) +
+	good := `{"protocol_version":3,"device_id":"` + string(fuzzPeerID) +
 		`","device_name":"desktop","folders":[{"id":"photos","mode":"sendreceive"}]}`
 
 	seeds := [][]byte{
@@ -68,8 +68,8 @@ func FuzzExchangeHello(f *testing.F) {
 		helloFrameBytes(MsgHello, ``),
 		helloFrameBytes(MsgHello, `{`),
 		helloFrameBytes(MsgHello, `{"protocol_version":1,"device_id":"`+string(fuzzPeerID)+`"}`),
-		helloFrameBytes(MsgHello, `{"protocol_version":2,"device_id":"`+strings.Repeat("A", device.IDLength)+`"}`),
-		helloFrameBytes(MsgHello, `{"protocol_version":2,"device_id":"nope"}`),
+		helloFrameBytes(MsgHello, `{"protocol_version":3,"device_id":"`+strings.Repeat("A", device.IDLength)+`"}`),
+		helloFrameBytes(MsgHello, `{"protocol_version":3,"device_id":"nope"}`),
 		helloFrameBytes(MsgPing, `{"nonce":1}`),
 		helloFrameBytes(MsgRejected, `[]`),
 		helloFrameBytes(MsgChunkData, `{}`),

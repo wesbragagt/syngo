@@ -21,7 +21,7 @@ func frameBytes(body uint32, typ byte, headerLen uint32, rest []byte) []byte {
 // fuzzFrameSeeds are the raw frames both fuzz targets start from: valid ones
 // and the malformed shapes docs/PROTOCOL.md says are refused.
 func fuzzFrameSeeds() [][]byte {
-	hello := []byte(`{"protocol_version":2,"device_id":"` +
+	hello := []byte(`{"protocol_version":3,"device_id":"` +
 		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
 		`","device_name":"laptop","folders":[{"id":"photos","mode":"sendreceive"}]}`)
 	ping := []byte(`{"nonce":123}`)
@@ -128,7 +128,7 @@ func FuzzReadHelloFrame(f *testing.F) {
 // FuzzWriteFrame writes arbitrary frames and reads them back. The invariant is
 // the round trip: what WriteFrame produces, ReadFrame returns unchanged.
 func FuzzWriteFrame(f *testing.F) {
-	f.Add(uint8(MsgHello), []byte(`{"protocol_version":2}`), []byte(nil))
+	f.Add(uint8(MsgHello), []byte(`{"protocol_version":3}`), []byte(nil))
 	f.Add(uint8(MsgChunkData), []byte(`{"length":4}`), []byte("data"))
 	f.Add(uint8(MsgPing), []byte{}, []byte{})
 	f.Add(uint8(0xAB), []byte{0x00, 0xFF}, []byte{0x00})

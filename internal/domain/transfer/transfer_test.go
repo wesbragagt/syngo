@@ -1,6 +1,7 @@
 package transfer_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -16,6 +17,21 @@ func hashOf(seed byte) manifest.Hash {
 	return h
 }
 
+// fixedChunks cuts a file of the given size every chunkSize bytes. The
+// chunker cuts on content; these tests are about what a transfer does with a
+// chunk list, so they use a layout that is easy to state.
+func fixedChunks(size int64, chunkSize int) []transfer.Chunk {
+	var out []transfer.Chunk
+	for offset := int64(0); offset < size; offset += int64(chunkSize) {
+		length := int64(chunkSize)
+		if remaining := size - offset; remaining < length {
+			length = remaining
+		}
+		out = append(out, transfer.Chunk{Index: len(out), Offset: offset, Length: int(length)})
+	}
+	return out
+}
+
 func newTransfer(t *testing.T, size int64, chunkSize int) transfer.Transfer {
 	t.Helper()
 	entry := manifest.Entry{
@@ -27,28 +43,52 @@ func newTransfer(t *testing.T, size int64, chunkSize int) transfer.Transfer {
 		ModTime: time.Unix(1700000000, 0).UTC(),
 	}
 	now := time.Unix(1700000001, 0).UTC()
-	return transfer.NewInbound("abc", "docs", entry, "PEER", chunkSize, "/tmp/abc.part", now)
+	chunks := fixedChunks(size, max(chunkSize, 1))
+	return transfer.NewInbound("abc", "docs", entry, "PEER", chunks, chunkSize, "/tmp/abc.part", now)
 }
 
-func TestChunkCount(t *testing.T) {
+func TestValidateChunks(t *testing.T) {
 	tests := []struct {
-		name      string
-		size      int64
-		chunkSize int
-		want      int
+		name    string
+		size    int64
+		chunks  []transfer.Chunk
+		wantErr bool
 	}{
-		{"empty file", 0, transfer.DefaultChunkSize, 0},
-		{"one byte", 1, transfer.DefaultChunkSize, 1},
-		{"exactly one chunk", transfer.DefaultChunkSize, transfer.DefaultChunkSize, 1},
-		{"one byte over", transfer.DefaultChunkSize + 1, transfer.DefaultChunkSize, 2},
-		{"many chunks", 10 * transfer.MinChunkSize, transfer.MinChunkSize, 10},
-		{"negative size", -5, transfer.DefaultChunkSize, 0},
-		{"zero chunk size", 100, 0, 0},
+		{"empty file has no chunks", 0, nil, false},
+		{"a whole file in one chunk", 100, fixedChunks(100, 100), false},
+		{"several chunks", 10 * transfer.MinChunkSize,
+			fixedChunks(10*transfer.MinChunkSize, transfer.MinChunkSize), false},
+		{"content-defined lengths", 30, []transfer.Chunk{
+			{Index: 0, Offset: 0, Length: 7},
+			{Index: 1, Offset: 7, Length: 19},
+			{Index: 2, Offset: 26, Length: 4},
+		}, false},
+		{"short of the file", 101, fixedChunks(100, 100), true},
+		{"past the end of the file", 99, fixedChunks(100, 100), true},
+		{"a gap between two chunks", 20, []transfer.Chunk{
+			{Index: 0, Offset: 0, Length: 10},
+			{Index: 1, Offset: 11, Length: 10},
+		}, true},
+		{"an empty chunk", 10, []transfer.Chunk{
+			{Index: 0, Offset: 0, Length: 0},
+			{Index: 1, Offset: 0, Length: 10},
+		}, true},
+		{"an out-of-order index", 20, []transfer.Chunk{
+			{Index: 1, Offset: 0, Length: 10},
+			{Index: 0, Offset: 10, Length: 10},
+		}, true},
+		{"a chunk longer than a chunk may be", 1 << 30, []transfer.Chunk{
+			{Index: 0, Offset: 0, Length: 1 << 30},
+		}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := transfer.ChunkCount(tt.size, tt.chunkSize); got != tt.want {
-				t.Fatalf("ChunkCount(%d, %d) = %d, want %d", tt.size, tt.chunkSize, got, tt.want)
+			err := transfer.ValidateChunks(tt.size, tt.chunks)
+			if tt.wantErr != (err != nil) {
+				t.Fatalf("ValidateChunks(%d, %v) = %v, wantErr %v", tt.size, tt.chunks, err, tt.wantErr)
+			}
+			if err != nil && !errors.Is(err, transfer.ErrInvalidChunks) {
+				t.Fatalf("error %v does not name ErrInvalidChunks", err)
 			}
 		})
 	}
