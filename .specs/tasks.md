@@ -139,6 +139,7 @@ Goal: beat the baseline on the target workload.
 - [x] Replace full scans with journal watermarks where possible.
 - [ ] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured 509.6 ms median over loopback, which is a lower bound; the tailnet path needs a two-machine run. See docs/BENCH.md.
 - [ ] Benchmark a 1 MiB insertion into a 10 GB file transfers less than 2 MiB after caching. Measured 2,254,262 bytes at the shipped 1 MiB chunk size: the claim does not hold. See docs/BENCH.md.
+- [ ] Evaluate lowering `DefaultChunkSize`, or making it size-adaptive, to close the 2 MiB insertion budget. Measure the throughput, memory and journal-size tradeoff against ordinary (non-edited) large-file transfers before changing the default; `TestDedup_InsertionMovesOnlyWhatChanged` already passes at a 16 KiB average, which is the candidate to evaluate against.
 - [x] Benchmark a 10 GB rename transfers zero payload bytes.
 - [x] Benchmark 100,000-file status under two seconds after incremental change.
 - [x] Benchmark small edits use at least 90% fewer bytes than whole-file transfer.
