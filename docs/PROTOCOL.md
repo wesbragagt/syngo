@@ -66,7 +66,7 @@ the receiver can tell "never had it" from "deleted". One entry is
 ```json
 {"path":"sub/a.txt","kind":1,"size":1234,"mtime_ns":1700000000123456789,
  "mode":420,"hash":"<64 hex>","link_target":"","deleted":false,
- "modified_by":"<device id>","sequence":7,"synced_hash":"<64 hex>",
+ "modified_by":"<device id>","sequence":7,
  "version":{"<device id>":3,"<device id>":1}}
 ```
 
@@ -119,31 +119,6 @@ every other empty one. A counter naming something that is not a device id, or
 counting zero changes, refuses the whole manifest like any other bad entry.
 Permission bits are deliberately not counted: a `chmod` is not a content
 version, and the synced mode stays local bookkeeping and is never sent.
-
-`synced_hash` is the version the sender last agreed on with a peer, described
-in [STATE.md](STATE.md#files). It is what lets the receiver tell a newer
-version from a diverged one: an entry whose `version` is the version vector of the entry: for each device, how many
-content changes it has made to that path. It is what lets the receiver order
-two versions of a path. A version that dominates the receiver's (every counter
-at least as high, one higher) was written on top of it, so taking it loses
-nothing and it is a pull; a version the receiver's dominates is stale and
-changes nothing here; two versions where each is ahead on some device were
-written concurrently and the receiver keeps both. Installing a version adopts
-its vector, and the outcome of a conflict adopts the merge of both, so a third
-device holding either input takes the outcome without a second conflict.
-
-The field is absent for a path whose stored row predates version vectors,
-which reads as the zero vector: dominated by every other vector, equal to
-every other empty one. A counter naming something that is not a device id, or
-counting zero changes, refuses the whole manifest like any other bad entry.
-Permission bits are deliberately not counted: a `chmod` is not a content
-version, and the synced mode stays local bookkeeping and is never sent.
-
-`synced_hash` is the version the
-receiver holds was written on top of that version, so taking it loses nothing
-and it is a pull rather than a conflict. A sender that omits the field, as one
-from before it existed does, is read as "no baseline known", which changes no
-other decision. The synced mode stays local bookkeeping and is never sent.
 
 `ManifestChanged` says a folder moved on; the receiver answers it by requesting
 the manifest again, so a missed notification costs nothing but time.

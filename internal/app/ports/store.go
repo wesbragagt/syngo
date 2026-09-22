@@ -112,7 +112,6 @@ type FileStore interface {
 	// UpsertEntries assigns each entry the next folder sequence number.
 	UpsertEntries(ctx context.Context, id folder.ID, entries []manifest.Entry) error
 	MarkDeleted(ctx context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error
-	SetSyncedHash(ctx context.Context, id folder.ID, path string, h manifest.Hash) error
 	// SetVersion replaces the version vector of one entry without giving it
 	// a new sequence number: the content did not change, only what is known
 	// about which versions it descends from.

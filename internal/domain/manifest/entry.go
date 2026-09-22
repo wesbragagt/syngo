@@ -44,7 +44,6 @@ type Entry struct {
 	Deleted    bool
 	ModifiedBy device.ID
 	Sequence   uint64
-	SyncedHash Hash
 	// Version orders this entry against the same path on a peer: the
 	// scanner raises this device's counter on every content change, an
 	// install adopts the peer's vector, and a conflict outcome adopts the

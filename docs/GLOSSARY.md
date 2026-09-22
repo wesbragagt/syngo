@@ -82,12 +82,22 @@ See [PROTOCOL.md](PROTOCOL.md#manifest-exchange).
 **Sequence.** A per-folder counter raised on every write, which is how a peer
 decides whether it has already seen a version.
 
-**Synced hash.** The content hash two devices last agreed on for a path. A file
-whose hash still equals it has not been touched locally since the last sync;
-one whose hash moved away from it is a local change. It travels with the
-manifest, so a peer can tell a version written on top of its own from one that
-diverged from it. **Synced mode** is the same idea for the permission bits, and
-stays local.
+**Version vector.** Per path, how many content changes each device has made to
+it, written `DEVICEID:N,DEVICEID:N`. It travels with the manifest and is the
+only thing two versions of a path are ordered by. A `chmod` is not a content
+change and raises no counter. **Synced mode**, the permission bits two devices
+last agreed on, is separate and stays local.
+
+**Dominates.** A version dominates another when every counter is at least as
+high and one is higher: it was written on top of it, so taking it loses
+nothing. The receiver pulls a version that dominates its own and ignores one
+its own dominates.
+
+**Concurrent.** Two versions where each is ahead of the other on some device:
+they were written without either seeing the other, which is a conflict. An
+install adopts the vector it took, and the outcome of a conflict adopts the
+merge of both, so a third device holding either input takes the outcome
+without conflicting again.
 
 ## Scanning and planning
 

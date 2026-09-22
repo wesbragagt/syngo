@@ -169,7 +169,7 @@ func (i *Installer) KeepLocalAs(_ context.Context, root, rel, conflictRel string
 	}
 	entry := manifest.Entry{
 		Path: free, Kind: manifest.KindFile, Size: local.Size, ModTime: local.ModTime,
-		Mode: local.Mode, Hash: local.Hash, SyncedHash: local.Hash,
+		Mode: local.Mode, Hash: local.Hash,
 	}
 	if reused {
 		return KeptCopy{Entry: i.described(kept, entry), Reused: true}, nil
@@ -289,7 +289,7 @@ func (i *Installer) installAt(root, rel string, t transfer.Transfer,
 
 	entry := manifest.Entry{
 		Path: rel, Kind: manifest.KindFile, Size: t.Size, ModTime: mtime,
-		Mode: uint32(mode), Hash: t.Hash, SyncedHash: t.Hash,
+		Mode: uint32(mode), Hash: t.Hash,
 	}
 	return i.described(final, entry), nil
 }
@@ -409,7 +409,7 @@ func (i *Installer) Chmod(_ context.Context, root string, e manifest.Entry) (man
 
 	entry := manifest.Entry{
 		Path: e.Path, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime,
-		Mode: uint32(mode), Hash: e.Hash, SyncedHash: e.Hash,
+		Mode: uint32(mode), Hash: e.Hash,
 	}
 	return i.described(full, entry), nil
 }

@@ -74,8 +74,8 @@ func TestCrash_ChunkWrittenBeforeItIsJournalledIsFetchedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stored entry: %v", err)
 	}
-	if stored.Hash != d.hasher.SumBytes(data) || stored.SyncedHash != stored.Hash {
-		t.Fatalf("stored = %+v, want the file recorded as in sync", stored)
+	if stored.Hash != d.hasher.SumBytes(data) || stored.Version.IsZero() {
+		t.Fatalf("stored = %+v, want the file recorded with the version it carries", stored)
 	}
 }
 
@@ -144,7 +144,11 @@ func TestCrash_InstalledFileWithoutItsRowIsReconciledByScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stored entry: %v", err)
 	}
-	if stored.Hash != entry.Hash || stored.SyncedHash != entry.Hash {
-		t.Fatalf("stored = %+v, want %s recorded as agreed with the peer", stored, entry.Hash)
+	// The scan that found the file recorded a version of its own, and the
+	// peer holds the same content under its version, so the path ends up
+	// with the merge of the two and neither side pulls anything.
+	want := vector(t, "DEST:1,SOURCE:1")
+	if stored.Hash != entry.Hash || !stored.Version.Equals(want) {
+		t.Fatalf("stored = %+v, want %s under %q", stored, entry.Hash, want)
 	}
 }

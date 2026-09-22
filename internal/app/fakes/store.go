@@ -204,19 +204,6 @@ func (s *Store) MarkDeleted(_ context.Context, id folder.ID, paths []string, by 
 	return nil
 }
 
-// SetSyncedHash records the hash last known to match the peer.
-func (s *Store) SetSyncedHash(_ context.Context, id folder.ID, p string, h manifest.Hash) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.files[id][p]
-	if !ok {
-		return fmt.Errorf("file %q in folder %q: %w", p, id, ports.ErrNotFound)
-	}
-	e.SyncedHash = h
-	s.files[id][p] = e
-	return nil
-}
-
 // SetVersion replaces the version vector of one entry.
 func (s *Store) SetVersion(_ context.Context, id folder.ID, p string, v manifest.Version) error {
 	s.mu.Lock()

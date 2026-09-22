@@ -380,16 +380,10 @@ func (p *Puller) recordDeletion(ctx context.Context, id folder.ID, peer device.I
 }
 
 // recordAgreement stores what both sides now agree on for a path that needs no
-// change: the hash and the permission bits. They are the baseline the plan
-// compares against, so a later change is attributed to the side that made it.
+// change: the merged version vector and the permission bits.
 func (p *Puller) recordAgreement(ctx context.Context, id folder.ID, item syncplan.Item) error {
 	if item.Local == nil || item.Remote == nil {
 		return nil
-	}
-	if item.Local.SyncedHash != item.Remote.Hash {
-		if err := p.store.SetSyncedHash(ctx, id, item.Path, item.Remote.Hash); err != nil {
-			return err
-		}
 	}
 	// Both sides hold the same content, so the path's history is the merge
 	// of the two vectors: whichever of them a third device holds, it is
@@ -855,9 +849,6 @@ func (p *Puller) record(ctx context.Context, id folder.ID, a arrived) error {
 	e := a.entry
 	e.ModifiedBy = a.author
 	e.Version = a.version
-	if e.Kind == manifest.KindFile {
-		e.SyncedHash = e.Hash
-	}
 	e.SyncedMode = e.Mode
 	return p.store.UpsertEntries(ctx, id, []manifest.Entry{e})
 }

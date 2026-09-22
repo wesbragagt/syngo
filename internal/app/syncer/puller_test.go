@@ -94,7 +94,6 @@ func (d *dest) record(t *testing.T, rel string, data []byte, v manifest.Version)
 	e := manifest.Entry{
 		Path: rel, Kind: manifest.KindFile, Size: info.Size, ModTime: info.ModTime, Mode: 0o644,
 		Hash: d.hasher.SumBytes(data), Version: v, SyncedMode: 0o644, Inode: info.Inode,
-		SyncedHash: d.hasher.SumBytes(data),
 	}
 	if err := d.store.UpsertEntries(context.Background(), d.folder.ID, []manifest.Entry{e}); err != nil {
 		t.Fatalf("record %s: %v", rel, err)
@@ -238,14 +237,15 @@ func TestSync_PullsNewFileAndPreservesModeAndMtime(t *testing.T) {
 		t.Fatalf("mtime = %s, want %s", info.ModTime, mtime)
 	}
 
-	// The file is recorded as already in sync with the peer, so the next
-	// local scan does not classify it as a local change.
+	// The file is recorded with the version and the author the peer
+	// announced, so the next local scan does not classify it as a local
+	// change and a third device orders it against what it holds.
 	stored, err := d.store.GetFile(context.Background(), d.folder.ID, "sub/big.bin")
 	if err != nil {
 		t.Fatalf("stored entry: %v", err)
 	}
-	if stored.SyncedHash != stored.Hash || stored.Hash != entry.Hash {
-		t.Fatalf("stored = %+v, want hash %s recorded as synced", stored, entry.Hash)
+	if stored.Hash != entry.Hash || !stored.Version.Equals(entry.Version) {
+		t.Fatalf("stored = %+v, want hash %s under version %q", stored, entry.Hash, entry.Version)
 	}
 	if stored.ModifiedBy != peerID {
 		t.Fatalf("modified_by = %q, want %q", stored.ModifiedBy, peerID)

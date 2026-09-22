@@ -127,11 +127,24 @@ BLAKE3-256 of the contents; directories, symlinks and tombstones have none.
 `sequence` is a per-folder counter, raised on every write, which is what a peer
 compares to decide whether it has seen a version.
 
-`synced_hash` is what makes two-way comparison safe: it is the hash both sides
-last agreed on. A local file whose `hash` still equals its `synced_hash` has
-not been touched since the last sync, so the peer's newer version may replace
-it. A file whose `hash` moved away from `synced_hash` is a local change, and a
-peer's different version is a conflict, never an overwrite.
+`version` is what makes comparison between any number of devices safe: it is
+the version vector of the entry, written as `DEVICEID:N,DEVICEID:N` in device
+id order. The scanner raises this device's counter on every content change, an
+install adopts the vector the content carries, and the outcome of a conflict
+adopts the merge of both. A version that dominates another was made on top of
+it and is the newer one; two that neither dominate were written independently
+and are a conflict, never an overwrite. No rule reads a clock.
+
+An empty `version` means the row predates vectors. It compares equal to every
+other empty vector and below every non-empty one, and nothing is backfilled
+from `modified_by` or `sequence`, because sequences are per device and not
+comparable across devices. Two upgraded devices holding the same content are
+therefore in sync, the first content change after the upgrade gives the path a
+vector, and a divergence that already existed at upgrade time is kept as a
+conflict rather than silently ordered.
+
+`synced_hash` is retired. The column is still there, because migrations only
+add, but nothing reads or writes it any more and it is no longer sent to peers.
 
 `synced_mode` is the same idea for the permission bits: the mode both sides
 last agreed on. A file whose `mode` still equals its `synced_mode` takes the
@@ -144,9 +157,9 @@ peer's id there, together with the size, modification time and inode the file
 has after the install, so the next local scan sees an unchanged file and does
 not send it back.
 
-Unlike `synced_mode`, `synced_hash` is also sent to peers, as the `synced_hash`
-field of a manifest entry: it is what lets the other side tell a version made
-on top of its own from one that diverged from it. See
+Unlike `synced_mode`, which is local bookkeeping, `version` is sent to peers as
+the `version` field of a manifest entry: it is what lets the other side tell a
+version made on top of its own from one that diverged from it. See
 [PROTOCOL.md](PROTOCOL.md).
 
 ### conflicts

@@ -193,7 +193,6 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 
 	if prev, ok := w.old.Entries[rel]; ok && unchanged(prev, info) {
 		e.Hash = prev.Hash
-		e.SyncedHash = prev.SyncedHash
 		e.SyncedMode = prev.SyncedMode
 		w.add(w.carrying(e))
 		return nil
@@ -206,7 +205,6 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 	}
 	e.Hash = hash
 	if prev, ok := w.old.Entries[rel]; ok {
-		e.SyncedHash = prev.SyncedHash
 		e.SyncedMode = prev.SyncedMode
 	}
 	w.result.Hashed++

@@ -102,15 +102,19 @@ func TestConflict_LocalVersionThatLosesIsKeptAsACopy(t *testing.T) {
 		t.Fatalf("conflict copy = %q, want %q", copies[0], want)
 	}
 
-	// Both files are recorded as agreed with the peer, so the next local
-	// scan sees no change to send back.
-	for _, rel := range []string{"a.txt", copies[0]} {
+	// Both files are recorded with the version they carry, so the next
+	// local scan sees no change to send back and the peer orders them
+	// against what it holds.
+	for rel, want := range map[string]manifest.Version{
+		"a.txt":   vector(t, "DEST:1,SOURCE:1"),
+		copies[0]: vector(t, "DEST:1"),
+	} {
 		stored, err := d.store.GetFile(ctx, d.folder.ID, rel)
 		if err != nil {
 			t.Fatalf("stored entry for %s: %v", rel, err)
 		}
-		if stored.Hash != stored.SyncedHash || stored.Hash.IsZero() {
-			t.Fatalf("%s stored as %+v, want its hash recorded as synced", rel, stored)
+		if stored.Hash.IsZero() || !stored.Version.Equals(want) {
+			t.Fatalf("%s stored as %+v, want version %q", rel, stored, want)
 		}
 	}
 

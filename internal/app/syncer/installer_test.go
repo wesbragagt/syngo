@@ -81,8 +81,8 @@ func TestInstall_RenamesIntoPlaceWithModeAndMtime(t *testing.T) {
 	if info.ModTime.UnixNano() != f.transfer.MTimeNS {
 		t.Fatalf("mtime = %s, want %s", info.ModTime, time.Unix(0, f.transfer.MTimeNS))
 	}
-	if entry.Hash != f.transfer.Hash || entry.SyncedHash != f.transfer.Hash {
-		t.Fatalf("entry = %+v, want the installed hash recorded as synced", entry)
+	if entry.Hash != f.transfer.Hash {
+		t.Fatalf("entry = %+v, want it to carry the installed hash", entry)
 	}
 	if entry.Size != int64(len(data)) || entry.Kind != manifest.KindFile {
 		t.Fatalf("entry = %+v, want it to describe the installed file", entry)
@@ -329,8 +329,8 @@ func TestChmod_SetsThePeersModeWithoutTouchingContent(t *testing.T) {
 	if got, _ := fsys.Content(root + "/a.txt"); string(got) != string(data) {
 		t.Fatalf("content = %q, want it untouched", got)
 	}
-	if entry.Mode != 0o700 || entry.Hash != remote.Hash || entry.SyncedHash != remote.Hash {
-		t.Fatalf("entry = %+v, want the new mode and the agreed hash", entry)
+	if entry.Mode != 0o700 || entry.Hash != remote.Hash {
+		t.Fatalf("entry = %+v, want the new mode and the unchanged hash", entry)
 	}
 	if len(fsys.Renames()) != 0 {
 		t.Fatalf("renames = %v, want a mode change to move nothing", fsys.Renames())

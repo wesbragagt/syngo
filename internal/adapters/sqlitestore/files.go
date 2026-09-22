@@ -19,7 +19,7 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
-		       modified_by, sequence, synced_hash, synced_mode, version
+		       modified_by, sequence, synced_mode, version
 		FROM files WHERE folder_id = ? ORDER BY rel_path`, string(id))
 	if err != nil {
 		return manifest.Manifest{}, fmt.Errorf("load manifest of folder %q: %w", id, err)
@@ -50,7 +50,7 @@ func (s *Store) LoadManifest(ctx context.Context, id folder.ID) (manifest.Manife
 func (s *Store) GetFile(ctx context.Context, id folder.ID, path string) (manifest.Entry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT rel_path, kind, size, mtime_ns, mode, hash, link_target, inode, deleted,
-		       modified_by, sequence, synced_hash, synced_mode, version
+		       modified_by, sequence, synced_mode, version
 		FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path)
 	e, err := scanEntry(row)
 	if err != nil {
@@ -91,17 +91,6 @@ func (s *Store) MarkDeleted(ctx context.Context, id folder.ID, paths []string, b
 		}
 	}
 	return nil
-}
-
-// SetSyncedHash records the hash last known to match the peer.
-func (s *Store) SetSyncedHash(ctx context.Context, id folder.ID, path string, h manifest.Hash) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE files SET synced_hash = ? WHERE folder_id = ? AND rel_path = ?`,
-		h.String(), string(id), path)
-	if err != nil {
-		return fmt.Errorf("set synced hash of %q in folder %q: %w", path, id, err)
-	}
-	return requireRow(res, fmt.Sprintf("file %q in folder %q", path, id))
 }
 
 // SetVersion replaces the version vector of one entry, without touching its
@@ -226,19 +215,19 @@ func upsertEntries(ctx context.Context, tx *sql.Tx, id folder.ID, entries []mani
 	for i, e := range entries {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, link_target,
-			                   inode, deleted, modified_by, sequence, synced_hash, synced_mode,
+			                   inode, deleted, modified_by, sequence, synced_mode,
 			                   version, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(folder_id, rel_path) DO UPDATE SET
 				kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
 				mode = excluded.mode, hash = excluded.hash, link_target = excluded.link_target,
 				inode = excluded.inode, deleted = excluded.deleted, modified_by = excluded.modified_by,
-				sequence = excluded.sequence, synced_hash = excluded.synced_hash,
+				sequence = excluded.sequence,
 				synced_mode = excluded.synced_mode, version = excluded.version,
 				updated_at = excluded.updated_at`,
 			string(id), e.Path, int(e.Kind), e.Size, e.ModTime.UnixNano(), int64(e.Mode),
 			e.Hash.String(), e.LinkTarget, int64(e.Inode), boolToInt(e.Deleted),
-			string(e.ModifiedBy), int64(next+uint64(i)), e.SyncedHash.String(),
+			string(e.ModifiedBy), int64(next+uint64(i)),
 			int64(e.SyncedMode), e.Version.String(), updatedAt); err != nil {
 			return fmt.Errorf("upsert file %q in folder %q: %w", e.Path, id, err)
 		}
@@ -424,21 +413,17 @@ func scanEntry(row scanner) (manifest.Entry, error) {
 		kind                 int
 		mtimeNS              int64
 		mode                 int64
-		hashHex, syncedHex   string
+		hashHex              string
 		deleted              int
 		modifiedBy, linkDest string
 		sequence, syncedMode int64
 		versionText          string
 	)
 	if err := row.Scan(&e.Path, &kind, &e.Size, &mtimeNS, &mode, &hashHex, &linkDest,
-		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedHex, &syncedMode, &versionText); err != nil {
+		&e.Inode, &deleted, &modifiedBy, &sequence, &syncedMode, &versionText); err != nil {
 		return manifest.Entry{}, err
 	}
 	hash, err := manifest.ParseHash(hashHex)
-	if err != nil {
-		return manifest.Entry{}, fmt.Errorf("file %q: %w", e.Path, err)
-	}
-	synced, err := manifest.ParseHash(syncedHex)
 	if err != nil {
 		return manifest.Entry{}, fmt.Errorf("file %q: %w", e.Path, err)
 	}
@@ -451,7 +436,6 @@ func scanEntry(row scanner) (manifest.Entry, error) {
 	e.ModTime = time.Unix(0, mtimeNS).UTC()
 	e.Mode = uint32(mode)
 	e.Hash = hash
-	e.SyncedHash = synced
 	e.SyncedMode = uint32(syncedMode)
 	e.LinkTarget = linkDest
 	e.Deleted = deleted != 0

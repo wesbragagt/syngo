@@ -176,7 +176,6 @@ type manifestEntry struct {
 	Deleted    bool              `json:"deleted"`
 	ModifiedBy string            `json:"modified_by"`
 	Sequence   uint64            `json:"sequence"`
-	SyncedHash string            `json:"synced_hash"`
 	Version    map[string]uint64 `json:"version,omitempty"`
 }
 
@@ -235,7 +234,6 @@ func toWireManifest(m manifest.Manifest) manifestReplyHeader {
 			Deleted:    e.Deleted,
 			ModifiedBy: string(e.ModifiedBy),
 			Sequence:   e.Sequence,
-			SyncedHash: e.SyncedHash.String(),
 			Version:    wireVersion(e.Version),
 		})
 	}
@@ -292,12 +290,6 @@ func fromWireManifest(h manifestReplyHeader, maxSize int64) (manifest.Manifest, 
 		if err != nil {
 			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
 		}
-		// A peer that predates the field sends nothing, which parses to
-		// the zero hash and means "no baseline known".
-		synced, err := manifest.ParseHash(e.SyncedHash)
-		if err != nil {
-			return manifest.Manifest{}, fmt.Errorf("manifest entry %q: %w", e.Path, err)
-		}
 		// A counter naming something that is not a device, or counting
 		// zero changes, is not a vector this device can order anything
 		// against, so the whole manifest is refused.
@@ -316,7 +308,6 @@ func fromWireManifest(h manifestReplyHeader, maxSize int64) (manifest.Manifest, 
 			Deleted:    e.Deleted,
 			ModifiedBy: device.ID(e.ModifiedBy),
 			Sequence:   e.Sequence,
-			SyncedHash: synced,
 			Version:    version,
 		})
 	}
