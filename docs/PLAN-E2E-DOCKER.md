@@ -540,3 +540,24 @@ failed, at the one place that logs both, and decide whether the retry is
 immediate. Scenario 18 therefore checks the convergence, the journals, the
 partial files and every other error line, and counts these, reporting them
 with a pointer here rather than asserting a clean log.
+
+### What the soak leaves out, and why
+
+Scenario 21 (`TestSoak`) runs the rounds and the chaos actions the product
+survives today, and asks for the rest with `SYNCTHIS_E2E_SOAK_CHAOS=all`. The
+full set is blocked, not unwritten: it is in the test, and every part of it
+runs into a known failure above.
+
+| Left out of the default set | Blocked by |
+|---|---|
+| Rewriting a path (`hash_changed`), deleting one, renaming one (`not_found`) | KF-1 |
+| Two devices writing the same path in one round | KF-1, and the zero-loss check by KF-2 |
+| Partitioning a pair for ten seconds | KF-1 through the same refusals once the link comes back |
+| Taking a device off the network and back | KF-3 |
+
+Measured: with rewrites in the set a three-device soak fails at round 11 with
+one `failed` row left in a journal; with deletes and renames as well, at round
+three. Both times the folders were identical on all three devices and the
+journal was the only thing wrong, which is the shape of KF-1. The default set
+therefore makes creations and breaks daemons and containers, and ran 43 rounds
+with 8 chaos actions in three minutes without a failure.
