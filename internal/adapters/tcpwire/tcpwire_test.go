@@ -331,11 +331,11 @@ func TestHandshake_ClientAnnouncingAnotherDeviceRejected(t *testing.T) {
 }
 
 // TestHandshake_OtherProtocolVersionRejected covers every version this build
-// does not speak, version 2 included: a version-2 peer derives chunk
-// boundaries from a size and would answer a byte-range request with the wrong
-// bytes, so it is rejected rather than served.
+// does not speak, version 3 included: a version-3 peer puts no request id in
+// its frames and would read every field of every frame at the wrong offset, so
+// it is rejected rather than served.
 func TestHandshake_OtherProtocolVersionRejected(t *testing.T) {
-	for _, version := range []int{1, 2, 4} {
+	for _, version := range []int{1, 2, 3, 5} {
 		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
 			rejectsVersion(t, version)
 		})
@@ -546,7 +546,7 @@ func TestFoldersChanged_FromTheClientIsAcceptedAndIgnored(t *testing.T) {
 		t.Fatalf("set deadline: %v", err)
 	}
 
-	hello := `{"protocol_version":3,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
+	hello := `{"protocol_version":4,"device_id":"` + string(client.id) + `","device_name":"client","folders":[]}`
 	if err := tcpwire.WriteFrame(conn, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(hello)}); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
@@ -592,10 +592,11 @@ func (h slowHandler) Manifest(_ context.Context, _ device.ID, id folder.ID) (man
 	return m, nil
 }
 
-// TestRequest_TimeoutEndsTheConnection proves a reply the caller stopped
-// waiting for is never handed to the next request: the frames carry no request
-// id, so a late reply would answer the wrong question.
-func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
+// TestRequest_TimeoutSurvivesTheConnection proves a reply the caller stopped
+// waiting for is dropped rather than handed to the next request: every frame
+// carries the id of the request it answers, so a late reply names nobody and
+// the connection stays usable for the requests still on it.
+func TestRequest_TimeoutSurvivesTheConnection(t *testing.T) {
 	server, client := newIdentity(t, "server"), newIdentity(t, "client")
 	slow := slowHandler{handler: handler{info: server.hello("")}, release: make(chan struct{})}
 	ln := startServerWith(t, server, slow, (&lookups{allow: true}).fn(), 0)
@@ -614,13 +615,15 @@ func TestRequest_TimeoutEndsTheConnection(t *testing.T) {
 	// The reply is written now, when nobody is waiting for it.
 	close(slow.release)
 
+	// The next request is answered with its own reply and not with the
+	// late one, which is what the request id buys.
+	if _, err := conn.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping after a timed-out request = %v, want the connection to have survived", err)
+	}
 	select {
 	case <-conn.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("the connection stayed up after a request timed out")
-	}
-	if _, err := conn.Ping(context.Background()); err == nil {
-		t.Fatal("a request after the timeout was answered, so a late reply could have answered it")
+		t.Fatal("the connection ended although only one request timed out")
+	default:
 	}
 }
 

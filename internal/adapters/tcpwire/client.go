@@ -152,6 +152,7 @@ func (d *Dialer) connect(ctx context.Context, addr string, expect device.ID) (*c
 		notifications: make(chan folder.ID, notificationBuffer),
 		done:          make(chan struct{}),
 		maxFileSize:   d.maxFileSize,
+		pending:       make(map[uint64]chan Frame),
 	}
 	c.active = time.Now()
 	go c.readLoop()
@@ -169,9 +170,10 @@ func stageOf(ctx context.Context, fallback string) string {
 
 var _ ports.PeerConn = (*conn)(nil)
 
-// conn is an established client connection. One request is in flight at a
-// time; the read loop routes folder change notifications aside and hands every
-// other frame to the waiting request.
+// conn is an established client connection. Requests are multiplexed: each
+// carries a request id the peer echoes, so several may be outstanding at once.
+// The read loop routes folder change notifications aside and hands every other
+// frame to the request whose id it names.
 type conn struct {
 	tls          *tls.Conn
 	remote       device.ID
@@ -180,14 +182,12 @@ type conn struct {
 	pingInterval time.Duration
 	idleTimeout  time.Duration
 
-	// requests serializes callers so only one request is outstanding.
-	requests sync.Mutex
 	// writes keeps two goroutines, such as a request and the keepalive,
 	// from interleaving frames.
 	writes sync.Mutex
 
 	mu      sync.Mutex
-	pending chan Frame
+	pending map[uint64]chan Frame
 	active  time.Time
 
 	maxFileSize   int64
@@ -196,6 +196,7 @@ type conn struct {
 	closeOnce     sync.Once
 	closeErr      error
 	nonce         atomic.Uint64
+	ids           atomic.Uint64
 }
 
 // RemoteID returns the peer's device ID, derived from its certificate.
@@ -379,10 +380,13 @@ func (c *conn) Close() error {
 	return nil
 }
 
-// request sends one frame and waits for the reply.
+// request sends one frame and waits for the reply. Several requests may run at
+// once: each carries an id the peer echoes, and the read loop hands every reply
+// to the caller that is waiting for that id.
 func (c *conn) request(ctx context.Context, frame Frame) (Frame, error) {
-	c.requests.Lock()
-	defer c.requests.Unlock()
+	// Ids start at one, because zero means "answers nothing" on the wire.
+	id := c.ids.Add(1)
+	frame = frame.withID(id)
 
 	reply := make(chan Frame, 1)
 	c.mu.Lock()
@@ -392,11 +396,11 @@ func (c *conn) request(ctx context.Context, frame Frame) (Frame, error) {
 		return Frame{}, c.err()
 	default:
 	}
-	c.pending = reply
+	c.pending[id] = reply
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
-		c.pending = nil
+		delete(c.pending, id)
 		c.mu.Unlock()
 	}()
 
@@ -412,12 +416,10 @@ func (c *conn) request(ctx context.Context, frame Frame) (Frame, error) {
 	case <-c.done:
 		return Frame{}, c.err()
 	case <-ctx.Done():
-		// A reply that arrives after the caller gave up has nowhere to
-		// go: the frames carry no request id, so the read loop would
-		// hand it to whoever asks next, which is an answer to another
-		// question. The connection ends instead, and the caller's peer
-		// loop opens a new one.
-		c.fail(ctx.Err())
+		// A reply that arrives after the caller gave up names an id
+		// nobody is waiting for any more, so the read loop drops it.
+		// The connection survives a request that timed out; the other
+		// requests on it are unaffected.
 		return Frame{}, ctx.Err()
 	}
 }
@@ -514,15 +516,17 @@ func (c *conn) foldersChanged(frame Frame) {
 	}
 }
 
-// deliver hands a reply to the waiting request. It reports whether a request
-// was waiting; an unexpected frame is dropped.
+// deliver hands a reply to the request whose id it names. It reports whether
+// one was waiting; a frame answering nobody is dropped.
 func (c *conn) deliver(frame Frame) bool {
 	c.mu.Lock()
-	pending := c.pending
-	c.pending = nil
+	pending, ok := c.pending[frame.ReqID]
+	if ok {
+		delete(c.pending, frame.ReqID)
+	}
 	c.mu.Unlock()
-	if pending == nil {
-		c.log.Debug("unexpected frame", "type", frame.Type.String())
+	if !ok {
+		c.log.Debug("unexpected frame", "type", frame.Type.String(), "request", frame.ReqID)
 		return false
 	}
 	pending <- frame

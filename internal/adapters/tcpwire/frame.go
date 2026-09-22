@@ -77,8 +77,8 @@ const MaxFrame = 64 << 20
 // small; a Hello is a few hundred bytes.
 const MaxHelloFrame = 64 << 10
 
-// frameOverhead is the type byte plus the header length field.
-const frameOverhead = 1 + 4
+// frameOverhead is the type byte, the request id and the header length field.
+const frameOverhead = 1 + 8 + 4
 
 // ErrFrameTooLarge reports a frame larger than MaxFrame. The connection is not
 // usable afterwards, because the reader cannot find the next frame boundary.
@@ -87,12 +87,24 @@ var ErrFrameTooLarge = errors.New("frame exceeds the maximum size")
 // ErrMalformedFrame reports a frame whose declared sizes do not add up.
 var ErrMalformedFrame = errors.New("malformed frame")
 
-// Frame is one protocol message: a type, a JSON header and an optional
-// payload. Only chunk data carries a payload.
+// Frame is one protocol message: a type, a request id, a JSON header and an
+// optional payload. Only chunk data and chunk lists carry a payload.
+//
+// ReqID correlates a reply with the request it answers, which is what lets a
+// client have more than one request in flight on one connection. A client
+// picks it; a server echoes it unchanged. Zero means "this frame answers
+// nothing": every unsolicited frame carries it, and so does a Hello.
 type Frame struct {
 	Type    MsgType
+	ReqID   uint64
 	Header  []byte
 	Payload []byte
+}
+
+// withID returns f carrying the request id it answers.
+func (f Frame) withID(id uint64) Frame {
+	f.ReqID = id
+	return f
 }
 
 // WriteFrame writes f in one call, so concurrent writers cannot interleave
@@ -106,9 +118,10 @@ func WriteFrame(w io.Writer, f Frame) error {
 	buf := make([]byte, 4+body)
 	binary.BigEndian.PutUint32(buf[0:4], uint32(body))
 	buf[4] = byte(f.Type)
-	binary.BigEndian.PutUint32(buf[5:9], uint32(len(f.Header)))
-	copy(buf[9:], f.Header)
-	copy(buf[9+len(f.Header):], f.Payload)
+	binary.BigEndian.PutUint64(buf[5:13], f.ReqID)
+	binary.BigEndian.PutUint32(buf[13:17], uint32(len(f.Header)))
+	copy(buf[17:], f.Header)
+	copy(buf[17+len(f.Header):], f.Payload)
 
 	if _, err := w.Write(buf); err != nil {
 		return fmt.Errorf("write %s frame: %w", f.Type, err)
@@ -139,13 +152,14 @@ func readFrameLimit(r io.Reader, limit uint32) (Frame, error) {
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return Frame{}, err
 	}
-	headerLen := binary.BigEndian.Uint32(buf[1:5])
+	headerLen := binary.BigEndian.Uint32(buf[9:13])
 	if uint64(headerLen) > uint64(body-frameOverhead) {
 		return Frame{}, fmt.Errorf("%w: header of %d bytes in a body of %d", ErrMalformedFrame, headerLen, body)
 	}
 
 	return Frame{
 		Type:    MsgType(buf[0]),
+		ReqID:   binary.BigEndian.Uint64(buf[1:9]),
 		Header:  buf[frameOverhead : frameOverhead+headerLen],
 		Payload: buf[frameOverhead+headerLen:],
 	}, nil

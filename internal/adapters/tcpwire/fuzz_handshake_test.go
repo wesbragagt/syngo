@@ -42,10 +42,11 @@ var fuzzPeerID = device.ID(strings.Repeat("B", device.IDLength))
 
 // helloFrameBytes wraps a JSON header in a frame of the given type.
 func helloFrameBytes(t MsgType, header string) []byte {
-	out := make([]byte, 9, 9+len(header))
+	out := make([]byte, 17, 17+len(header))
 	binary.BigEndian.PutUint32(out[0:4], uint32(frameOverhead+len(header)))
 	out[4] = byte(t)
-	binary.BigEndian.PutUint32(out[5:9], uint32(len(header)))
+	binary.BigEndian.PutUint64(out[5:13], 0)
+	binary.BigEndian.PutUint32(out[13:17], uint32(len(header)))
 	return append(out, header...)
 }
 
@@ -55,7 +56,7 @@ func helloFrameBytes(t MsgType, header string) []byte {
 // the current protocol version, and that this side writes its own Hello first
 // whatever the peer sends.
 func FuzzExchangeHello(f *testing.F) {
-	good := `{"protocol_version":3,"device_id":"` + string(fuzzPeerID) +
+	good := `{"protocol_version":4,"device_id":"` + string(fuzzPeerID) +
 		`","device_name":"desktop","folders":[{"id":"photos","mode":"sendreceive"}]}`
 
 	seeds := [][]byte{
@@ -68,8 +69,8 @@ func FuzzExchangeHello(f *testing.F) {
 		helloFrameBytes(MsgHello, ``),
 		helloFrameBytes(MsgHello, `{`),
 		helloFrameBytes(MsgHello, `{"protocol_version":1,"device_id":"`+string(fuzzPeerID)+`"}`),
-		helloFrameBytes(MsgHello, `{"protocol_version":3,"device_id":"`+strings.Repeat("A", device.IDLength)+`"}`),
-		helloFrameBytes(MsgHello, `{"protocol_version":3,"device_id":"nope"}`),
+		helloFrameBytes(MsgHello, `{"protocol_version":4,"device_id":"`+strings.Repeat("A", device.IDLength)+`"}`),
+		helloFrameBytes(MsgHello, `{"protocol_version":4,"device_id":"nope"}`),
 		helloFrameBytes(MsgPing, `{"nonce":1}`),
 		helloFrameBytes(MsgRejected, `[]`),
 		helloFrameBytes(MsgChunkData, `{}`),

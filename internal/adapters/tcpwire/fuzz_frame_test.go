@@ -11,17 +11,18 @@ import (
 // frameBytes builds the wire form of a frame without going through
 // WriteFrame, so a seed can declare sizes that WriteFrame would never write.
 func frameBytes(body uint32, typ byte, headerLen uint32, rest []byte) []byte {
-	out := make([]byte, 9, 9+len(rest))
+	out := make([]byte, 17, 17+len(rest))
 	binary.BigEndian.PutUint32(out[0:4], body)
 	out[4] = typ
-	binary.BigEndian.PutUint32(out[5:9], headerLen)
+	binary.BigEndian.PutUint64(out[5:13], 0)
+	binary.BigEndian.PutUint32(out[13:17], headerLen)
 	return append(out, rest...)
 }
 
 // fuzzFrameSeeds are the raw frames both fuzz targets start from: valid ones
 // and the malformed shapes docs/PROTOCOL.md says are refused.
 func fuzzFrameSeeds() [][]byte {
-	hello := []byte(`{"protocol_version":3,"device_id":"` +
+	hello := []byte(`{"protocol_version":4,"device_id":"` +
 		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
 		`","device_name":"laptop","folders":[{"id":"photos","mode":"sendreceive"}]}`)
 	ping := []byte(`{"nonce":123}`)
@@ -128,7 +129,7 @@ func FuzzReadHelloFrame(f *testing.F) {
 // FuzzWriteFrame writes arbitrary frames and reads them back. The invariant is
 // the round trip: what WriteFrame produces, ReadFrame returns unchanged.
 func FuzzWriteFrame(f *testing.F) {
-	f.Add(uint8(MsgHello), []byte(`{"protocol_version":3}`), []byte(nil))
+	f.Add(uint8(MsgHello), []byte(`{"protocol_version":4}`), []byte(nil))
 	f.Add(uint8(MsgChunkData), []byte(`{"length":4}`), []byte("data"))
 	f.Add(uint8(MsgPing), []byte{}, []byte{})
 	f.Add(uint8(0xAB), []byte{0x00, 0xFF}, []byte{0x00})

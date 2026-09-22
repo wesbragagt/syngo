@@ -15,13 +15,14 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
-// ProtocolVersion is the only version this implementation speaks. Version 3
-// carries chunk boundaries: chunking is content-defined, so the sender says
-// where it cut a file and a chunk request names a byte range rather than an
-// index and a chunk size. A version-2 peer derives boundaries from a size and
-// would answer a range request with the wrong bytes, so the versions do not
-// interoperate and every device of a mesh upgrades together.
-const ProtocolVersion = 3
+// ProtocolVersion is the only version this implementation speaks. Version 4
+// puts a request id in every frame, so a client may have several requests
+// outstanding on one connection and the server may answer them out of order.
+// The id sits in the fixed part of the frame, ahead of the header length, so a
+// version-3 peer reads the wrong bytes for every field of every frame: the
+// versions do not interoperate and every device of a mesh upgrades together,
+// exactly as it did for version 3.
+const ProtocolVersion = 4
 
 // Reasons a connection is rejected during the handshake.
 const (

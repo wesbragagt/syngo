@@ -159,9 +159,9 @@ func FuzzChunkRequest(f *testing.F) {
 // folder list.
 func FuzzHelloHeader(f *testing.F) {
 	seeds := []string{
-		`{"protocol_version":3,"device_id":"` + fuzzDeviceID + `","device_name":"laptop",` +
+		`{"protocol_version":4,"device_id":"` + fuzzDeviceID + `","device_name":"laptop",` +
 			`"folders":[{"id":"photos","mode":"sendreceive"}]}`,
-		`{"protocol_version":3,"device_id":"` + fuzzDeviceID + `","device_name":"","folders":null}`,
+		`{"protocol_version":4,"device_id":"` + fuzzDeviceID + `","device_name":"","folders":null}`,
 		// Known-bad shapes.
 		``,
 		`{}`,

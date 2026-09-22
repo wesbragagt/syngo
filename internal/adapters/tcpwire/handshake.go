@@ -91,12 +91,3 @@ func writeRejected(w io.Writer, reason string) error {
 	}
 	return WriteFrame(w, frame)
 }
-
-// writeError reports a request failure the connection does not survive.
-func writeError(w io.Writer, code, message string) error {
-	frame, err := frameOf(MsgError, errorHeader{Code: code, Message: message}, nil)
-	if err != nil {
-		return err
-	}
-	return WriteFrame(w, frame)
-}

@@ -25,6 +25,15 @@ var _ ports.Listener = (*Listener)(nil)
 // it is bounded; the rest wait their turn and time out if they have to.
 const MaxConcurrentHandshakes = 32
 
+// MaxConcurrentRequests is how many requests of one connected peer are
+// answered at the same time. A client multiplexes chunk requests to keep the
+// link busy while it writes what already arrived, so a server that answered
+// one at a time would be the bottleneck. The number bounds what one peer can
+// make this device read into memory at once: at the 16 MiB maximum chunk size
+// that is 256 MiB across all of them, and a real chunk is around the
+// configured average of 1 MiB.
+const MaxConcurrentRequests = 16
+
 // Listener accepts peer connections on a bound TCP port.
 type Listener struct {
 	cert tls.Certificate
@@ -313,7 +322,23 @@ func (c *serverConn) write(frame Frame) error {
 // serve answers requests until the peer goes silent or closes. A request the
 // application refuses is answered and the connection stays up; only a frame
 // this side cannot parse ends it.
+//
+// Requests are answered concurrently, at most MaxConcurrentRequests of one
+// peer at a time, because a client may have several in flight. Each reply
+// carries the request id of the frame it answers, so the client can tell them
+// apart whatever order they come back in. The read loop itself does no
+// application work: a request that waits on the disk or on the upload limiter
+// must not hold up the one behind it.
 func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var answering sync.WaitGroup
+	defer answering.Wait()
+	// The slots bound how much of this device a single peer can occupy,
+	// and with it how many chunks it can have read into memory at once.
+	slots := make(chan struct{}, MaxConcurrentRequests)
+
 	for {
 		if err := c.tls.SetReadDeadline(time.Now().Add(idleTimeout)); err != nil {
 			return
@@ -326,16 +351,6 @@ func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 			return
 		}
 
-		// The device table may have changed since the handshake: a
-		// peer removed while it was connected is told so and its
-		// connection ends here.
-		if c.known != nil && !c.known(ctx, c.remote) {
-			c.log.Info("peer is no longer a known device")
-			_ = writeError(c.tls, CodeUnknownDevice, "this device is no longer a known peer")
-			return
-		}
-
-		var reply Frame
 		switch frame.Type {
 		case MsgFoldersChanged:
 			// The serving side answers requests about its own
@@ -344,28 +359,71 @@ func (c *serverConn) serve(ctx context.Context, idleTimeout time.Duration) {
 			// ending a connection the peer considers healthy.
 			c.log.Debug("peer announced its folders")
 			continue
-		case MsgPing:
-			reply, err = c.pong(frame)
-		case MsgManifestRequest:
-			reply, err = c.manifest(ctx, frame)
-		case MsgChunkListRequest:
-			reply, err = c.chunkList(ctx, frame)
-		case MsgChunkRequest:
-			reply, err = c.chunk(ctx, frame)
+		case MsgPing, MsgManifestRequest, MsgChunkListRequest, MsgChunkRequest:
 		default:
-			_ = writeError(c.tls, CodeBadRequest, fmt.Sprintf("%s frames are not accepted", frame.Type))
+			c.refuse(frame, CodeBadRequest, fmt.Sprintf("%s frames are not accepted", frame.Type))
 			return
 		}
-		if err != nil {
-			// A header this side cannot read means the peers no
-			// longer agree on the protocol.
-			_ = writeError(c.tls, CodeBadRequest, err.Error())
+
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
 			return
 		}
-		if err := c.write(reply); err != nil {
-			return
-		}
+		answering.Add(1)
+		go func(frame Frame) {
+			defer answering.Done()
+			defer func() { <-slots }()
+			c.answer(ctx, frame)
+		}(frame)
 	}
+}
+
+// answer serves one request and writes its reply. A failure this side cannot
+// classify ends the connection, which unblocks the read loop.
+func (c *serverConn) answer(ctx context.Context, frame Frame) {
+	// The device table may have changed since the handshake: a peer removed
+	// while it was connected is told so and its connection ends here. The
+	// check is per request, alongside the folder authorization the handler
+	// makes, so neither is skipped by a peer that pipelines its requests.
+	if c.known != nil && !c.known(ctx, c.remote) {
+		c.log.Info("peer is no longer a known device")
+		c.refuse(frame, CodeUnknownDevice, "this device is no longer a known peer")
+		return
+	}
+
+	var (
+		reply Frame
+		err   error
+	)
+	switch frame.Type {
+	case MsgPing:
+		reply, err = c.pong(frame)
+	case MsgManifestRequest:
+		reply, err = c.manifest(ctx, frame)
+	case MsgChunkListRequest:
+		reply, err = c.chunkList(ctx, frame)
+	default:
+		reply, err = c.chunk(ctx, frame)
+	}
+	if err != nil {
+		// A header this side cannot read means the peers no longer
+		// agree on the protocol.
+		c.refuse(frame, CodeBadRequest, err.Error())
+		return
+	}
+	if err := c.write(reply.withID(frame.ReqID)); err != nil {
+		_ = c.tls.Close()
+	}
+}
+
+// refuse answers a request with an Error frame and ends the connection. The
+// close is what stops the read loop, which is blocked on the peer.
+func (c *serverConn) refuse(frame Frame, code, message string) {
+	if reply, err := frameOf(MsgError, errorHeader{Code: code, Message: message}, nil); err == nil {
+		_ = c.write(reply.withID(frame.ReqID))
+	}
+	_ = c.tls.Close()
 }
 
 // pong answers a keepalive.
