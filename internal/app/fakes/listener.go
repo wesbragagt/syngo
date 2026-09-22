@@ -9,7 +9,10 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
-var _ ports.Listener = (*Listener)(nil)
+var (
+	_ ports.Listener      = (*Listener)(nil)
+	_ ports.BoundListener = (*Listener)(nil)
+)
 
 // change is one folder change a listener was asked to broadcast.
 type change struct {
@@ -20,6 +23,10 @@ type change struct {
 // Listener is a ports.Listener that accepts nothing and records what it was
 // asked to tell the peers.
 type Listener struct {
+	addr      string
+	closeOnce sync.Once
+	closed    chan struct{}
+
 	mu        sync.Mutex
 	changes   []change
 	announced [][]ports.FolderAdvert
@@ -27,16 +34,42 @@ type Listener struct {
 }
 
 // NewListener returns a listener that serves no connections.
-func NewListener() *Listener { return &Listener{} }
+func NewListener() *Listener { return NewListenerAt("127.0.0.1:0") }
 
-// Serve blocks until ctx is done, like a real listener with no callers.
+// NewListenerAt returns a listener that reports the given bound address.
+func NewListenerAt(addr string) *Listener {
+	return &Listener{addr: addr, closed: make(chan struct{})}
+}
+
+// Serve blocks until ctx is done or the listener is closed, like a real
+// listener with no callers.
 func (l *Listener) Serve(ctx context.Context, _ ports.PeerHandler, _ ports.DeviceLookup) error {
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-l.closed:
+	}
 	return nil
 }
 
-// Addr returns a fixed address.
-func (l *Listener) Addr() string { return "127.0.0.1:0" }
+// Close makes Serve return, the way closing a socket does. It is safe to call
+// more than once.
+func (l *Listener) Close() error {
+	l.closeOnce.Do(func() { close(l.closed) })
+	return nil
+}
+
+// Closed reports whether Close was called.
+func (l *Listener) Closed() bool {
+	select {
+	case <-l.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Addr returns the bound address.
+func (l *Listener) Addr() string { return l.addr }
 
 // Broadcast records a folder change notification.
 func (l *Listener) Broadcast(id folder.ID, seq uint64) {
@@ -64,6 +97,13 @@ func (l *Listener) Retained() [][]device.ID {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([][]device.ID(nil), l.retained...)
+}
+
+// Changes returns the folder change notifications Broadcast was asked for.
+func (l *Listener) Changes() []change {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]change(nil), l.changes...)
 }
 
 // Announcements returns the folder lists AnnounceFolders was called with.
