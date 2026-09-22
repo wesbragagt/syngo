@@ -55,8 +55,8 @@ e2e-docker-soak: e2e-docker-image
 
 # The scale suite measures the claims that take minutes and disk rather than
 # seconds: a 100,000-file reconcile, the idle memory of a daemon, a 10 GiB
-# transfer, 1,000 kill-and-restart cycles and a bandwidth limit held to within
-# 5%. It lives in internal/e2e and is opt-in the same way the container suite
+# transfer, 1,000 kill-and-restart cycles, a bandwidth limit held to within
+# 5%, and the Phase 5 benchmarks over a 10 GiB file and a 100,000-file status. It lives in internal/e2e and is opt-in the same way the container suite
 # is: `make test` compiles it and every test skips.
 #
 # SCALE_DIR is where the fixtures, folder roots and staged files go. It must
@@ -74,6 +74,7 @@ SCALE_TRANSFER_GIB ?= 10
 SCALE_RATE_SECONDS ?= 120
 SCALE_FILES_EACH   ?= 500
 SCALE_IDLE_SECONDS ?= 300
+SCALE_BIGFILE_GIB  ?= 10
 
 scale:
 	@mkdir -p $(SCALE_DIR)
@@ -84,6 +85,7 @@ scale:
 	SYNCTHIS_SCALE_RATE_SECONDS=$(SCALE_RATE_SECONDS) \
 	SYNCTHIS_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
 	SYNCTHIS_SCALE_IDLE_SECONDS=$(SCALE_IDLE_SECONDS) \
+	SYNCTHIS_SCALE_BIGFILE_GIB=$(SCALE_BIGFILE_GIB) \
 	  go test ./internal/e2e/ -run 'TestScale_' -count=1 -p 1 -v -timeout 180m
 
 # Containers and networks of a run killed before its cleanups ran.
