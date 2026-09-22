@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -127,3 +128,63 @@ func (l *Limiter) Observe(netTime, diskTime time.Duration) {
 // clamp holds a limit inside the bounds, so no configuration and no
 // measurement can put the pipeline outside them.
 func clamp(n int) int { return min(max(n, Floor), Ceiling) }
+
+// Gate admits as many holders at once as its Limiter currently allows. One
+// gate stands for one file being downloaded, while the Limiter behind it is
+// the device's: what the last file learned about this disk and this link is
+// what the next one starts from, and the floor of one holder per file is the
+// sequential download this replaced.
+//
+// The limit is re-read on every admission rather than captured, so a limit
+// that moved while a file was downloading takes effect at the next chunk. A
+// holder blocked at the gate is woken by every release, so a limit that rose
+// is noticed as soon as anything finishes.
+type Gate struct {
+	limiter *Limiter
+
+	mu   sync.Mutex
+	held int
+	wake chan struct{}
+}
+
+// NewGate returns a gate admitting what l allows. A nil limiter admits one
+// holder at a time, which is the sequential download.
+func NewGate(l *Limiter) *Gate {
+	return &Gate{limiter: l, wake: make(chan struct{})}
+}
+
+// Acquire blocks until the gate admits one more holder, or ctx ends.
+func (g *Gate) Acquire(ctx context.Context) error {
+	for {
+		g.mu.Lock()
+		if g.held < g.limiter.Limit() {
+			g.held++
+			g.mu.Unlock()
+			return nil
+		}
+		wake := g.wake
+		g.mu.Unlock()
+
+		select {
+		case <-wake:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// Release gives one admission back and wakes everyone waiting for one.
+func (g *Gate) Release() {
+	g.mu.Lock()
+	g.held = max(g.held-1, 0)
+	close(g.wake)
+	g.wake = make(chan struct{})
+	g.mu.Unlock()
+}
+
+// Held reports how many holders the gate has admitted right now.
+func (g *Gate) Held() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.held
+}

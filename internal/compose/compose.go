@@ -256,7 +256,10 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 		handler := syncer.New(store, fs, app.Hasher, identity, cfg.ChunkSize, logger)
 		handler.SetUploadLimiter(upload)
 		app.Puller = syncer.NewPuller(store, fs, app.Hasher, clock, identity, events,
-			syncer.PullerConfig{ChunkSize: cfg.ChunkSize, Download: download}, logger)
+			syncer.PullerConfig{
+				ChunkSize: cfg.ChunkSize, Download: download,
+				ChunkPipeline: cfg.ChunkPipeline,
+			}, logger)
 		// The Hello is built per connection because the folder list
 		// changes while the process runs, and per peer because it
 		// names only the folders that peer is authorized for.

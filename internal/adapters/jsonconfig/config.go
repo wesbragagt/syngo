@@ -66,6 +66,13 @@ type Config struct {
 	// unlimited. They cover chunk payloads only.
 	UploadLimit   int64 `json:"upload_limit"`
 	DownloadLimit int64 `json:"download_limit"`
+	// ChunkPipeline pins how many chunks of one file this device asks a
+	// peer for at once. Zero, the default, lets the daemon adapt it to
+	// what the wire and the disk are measured to cost. One is the
+	// sequential download; a constrained device pins it low and a
+	// measurement pins it to compare two settings. Values outside the
+	// pipeline's own bounds are held inside them rather than refused.
+	ChunkPipeline int `json:"chunk_pipeline"`
 }
 
 // Default returns the configuration used when none has been written yet.

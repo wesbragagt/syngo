@@ -15,6 +15,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/pipeline"
 	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
@@ -71,6 +72,11 @@ type Puller struct {
 	// download paces what this device asks peers for. A nil limiter means
 	// unlimited.
 	download ports.Limiter
+	// pipeline decides how many chunks of one file are asked for at once,
+	// and budget bounds how many bytes of chunk content this device holds
+	// in memory across every file it is downloading.
+	pipeline *pipeline.Limiter
+	budget   *pipeline.Budget
 	log      *slog.Logger
 
 	// resumed remembers the transfers whose partial file this process has
@@ -101,6 +107,17 @@ type PullerConfig struct {
 	// Download paces the chunks this device asks for, across every folder
 	// and every peer. A nil limiter means unlimited.
 	Download ports.Limiter
+	// ChunkPipeline pins how many chunks of one file are asked for at
+	// once. Zero adapts it to what the wire and the disk are measured to
+	// cost; one is the sequential download; anything else is held inside
+	// [pipeline.Floor, pipeline.Ceiling]. A constrained device pins it
+	// low, and a test pins it to compare one setting against another.
+	ChunkPipeline int
+	// ChunkBytesInFlight bounds the chunk content held in memory, in
+	// bytes, across every file this device is downloading. Zero takes
+	// pipeline.DefaultBudget; a negative value is unlimited, which is for
+	// a test that wants the bound out of the way.
+	ChunkBytesInFlight int64
 }
 
 // NewPuller returns a puller writing through fsys.
@@ -115,10 +132,19 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = DefaultConcurrency
 	}
+	limiter := pipeline.Adaptive()
+	if cfg.ChunkPipeline > 0 {
+		limiter = pipeline.Pinned(cfg.ChunkPipeline)
+	}
+	budget := pipeline.NewBudget(pipeline.DefaultBudget)
+	if cfg.ChunkBytesInFlight != 0 {
+		budget = pipeline.NewBudget(cfg.ChunkBytesInFlight)
+	}
 	return &Puller{
 		store: store, fs: fsys, hasher: hasher, clock: clock, identity: identity, events: events,
 		installer: NewInstaller(fsys, hasher),
-		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, download: cfg.Download, log: log,
+		chunkSize: cfg.ChunkSize, workers: cfg.Concurrency, download: cfg.Download,
+		pipeline: limiter, budget: budget, log: log,
 		resumed: make(map[transfer.ID]bool),
 		gates:   make(map[folder.ID]chan struct{}),
 	}
@@ -962,7 +988,21 @@ func (p *Puller) resume(ctx context.Context, t *transfer.Transfer) error {
 	return p.store.SaveTransfer(ctx, *t)
 }
 
-// fetch downloads every chunk the journal is still missing.
+// fetch downloads every chunk the journal is still missing, several at a time.
+//
+// Chunks of one file are independent: each covers a byte range of its own, is
+// verified against the hash the sender announced before anything is recorded,
+// and is journalled on its own row. So they are fetched in parallel, which is
+// what fills the wait for the peer with the work of writing what already
+// arrived. Order is not preserved and does not have to be; completeness is,
+// and it is the journal that states it.
+//
+// Three things bound what this costs. The gate bounds how many requests are
+// outstanding, and moves with what the last chunks measured. The byte budget
+// bounds how much chunk content is held in memory at once, across every file
+// and every folder, which is the backpressure: a disk that cannot keep up
+// holds the bytes, and the fetchers wait for them rather than asking for more.
+// And a failure of any chunk stops the rest at once.
 func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Transfer) error {
 	missing := t.MissingChunks()
 	if len(missing) == 0 {
@@ -975,74 +1015,73 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 	}
 	defer func() { _ = temp.Close() }()
 
-	for n, idx := range missing {
-		if err := ctx.Err(); err != nil {
-			return err
+	// An adaptive pipeline starts the ceiling of workers, not its current
+	// limit: the gate is what admits them, and it re-reads the limit on
+	// every chunk, so a limit that rose while this file was downloading is
+	// used without starting anything new. A pinned one starts exactly what
+	// it was pinned to, so a pin of one is the sequential download it says
+	// it is, chunk by chunk in the order the journal lists them.
+	workers := pipeline.Ceiling
+	if p.pipeline.Pinned() {
+		workers = p.pipeline.Limit()
+	}
+	workers = min(workers, len(missing))
+	gate := pipeline.NewGate(p.pipeline)
+
+	group, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+		done     int
+	)
+	fail := func(cause error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = cause
+			cancel()
 		}
-		// The check sits before the request, so a pause takes effect
-		// within one chunk: the chunk being fetched is finished and
-		// recorded, and nothing more is asked for.
-		if p.pausedNow(ctx, t.FolderID) {
-			return fmt.Errorf("folder %q: %w", t.FolderID, ports.ErrPaused)
-		}
-		// A window that closed stops the transfer just as a pause
-		// does, within one chunk. It stays pending, so the first
-		// cycle after the window opens continues it from the journal.
-		if p.outsideWindowNow(ctx, t.FolderID) {
-			return ErrOutsideWindow
-		}
-		chunk := t.Chunks[idx]
-		// What this device already holds is never asked for. The
-		// lookup is by chunk hash across every folder, so another
-		// version of this file, another file, or a file of a different
-		// folder all answer it.
-		data, err := p.localChunk(ctx, chunk)
-		if err != nil {
-			return err
-		}
-		source := "local"
-		if data == nil {
-			source = "peer"
-			// The budget is taken before the request, not after the
-			// reply: a peer that is never asked sends nothing, so
-			// nothing has to be buffered here while the limit is
-			// waited out. Bytes taken from the local disk cost the
-			// network nothing and are not charged.
-			if p.download != nil {
-				if err := p.download.Wait(ctx, chunk.Length); err != nil {
-					return err
+		mu.Unlock()
+	}
+
+	queue := make(chan int)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range queue {
+				if err := gate.Acquire(group); err != nil {
+					fail(err)
+					return
+				}
+				err := p.fetchChunk(group, conn, t, temp, idx, &mu, &done)
+				gate.Release()
+				if err != nil {
+					fail(err)
+					return
 				}
 			}
-			data, err = p.chunk(ctx, conn, *t, chunk)
-			if err != nil {
-				return err
-			}
-		}
-		if _, err := temp.WriteAt(data, chunk.Offset); err != nil {
-			return fmt.Errorf("write %s at %d: %w", t.TempPath, chunk.Offset, err)
-		}
-		if (n+1)%syncEvery == 0 {
-			if err := temp.Sync(); err != nil {
-				return fmt.Errorf("flush %s: %w", t.TempPath, err)
-			}
-		}
+		}()
+	}
 
-		hash := p.hasher.SumBytes(data)
-		now := p.clock.Now()
-		if err := p.store.MarkChunkVerified(ctx, t.ID, idx, hash, now); err != nil {
-			return err
+feed:
+	for _, idx := range missing {
+		select {
+		case queue <- idx:
+		case <-group.Done():
+			break feed
 		}
-		if err := t.MarkVerified(idx, hash, now); err != nil {
-			return err
-		}
-		p.publish("transfer.chunk_verified", map[string]any{
-			"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
-			"path": t.Path, "index": idx,
-			// length and source are what a measurement adds up: how
-			// many payload bytes crossed the network and how many
-			// came off this device's own disk.
-			"length": chunk.Length, "source": source,
-		})
+	}
+	close(queue)
+	wg.Wait()
+
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	if err := temp.Truncate(t.Size); err != nil {
@@ -1051,6 +1090,114 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 	if err := temp.Sync(); err != nil {
 		return fmt.Errorf("flush %s: %w", t.TempPath, err)
 	}
+	return nil
+}
+
+// fetchChunk gets one chunk, writes it and records it as verified. It is what
+// runs in parallel, so everything it shares is either immutable, its own byte
+// range of the partial file, or held under mu.
+//
+// done counts the chunks this call and its siblings have written, which is
+// what the periodic flush is spaced by.
+func (p *Puller) fetchChunk(ctx context.Context, conn ports.PeerConn, t *transfer.Transfer,
+	temp ports.TempFile, idx int, mu *sync.Mutex, done *int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The check sits before the request, so a pause takes effect within one
+	// chunk: the chunks already in flight are finished and recorded, and
+	// nothing more is asked for.
+	if p.pausedNow(ctx, t.FolderID) {
+		return fmt.Errorf("folder %q: %w", t.FolderID, ports.ErrPaused)
+	}
+	// A window that closed stops the transfer just as a pause does. It
+	// stays pending, so the first cycle after the window opens continues it
+	// from the journal.
+	if p.outsideWindowNow(ctx, t.FolderID) {
+		return ErrOutsideWindow
+	}
+	chunk := t.Chunks[idx]
+
+	// The budget is taken before anything is fetched and given back only
+	// once the bytes are on disk, so it bounds what is held rather than
+	// what is asked for.
+	if err := p.budget.Acquire(ctx, chunk.Length); err != nil {
+		return err
+	}
+	defer p.budget.Release(chunk.Length)
+
+	// What this device already holds is never asked for. The lookup is by
+	// chunk hash across every folder, so another version of this file,
+	// another file, or a file of a different folder all answer it.
+	fetchStart := p.clock.Now()
+	data, err := p.localChunk(ctx, chunk)
+	if err != nil {
+		return err
+	}
+	source := "local"
+	if data == nil {
+		source = "peer"
+		// The rate budget is taken before the request, not after the
+		// reply: a peer that is never asked sends nothing, so nothing
+		// has to be buffered here while the limit is waited out. Bytes
+		// taken from the local disk cost the network nothing and are
+		// not charged.
+		if p.download != nil {
+			if err := p.download.Wait(ctx, chunk.Length); err != nil {
+				return err
+			}
+		}
+		data, err = p.chunk(ctx, conn, t.FolderID, t.Path, t.Hash, chunk)
+		if err != nil {
+			return err
+		}
+	}
+	// A chunk that came off this disk cost the wire nothing, so it says
+	// nothing about how wide the pipeline should be and is not measured.
+	netTime := p.clock.Now().Sub(fetchStart)
+	writeStart := p.clock.Now()
+
+	// Two chunks of one file never cover the same bytes, which the chunk
+	// list was checked for before this transfer existed, so the writes do
+	// not need to be serialized against each other.
+	if _, err := temp.WriteAt(data, chunk.Offset); err != nil {
+		return fmt.Errorf("write %s at %d: %w", t.TempPath, chunk.Offset, err)
+	}
+	hash := p.hasher.SumBytes(data)
+	now := p.clock.Now()
+	// The journal row is written after the bytes are, and never before: a
+	// process killed between the two leaves a row that resume re-reads and
+	// re-hashes, which is what makes a parallel download as resumable as a
+	// sequential one.
+	if err := p.store.MarkChunkVerified(ctx, t.ID, idx, hash, now); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	err = t.MarkVerified(idx, hash, now)
+	*done++
+	flush := *done%syncEvery == 0
+	mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if flush {
+		if err := temp.Sync(); err != nil {
+			return fmt.Errorf("flush %s: %w", t.TempPath, err)
+		}
+	}
+	if source == "peer" {
+		p.pipeline.Observe(netTime, p.clock.Now().Sub(writeStart))
+	}
+
+	p.publish("transfer.chunk_verified", map[string]any{
+		"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
+		"path": t.Path, "index": idx,
+		// length and source are what a measurement adds up: how many
+		// payload bytes crossed the network and how many came off this
+		// device's own disk.
+		"length": chunk.Length, "source": source,
+	})
 	return nil
 }
 
@@ -1096,10 +1243,14 @@ func (p *Puller) localChunk(ctx context.Context, c transfer.Chunk) ([]byte, erro
 // chunk asks the peer for one chunk and verifies it before it is written. A
 // chunk that does not hash to what the peer announced is asked for again; a
 // peer that keeps sending broken data fails the transfer.
-func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Transfer,
-	c transfer.Chunk) ([]byte, error) {
+//
+// It takes the three fields of the transfer it needs rather than the transfer
+// itself: chunks of one file are fetched in parallel, and the transfer is
+// written to as each of them lands, so copying it here would race with that.
+func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, id folder.ID, relPath string,
+	fileHash manifest.Hash, c transfer.Chunk) ([]byte, error) {
 	req := ports.ChunkRequest{
-		FolderID: t.FolderID, Path: t.Path, Hash: t.Hash,
+		FolderID: id, Path: relPath, Hash: fileHash,
 		Index: c.Index, Offset: c.Offset, Length: c.Length,
 	}
 
@@ -1112,19 +1263,19 @@ func (p *Puller) chunk(ctx context.Context, conn ports.PeerConn, t transfer.Tran
 		switch {
 		case len(data.Data) != c.Length:
 			last = fmt.Errorf("chunk %d of %s: %d bytes, expected %d: %w",
-				c.Index, t.Path, len(data.Data), c.Length, ErrIntegrity)
+				c.Index, relPath, len(data.Data), c.Length, ErrIntegrity)
 		case p.hasher.SumBytes(data.Data) != data.ChunkHash:
 			last = fmt.Errorf("chunk %d of %s: content does not match its hash: %w",
-				c.Index, t.Path, ErrIntegrity)
+				c.Index, relPath, ErrIntegrity)
 		case !c.Hash.IsZero() && data.ChunkHash != c.Hash:
 			// The chunk list said what this chunk hashes to, so
 			// bytes that hash to something else are not it.
 			last = fmt.Errorf("chunk %d of %s: hashes to %s, the chunk list said %s: %w",
-				c.Index, t.Path, data.ChunkHash, c.Hash, ErrIntegrity)
+				c.Index, relPath, data.ChunkHash, c.Hash, ErrIntegrity)
 		default:
 			return data.Data, nil
 		}
-		p.log.Warn("chunk failed verification", "path", t.Path, "index", c.Index,
+		p.log.Warn("chunk failed verification", "path", relPath, "index", c.Index,
 			"attempt", attempt, "error", last)
 	}
 	return nil, last

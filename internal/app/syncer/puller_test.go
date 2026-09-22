@@ -32,10 +32,24 @@ type dest struct {
 	events *fakes.Events
 	puller *syncer.Puller
 	folder folder.Folder
+	// pipeline is how many chunks of one file this device asks for at
+	// once. It is pinned to one by default, so a test that counts chunk
+	// requests, interrupts after the nth or watches a clock move between
+	// two of them sees the one order it was written against. A test about
+	// the pipeline itself sets it.
+	pipeline int
 }
 
-// newDest returns a receiving device connected to handler.
+// newDest returns a receiving device connected to handler, asking for one
+// chunk at a time.
 func newDest(t *testing.T, handler ports.PeerHandler) (*dest, *fakes.PeerConn) {
+	t.Helper()
+	return newDestWith(t, handler, 1)
+}
+
+// newDestWith returns a receiving device whose chunk pipeline is pinned to the
+// given width.
+func newDestWith(t *testing.T, handler ports.PeerHandler, chunkPipeline int) (*dest, *fakes.PeerConn) {
 	t.Helper()
 	f := testFolder("docs", false)
 	f.Path = "/home/dest/docs"
@@ -43,13 +57,13 @@ func newDest(t *testing.T, handler ports.PeerHandler) (*dest, *fakes.PeerConn) {
 	d := &dest{
 		store: fakes.NewStore(), fs: fakes.NewFileSystem(), hasher: fakes.NewHasher(),
 		clock: fakes.NewClock(time.Time{}), events: fakes.NewEvents(), folder: f,
+		pipeline: chunkPipeline,
 	}
 	d.fs.AddDir(f.Path, 0o755)
 	if err := d.store.SaveFolder(context.Background(), f); err != nil {
 		t.Fatalf("save folder: %v", err)
 	}
-	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, fakes.NewIdentity(destID, "dest"), d.events,
-		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 2}, nil)
+	d.restart()
 	return d, fakes.NewPeerConn(peerID, "nas", handler, time.Millisecond)
 }
 
@@ -57,7 +71,7 @@ func newDest(t *testing.T, handler ports.PeerHandler) (*dest, *fakes.PeerConn) {
 // The store and the filesystem survive, the in-memory state does not.
 func (d *dest) restart() {
 	d.puller = syncer.NewPuller(d.store, d.fs, d.hasher, d.clock, fakes.NewIdentity(destID, "dest"), d.events,
-		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 2}, nil)
+		syncer.PullerConfig{ChunkSize: chunkSize, Concurrency: 2, ChunkPipeline: d.pipeline}, nil)
 }
 
 // sync runs one sync cycle and fails the test when it does not finish.
