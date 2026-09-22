@@ -899,6 +899,12 @@ reached. `action` is one of
 `symlink-policy-skip`, `remote-deleted`, `kind-changed`, `replace-vs-modify`,
 `mode-changed`, `mode-baseline-unknown` or `invalid-path`.
 
+`remote-newer` means the peer's version was made on top of the one this device
+holds, and `local-newer` the other way round; neither reads a clock. Two
+versions where neither was made on top of the other are `both-modified`, or
+`delete-vs-modify` and `replace-vs-modify` when one side deleted the path or
+replaced it by another kind.
+
 `invalid-path` is a path a peer may not name at all, such as one that climbs
 out of the folder or names the state directory, or a symbolic link whose target
 leaves the folder. Such an entry is skipped rather than acted on. A path the

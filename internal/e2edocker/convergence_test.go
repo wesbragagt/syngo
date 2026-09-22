@@ -56,8 +56,6 @@ const pathsPerDevice = 12
 // itself: every round has to end with the same tree everywhere and nothing
 // recorded as a conflict.
 func TestMesh_ConcurrentDisjointEditsConverge(t *testing.T) {
-	t.Skip("known: a transfer whose source changes mid-flight stays in the journal as failed forever, " +
-		"so the journal is never empty again; see Known failures in docs/PLAN-E2E-DOCKER.md")
 	c := Start(t, 3)
 
 	rounds := editRounds
@@ -153,8 +151,6 @@ func TestMesh_ConcurrentDisjointEditsConverge(t *testing.T) {
 // the two losing versions as copies: three-way divergence may not lose
 // anything a two-way one would keep.
 func TestMesh_ThreeWritersOneConflict(t *testing.T) {
-	t.Skip("known: three-way divergence keeps only one of the two losing versions, the third is lost " +
-		"on every device; see Known failures in docs/PLAN-E2E-DOCKER.md")
 	c := Start(t, 3)
 	c.requireNetAdmin()
 
@@ -210,7 +206,17 @@ func TestMesh_ThreeWritersOneConflict(t *testing.T) {
 			t.Errorf("%s holds %d conflict copies, want %d: %v",
 				dev.Name, len(copies), len(versions)-1, copies)
 		}
-		if rows := dev.Conflicts(); len(rows) == 0 {
+	}
+
+	// A conflict is recorded by the device that had to move its own
+	// version aside, which is the two-device contract: the device whose
+	// version keeps the path has nothing to decide.
+	for i, dev := range c.Devices {
+		rows := dev.Conflicts()
+		if i == winner {
+			continue
+		}
+		if len(rows) == 0 {
 			t.Errorf("%s recorded no conflict over report.md", dev.Name)
 		}
 	}

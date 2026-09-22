@@ -13,9 +13,6 @@ import (
 // that stayed together must agree the whole time, and what they and the lone
 // device did to the same path must end as a keep-both with nothing lost.
 func TestPartition_EditBothSidesThenHeal(t *testing.T) {
-	t.Skip("known: healing a divergence over one path leaves a refused transfer in the journal for good, " +
-		"because the version being pulled is replaced by the keep-both resolution; " +
-		"see Known failures (KF-1) in docs/PLAN-E2E-DOCKER.md")
 	c := Start(t, 3)
 	c.requireNetAdmin()
 	a, b, cc := c.Device(0), c.Device(1), c.Device(2)
@@ -88,8 +85,6 @@ const offlineRounds = 30
 // absent device has to catch up on everything at once, deletions included,
 // without calling any of it a conflict: it changed nothing itself.
 func TestOffline_LongAbsenceCatchesUp(t *testing.T) {
-	t.Skip("known: a device that rejoins after an absence rolls the files that changed while it was " +
-		"away back to the version it still held; see Known failures in docs/PLAN-E2E-DOCKER.md")
 	c := Start(t, 3)
 	a, b := c.Device(0), c.Device(1)
 
@@ -179,8 +174,6 @@ func TestOffline_LongAbsenceCatchesUp(t *testing.T) {
 // contribute about that file, so what the others agreed on while it was away
 // must stand.
 func TestOffline_StaleRejoinKeepsTheNewerVersion(t *testing.T) {
-	t.Skip("known: the stale version wins and overwrites the newer one on every device; " +
-		"see Known failures in docs/PLAN-E2E-DOCKER.md")
 	c := Start(t, 3)
 	a := c.Device(0)
 
@@ -219,9 +212,6 @@ const netemRounds = 3
 // slower, not different: every round still ends with the same tree everywhere
 // and nothing anyone calls a conflict.
 func TestNetem_LatencyAndLoss(t *testing.T) {
-	t.Skip("known: a link with latency makes a peer ask for a version the writer has already replaced, " +
-		"and the refused transfer stays in the journal as failed forever; see Known failures (KF-1) " +
-		"in docs/PLAN-E2E-DOCKER.md")
 	c := Start(t, 3)
 	c.requireNetAdmin()
 	for i := range c.Devices {

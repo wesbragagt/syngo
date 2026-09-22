@@ -365,145 +365,26 @@ docker ps -a --filter label=syncthis.e2e -q | wc -l      # 0 after a run
 - /home/wesbragagt/dev/syncthing/internal/compose/compose.go (`Init` preserves a pre-written `config.json`, which the bootstrap relies on)
 ## 10. Known failures
 
-Two scenarios of section 5 fail against the product as it is today. Neither
-invariant was loosened: both tests are written as the catalog describes them
-and carry a `t.Skip` that points here. Removing the skip is the test for the
-fix.
+KF-1, KF-2 and KF-3 are fixed; their scenarios run unskipped. What they were
+and how they were fixed is `docs/PLAN-3.md`, in one line each:
 
-### KF-1: a transfer whose source changes while it runs stays failed forever
+- **KF-1**, a transfer whose source changed mid-flight stayed `failed`
+  forever, so the journal never emptied (`TestMesh_ConcurrentDisjointEditsConverge`,
+  `TestNetem_LatencyAndLoss`, `TestPartition_EditBothSidesThenHeal`). A
+  superseded transfer now leaves no row, and a `failed` row means an integrity
+  failure alone.
+- **KF-2**, three-way divergence kept only one of the two losing versions
+  (`TestMesh_ThreeWritersOneConflict`). A conflict outcome now carries the
+  merge of both vectors, and a copy is named after the version it holds, so
+  resolving the pairs in any order ends with the same two copies everywhere.
+- **KF-3**, a device rejoining after an absence rolled everyone back
+  (`TestOffline_LongAbsenceCatchesUp`,
+  `TestOffline_StaleRejoinKeepsTheNewerVersion`). The single `synced_hash`
+  baseline is gone; two versions are ordered by their version vectors.
 
-Scenario 3 (`TestMesh_ConcurrentDisjointEditsConverge`). The folders converge,
-but `transfer list` never empties again, so the run fails at the journal half
-of the convergence invariant.
-
-What happens: while a receiver pulls a file, the sender changes or deletes it.
-The next chunk request is refused with `hash_changed` or `not_found`
-(`internal/app/syncer/server.go`), and `Puller.failed`
-(`internal/app/syncer/puller.go`) writes the transfer off as `failed` with that
-message. The newer version is then pulled by a new transfer and the trees
-agree, but the failed row is permanent: `ResumeAll` only picks up `active`,
-`verifying` and `paused` transfers, `repair` skips `done` and `failed` rows
-(`internal/app/repair/service.go`), and no CLI command removes one. Every such
-race leaves a row behind and `status.transfers.failed` counts up for the life
-of the database.
-
-Reproduction, two devices in a mesh:
-
-1. A writes `big.bin`, 64 MiB.
-2. Wait until B reports `chunks_done > 0` for it.
-3. A rewrites `big.bin` with different content of the same size.
-4. Wait for the trees to be equal.
-
-Observed on B afterwards, with the trees equal:
-
-```
-[{Path:big.bin State:failed ChunksTotal:1024 ChunksDone:0   Error:chunk 0 of docs/big.bin refused: hash_changed}
- {Path:big.bin State:failed ChunksTotal:1024 ChunksDone:273 Error:chunk 273 of docs/big.bin refused: hash_changed}]
-status.transfers = {Active:0 Pending:0 Paused:0 Failed:2}
-```
-
-A fix has to decide a policy (drop the row when a later transfer for the same
-path completes, or retry instead of failing when the refusal says the peer's
-version moved on), which is more than a few clearly correct lines, so it is
-recorded here rather than patched.
-
-Scenario 20 (`TestNetem_LatencyAndLoss`) shows the same failure without any
-transfer being interrupted, and is skipped for it too. With 100 ms of latency
-on every link, a device asks for a version out of a manifest it fetched a
-moment ago; by the time the request arrives the writer has rewritten or
-deleted that path, and the refusal is permanent in the same way:
-
-```
-a: a/r00-1.bin failed 0/2  chunk 0 of docs/a/r00-1.bin refused: not_found
-b: c/r00-0.bin failed 0/1  chunk 0 of docs/c/r00-0.bin refused: hash_changed
-c: b/r00-0.bin failed 0/1  chunk 0 of docs/b/r00-0.bin refused: hash_changed
-```
-
-The rounds converged before the rewrite, so nothing was mid-transfer: the
-window is the age of a manifest, which is as long as the round trip. Any
-cluster where files are edited or deleted at all accumulates these rows once
-the link is slow enough, which makes this the reason to fix KF-1 rather than a
-second bug.
-
-Scenario 5 (`TestPartition_EditBothSidesThenHeal`) is skipped for the same
-reason, and is the plainest reproduction of the three because no test writes
-anything while a transfer runs. Two devices write different versions of
-`x.txt` on either side of a partition; the partition is healed; the device
-holding the losing version starts pulling the winner, and the keep-both
-resolution replaces the file it is pulling from underneath it:
-
-```
-a: x.txt failed 2/3  chunk 2 of docs/x.txt refused: hash_changed
-```
-
-Everything else the scenario asks for holds: the winner keeps the path on all
-three devices, the losing version is there as one conflict copy, and the trees
-are equal. Only the journal is wrong, and it stays wrong. Two runs in three
-failed this way; the third had the transfer finish before the resolution.
-Resolving a divergence is the one thing a synchronizer is certain to do, so
-this is the case that decides the policy KF-1 needs.
-
-### KF-2: three-way divergence loses one of the three versions
-
-Scenario 4 (`TestMesh_ThreeWritersOneConflict`). Three devices are partitioned
-from each other, each writes a different version of `report.md`, the links are
-healed.
-
-Expected: the greatest hash keeps `report.md`, the other two versions survive
-as two conflict copies on every device, nothing is lost.
-
-Observed: the winner keeps the path, but only **one** conflict copy exists, on
-all three devices, and the third version is gone everywhere. Only the device
-that kept the path recorded a conflict at all:
-
-```
-a: report.md = winner, copies = [report.sync-conflict-20260921-234323-VIB6A5F.md]
-b: same single copy, conflict list empty
-c: same single copy, conflict list empty, its own version (hash 56c352e6…) is nowhere
-```
-
-The conflict rule in `internal/domain/conflict` is a total order on two hashes
-and is correct pairwise; the loss comes from resolving the pairs one after the
-other. The device that keeps the path writes a copy for the first peer it
-reconciles with, then the second peer's version is compared against the winner
-it now holds and is dropped rather than kept as a second copy.
-
-### KF-3: a device that rejoins after an absence rolls everyone back
-
-Scenario 6 (`TestOffline_LongAbsenceCatchesUp`, and the one-file version of it,
-`TestOffline_StaleRejoinKeepsTheNewerVersion`). This is the worst of the three:
-a change is lost on every device, silently, with nothing recorded as a
-conflict.
-
-Reproduction, three devices in a mesh, reproduces every run:
-
-1. A writes `f.bin` as v0 and all three converge.
-2. `Isolate(2)`: C leaves the network holding v0.
-3. A writes `f.bin` as v1; A and B converge on v1.
-4. `Rejoin(2)`.
-
-Expected: C takes v1, because it never touched the file. Observed: all three
-devices end up holding **v0**, A's and B's v1 is gone from disk and from the
-database, no conflict is recorded and `conflict list` is empty everywhere.
-
-The cause is in `syncplan.remoteFile` (`internal/domain/syncplan/plan.go`)
-together with the single per-folder baseline `SyncedHash`. When A and B agreed
-on v1, A recorded `SyncedHash = v1`, so A's entry has `Hash == SyncedHash`.
-When C's manifest arrives with v0, the third rule of `remoteFile` reads:
-
-```go
-case local.Kind == manifest.KindFile && local.Hash == local.SyncedHash:
-	// The local copy is still the one both sides agreed on, so the
-	// remote version is the newer one.
-	return with(item, ActionPull, ReasonRemoteNewer)
-```
-
-"Both sides" is true of B, not of C: the baseline says nothing about the peer
-whose manifest is being compared. A therefore pulls C's older version and
-overwrites its own, B follows A, and C's version has won by being stale.
-
-A fix needs a baseline per peer, or a sequence the plan can order two versions
-by, so this one is a design change rather than a patch.
+What remains is KF-4 and KF-5. Neither invariant is loosened: the read-only
+scenario carries a `t.Skip` that points here, and the scale scenario asserts
+everything it can and counts the rest.
 
 ### KF-4: a folder whose root cannot be written reports itself idle
 
@@ -568,14 +449,14 @@ runs into a known failure above.
 
 | Left out of the default set | Blocked by |
 |---|---|
-| Rewriting a path (`hash_changed`), deleting one, renaming one (`not_found`) | KF-1 |
-| Two devices writing the same path in one round | KF-1, and the zero-loss check by KF-2 |
-| Partitioning a pair for ten seconds | KF-1 through the same refusals once the link comes back |
-| Taking a device off the network and back | KF-3 |
+| Rewriting a path (`hash_changed`), deleting one, renaming one (`not_found`) | KF-1, fixed in PLAN-3 |
+| Two devices writing the same path in one round | KF-1 and KF-2, both fixed in PLAN-3 |
+| Partitioning a pair for ten seconds | KF-1, fixed in PLAN-3 |
+| Taking a device off the network and back | KF-3, fixed in PLAN-3 |
 
-Measured: with rewrites in the set a three-device soak fails at round 11 with
-one `failed` row left in a journal; with deletes and renames as well, at round
-three. Both times the folders were identical on all three devices and the
-journal was the only thing wrong, which is the shape of KF-1. The default set
-therefore makes creations and breaks daemons and containers, and ran 43 rounds
-with 8 chaos actions in three minutes without a failure.
+The measurements behind that table were taken before PLAN-3: with rewrites in
+the set a three-device soak failed at round 11 with one `failed` row left in a
+journal, and with deletes and renames as well at round three; the folders were
+identical every time and the journal was the only thing wrong. The full chaos
+set has not been re-measured since the fixes, so it is still opt-in through
+`SYNCTHIS_E2E_SOAK_CHAOS=all` rather than the default.

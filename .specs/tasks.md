@@ -106,7 +106,7 @@ Goal: dependable backup and mirror workflows.
 
 Goal: handle offline edits without silent data loss.
 
-- [ ] Implement causal state with version vectors.
+- [x] Implement causal state with version vectors.
 - [x] Detect concurrent edits.
 - [x] Implement keep-both as the default conflict policy.
 - [x] Handle rename versus delete cases.
