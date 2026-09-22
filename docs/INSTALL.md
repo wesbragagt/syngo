@@ -27,11 +27,17 @@ it appears.
 
 Add the flake as an input and import the NixOS module.
 
+This repository is not published yet: it has no git remote, so there is no
+`github:` URL to fetch and every snippet below points at a local checkout
+instead. Clone it somewhere and use that path. Once the repository is
+published, `syncthis.url = "github:wesbragagt/syncthis";` replaces the `path:`
+line in every snippet on this page and nothing else changes.
+
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    syncthis.url = "github:wesbragagt/syncthis";
+    syncthis.url = "path:/home/you/src/syncthis";
   };
 
   outputs = { self, nixpkgs, syncthis }: {
@@ -56,6 +62,19 @@ Then build the system the way you always do:
 ```console
 $ sudo nixos-rebuild switch --flake .#laptop
 ```
+
+Not run here: switching this machine's real system configuration is not
+something a documentation change should do. What was run instead is the same
+configuration built to completion, which is everything short of activating it:
+
+```console
+$ nix build .#nixosConfigurations.example.config.system.build.toplevel \
+    --no-link --print-out-paths
+/nix/store/1mycx1087d46jxi48fsr2gzaxzbg7h2b-nixos-system-nixos-26.11.20260922.6774f7b
+```
+
+That configuration is the snippet above with `path:` pointing at this
+worktree. `nix flake check` additionally boots the module in two VMs.
 
 The module adds `syncthis` to `environment.systemPackages`, creates the
 `syncthis` user and group, creates `/var/lib/syncthis` mode 0700 owned by that
@@ -137,12 +156,27 @@ unit going active after `init`.
 
 ### Without a flake input
 
-To try the binary without adding an input:
+To try the binary without adding an input, run the checkout:
 
 ```console
-$ nix run github:wesbragagt/syncthis -- version
-syncthis 0e5032d (0e5032d, go1.26.7)
+$ nix run path:/home/you/src/syncthis -- version
+syncthis dev (dev, go1.26.7)
 ```
+
+A `path:` flake carries no git revision, so the version stamp is `dev`. Point
+Nix at the git tree instead and it stamps the commit:
+
+```console
+$ nix run "git+file:///home/you/src/syncthis" -- version
+syncthis 6e76ddb-dirty (6e76ddb, go1.26.7)
+```
+
+That is HEAD of the checkout, with the `-dirty` suffix because the tree it was
+run against had uncommitted changes, the same suffix `git describe --dirty`
+adds. Add `?ref=<branch>` to pick a branch.
+
+Once the repository is published this is `nix run github:wesbragagt/syncthis
+-- version`.
 
 ## Home-manager
 
@@ -157,7 +191,7 @@ under real home-manager.
 
 ```nix
 {
-  inputs.syncthis.url = "github:wesbragagt/syncthis";
+  inputs.syncthis.url = "path:/home/you/src/syncthis";
 
   # inside your home-manager configuration
   imports = [ syncthis.homeManagerModules.default ];
@@ -185,18 +219,23 @@ Build the archives on any machine with Go 1.26:
 
 ```console
 $ make dist
-building syncthis_0e5032d_linux-amd64
-building syncthis_0e5032d_linux-arm64
-building syncthis_0e5032d_linux-armv7
-building syncthis_0e5032d_darwin-amd64
-building syncthis_0e5032d_darwin-arm64
--rw-r--r-- 1 wesbragagt users     512 Sep 22 11:57 SHA256SUMS
--rw-r--r-- 1 wesbragagt users 9809729 Sep 22 11:57 syncthis_0e5032d_darwin-amd64.tar.gz
--rw-r--r-- 1 wesbragagt users 9351689 Sep 22 11:57 syncthis_0e5032d_darwin-arm64.tar.gz
--rw-r--r-- 1 wesbragagt users 9658533 Sep 22 11:57 syncthis_0e5032d_linux-amd64.tar.gz
--rw-r--r-- 1 wesbragagt users 9002659 Sep 22 11:57 syncthis_0e5032d_linux-arm64.tar.gz
--rw-r--r-- 1 wesbragagt users 9034293 Sep 22 11:57 syncthis_0e5032d_linux-armv7.tar.gz
+building syncthis_6e76ddb_linux-amd64
+building syncthis_6e76ddb_linux-arm64
+building syncthis_6e76ddb_linux-armv7
+building syncthis_6e76ddb_darwin-amd64
+building syncthis_6e76ddb_darwin-arm64
+-rw-r--r-- 1 wesbragagt users     512 Sep 22 12:10 SHA256SUMS
+-rw-r--r-- 1 wesbragagt users 9809703 Sep 22 12:10 syncthis_6e76ddb_darwin-amd64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9351724 Sep 22 12:10 syncthis_6e76ddb_darwin-arm64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9658527 Sep 22 12:10 syncthis_6e76ddb_linux-amd64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9002715 Sep 22 12:10 syncthis_6e76ddb_linux-arm64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9034334 Sep 22 12:10 syncthis_6e76ddb_linux-armv7.tar.gz
 ```
+
+The version in every file name is what `git describe --tags --always --dirty`
+printed on the build machine, `6e76ddb` in the run above. Yours differs, so
+where a command below says `<version>`, substitute the one your `dist`
+directory actually holds.
 
 Every binary is `CGO_ENABLED=0` and `-trimpath`, so it has no dynamic
 interpreter and runs on a machine other than the one that built it.
@@ -206,14 +245,22 @@ for this machine:
 
 ```console
 $ make dist-verify
-sha256 ok   syncthis_0e5032d_linux-amd64.tar.gz
-extract ok  syncthis_0e5032d_linux-amd64
-static ok   dist/verify/syncthis_0e5032d_linux-amd64/syncthis (elf EM_X86_64)
-version ok  syncthis_0e5032d_linux-amd64: syncthis 0e5032d (0e5032d, go1.26.7)
-static ok   dist/verify/syncthis_0e5032d_linux-arm64/syncthis (elf EM_AARCH64)
-static ok   dist/verify/syncthis_0e5032d_linux-armv7/syncthis (elf EM_ARM)
-static ok   dist/verify/syncthis_0e5032d_darwin-amd64/syncthis (mach-o CpuAmd64)
-static ok   dist/verify/syncthis_0e5032d_darwin-arm64/syncthis (mach-o CpuArm64)
+sha256 ok   syncthis_6e76ddb_darwin-amd64.tar.gz
+sha256 ok   syncthis_6e76ddb_darwin-arm64.tar.gz
+sha256 ok   syncthis_6e76ddb_linux-amd64.tar.gz
+sha256 ok   syncthis_6e76ddb_linux-arm64.tar.gz
+sha256 ok   syncthis_6e76ddb_linux-armv7.tar.gz
+extract ok  syncthis_6e76ddb_linux-amd64
+static ok   dist/verify/syncthis_6e76ddb_linux-amd64/syncthis (elf EM_X86_64)
+version ok  syncthis_6e76ddb_linux-amd64: syncthis 6e76ddb (6e76ddb, go1.26.7)
+extract ok  syncthis_6e76ddb_linux-arm64
+static ok   dist/verify/syncthis_6e76ddb_linux-arm64/syncthis (elf EM_AARCH64)
+extract ok  syncthis_6e76ddb_linux-armv7
+static ok   dist/verify/syncthis_6e76ddb_linux-armv7/syncthis (elf EM_ARM)
+extract ok  syncthis_6e76ddb_darwin-amd64
+static ok   dist/verify/syncthis_6e76ddb_darwin-amd64/syncthis (mach-o CpuAmd64)
+extract ok  syncthis_6e76ddb_darwin-arm64
+static ok   dist/verify/syncthis_6e76ddb_darwin-arm64/syncthis (mach-o CpuArm64)
 dist-verify: all artifacts ok
 ```
 
@@ -221,7 +268,7 @@ On the target machine, check the digest and install the binary:
 
 ```console
 $ sha256sum -c --ignore-missing SHA256SUMS
-$ tar -xzf syncthis_0e5032d_linux-amd64.tar.gz
+$ tar -xzf syncthis_<version>_linux-amd64.tar.gz
 $ sudo install -m 0755 syncthis /usr/local/bin/syncthis
 $ syncthis version
 ```
@@ -265,7 +312,7 @@ Take `syncthis_<version>_darwin-arm64.tar.gz` for Apple silicon,
 
 ```console
 $ shasum -a 256 -c SHA256SUMS
-$ tar -xzf syncthis_0e5032d_darwin-arm64.tar.gz
+$ tar -xzf syncthis_<version>_darwin-arm64.tar.gz
 $ sudo install -m 0755 syncthis /usr/local/bin/syncthis
 $ syncthis init --name macbook
 ```
@@ -308,11 +355,11 @@ with `GOARM=7`. Check with `uname -m`: `aarch64` means arm64, `armv7l` means
 armv7.
 
 ```console
-$ tar -xzf syncthis_0e5032d_linux-armv7.tar.gz
+$ tar -xzf syncthis_<version>_linux-armv7.tar.gz
 $ sudo install -m 0755 syncthis /usr/local/bin/syncthis
 ```
 
-Not tested here: this machine is x86_64, so neither ARM binary was executed.
+Not run here: this machine is x86_64, so neither ARM binary was executed.
 `make dist-verify` confirmed the ELF machine types (`EM_AARCH64`, `EM_ARM`) and
 that both are static.
 
@@ -326,6 +373,14 @@ $ sudo install -d -m 0755 -o syncthis -g syncthis /srv/docs
 $ sudo -u syncthis env SYNCTHIS_DATA_DIR=/var/lib/syncthis \
     syncthis init --name nas --listen 0.0.0.0:22000
 ```
+
+Not run here: `useradd` is not how NixOS declares users, and creating a system
+user, `/var/lib/syncthis` and `/srv/docs` on this machine would leave state
+behind that no configuration owns. The NixOS module does all four, and the VM
+tests boot it and assert the data directory is mode 0700 owned by
+`syncthis:syncthis`. `syncthis init --name nas --listen 0.0.0.0:22000` itself
+was run here against a scratch data directory and printed
+`listen: 0.0.0.0:22000`.
 
 Then a system unit, which is the user unit in `packaging/systemd/` plus the
 three lines a system service needs:
@@ -372,11 +427,11 @@ Give it an identity first. The identity lives in the `/data` volume, so this is
 one `docker run` with the same mount the daemon gets:
 
 ```console
-$ mkdir -p /tmp/sdemo/c/data /tmp/sdemo/c/folders
+$ mkdir -p /tmp/sdemo/c/data /tmp/sdemo/c/folders/docs
 $ docker run --rm -v /tmp/sdemo/c/data:/data -v /tmp/sdemo/c/folders:/folders \
     syncthis:docs-test init --name box
 initialized /data
-device id: KZCNBO6QY7JST7CNZLAB6HOQBFGTCCLWFKT7PCTIJ6H2E6TJX6UA
+device id: JRNOBFID54R57OO5SN2ABC4FWLPPVV6IUNHE4R4XWX2OSKHPFICQ
 device name: box
 listen: 127.0.0.1:22000
 ```
@@ -389,10 +444,10 @@ $ docker run -d --name syncthis -v /tmp/sdemo/c/data:/data \
     -v /tmp/sdemo/c/folders:/folders -p 22003:22000 \
     syncthis:docs-test daemon run --interface eth0
 $ docker logs syncthis
-time=2026-09-22T16:57:26.699Z level=INFO msg="peer listener bound" address=172.17.0.2:22000
-time=2026-09-22T16:57:26.699Z level=INFO msg="listening for peers" address=172.17.0.2:22000
-time=2026-09-22T16:57:26.699Z level=INFO msg="bandwidth limits applied" upload=unlimited download=unlimited
-time=2026-09-22T16:57:26.699Z level=INFO msg="daemon started" folders=0 rescan_interval=10m0s
+time=2026-09-22T17:11:37.964Z level=INFO msg="peer listener bound" address=172.17.0.2:22000
+time=2026-09-22T17:11:37.964Z level=INFO msg="listening for peers" address=172.17.0.2:22000
+time=2026-09-22T17:11:37.964Z level=INFO msg="bandwidth limits applied" upload=unlimited download=unlimited
+time=2026-09-22T17:11:37.964Z level=INFO msg="daemon started" folders=0 rescan_interval=10m0s
 syncthis daemon running (pid 1, data dir /data)
 ```
 
@@ -402,9 +457,14 @@ reaches the control socket in `/data`:
 
 ```console
 $ docker exec syncthis syncthis status --json | jq -c .daemon
-{"running":true,"pid":1,"listen":"172.17.0.2:22000","started_at":"2026-09-22T16:57:26Z","upload_limit":0,"download_limit":0}
+{"running":true,"pid":1,"listen":"172.17.0.2:22000","started_at":"2026-09-22T17:11:37Z","upload_limit":0,"download_limit":0}
 $ docker exec syncthis syncthis folder add /folders/docs --id docs
+added folder docs at /folders/docs
 ```
+
+The directory has to exist inside the container before `folder add`: the
+command exits 2 on a path that is not a directory, which is why the `mkdir`
+above created `/tmp/sdemo/c/folders/docs`.
 
 A peer outside the container reaches it at the published port, `22003` above.
 The address the daemon binds is the container's, so tell the peer the host's
@@ -493,31 +553,76 @@ rescan or a re-download. See [STATE.md](STATE.md).
 Every command, every flag and every JSON field is in [CLI.md](CLI.md). This is
 the shortest path from an installed binary to two devices that agree.
 
+The walkthrough below runs two devices on one machine, each with its own data
+directory, folder and port, so it is reproducible without a second machine.
+Every block was run in order, exactly as written, with `syncthis` on `PATH`.
+For two real devices, drop `--data-dir` and run each block on its own machine;
+the differences are called out where they matter.
+
 ### 1. Start the daemon
 
-Through the service, or in the foreground while you watch it:
+Give each device an identity and a data directory first. On a real device this
+is one `syncthis init`, and the service you installed above starts the daemon;
+here it is two of each.
+
+```console
+$ mkdir -p /tmp/sdemo/a/data /tmp/sdemo/a/docs /tmp/sdemo/b/data /tmp/sdemo/b/docs
+$ syncthis --data-dir /tmp/sdemo/a/data init --name laptop --listen 127.0.0.1:22001
+initialized /tmp/sdemo/a/data
+device id: PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
+device name: laptop
+listen: 127.0.0.1:22001
+$ syncthis --data-dir /tmp/sdemo/b/data init --name nas    --listen 127.0.0.1:22002
+initialized /tmp/sdemo/b/data
+device id: JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
+device name: nas
+listen: 127.0.0.1:22002
+```
+
+Keep both device ids: step 2 pins them. Then start the daemons. On a real
+device this is the service instead:
 
 ```console
 $ systemctl --user start syncthis          # user unit
 $ sudo systemctl start syncthis            # system unit, NixOS module included
-$ syncthis daemon run --interface tailscale0 &
 ```
-
-It is up when `status` says so:
 
 ```console
-$ syncthis status --json | jq .daemon.running
+$ syncthis --data-dir /tmp/sdemo/a/data daemon run > /tmp/sdemo/a.log 2>&1 &
+$ syncthis --data-dir /tmp/sdemo/b/data daemon run > /tmp/sdemo/b.log 2>&1 &
+$ syncthis --data-dir /tmp/sdemo/a/data status --json | jq .daemon.running
 true
 ```
+
+`daemon.running` is `true` when the daemon answers its control socket. A
+`status` that exits 3 means this data directory has no identity yet.
 
 ### 2. Pair two devices
 
 Each side runs `peer add` once, naming the other. Pairing is done when both
-report `accepted: true`.
+sides have run it.
 
 ```console
-laptop$ syncthis peer add nas --device-id <id nas printed at init>
-nas$    syncthis peer add laptop --device-id <id laptop printed at init>
+$ syncthis --data-dir /tmp/sdemo/a/data peer add 127.0.0.1:22002 --yes
+device id: JI7HZGFPUXQ5R-YPY6CA6Y3J677-2RRQD6VDL3UIL-RIHUL6J2M2XEA
+name:      nas
+added peer nas (JI7HZGFPUXQ5R-YPY6CA6Y3J677-2RRQD6VDL3UIL-RIHUL6J2M2XEA) at 127.0.0.1:22002
+the peer has not added this device yet; run `syncthis peer add` there too
+$ syncthis --data-dir /tmp/sdemo/b/data peer add 127.0.0.1:22001 --yes
+device id: PQXYNPE2LEFKU-FHG2DQCSTKYZ5-NZ4XDTTNNKEOC-WFTMMYNO3PJSQ
+name:      laptop
+added peer laptop (PQXYNPE2LEFKU-FHG2DQCSTKYZ5-NZ4XDTTNNKEOC-WFTMMYNO3PJSQ) at 127.0.0.1:22001
+```
+
+The last line of the first command is the expected state until the other side
+has run its `peer add`.
+
+On a tailnet, name the device instead of an address and pin the id `init`
+printed on it:
+
+```console
+laptop$ syncthis peer add nas    --device-id JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
+nas$    syncthis peer add laptop --device-id PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
 ```
 
 `syncthis status --json | jq -r .device.id` prints the id each side pins. A
@@ -525,30 +630,15 @@ bare host name is looked up through the local Tailscale client and the address
 that answers is stored. Without Tailscale, give an address:
 `syncthis peer add 100.70.66.9:22000`.
 
-Run on this machine, on loopback, with the two daemons from the quick start:
-
-```console
-$ syncthis --data-dir /tmp/sdemo/a/data peer add 127.0.0.1:22002 --yes
-device id: OMA5EDLVQCYCD-O5NBBQUE7EYXA-ADIUXGDQLZM26-Y76VIKFLWOZOA
-name:      nas
-added peer nas (OMA5EDLVQCYCD-O5NBBQUE7EYXA-ADIUXGDQLZM26-Y76VIKFLWOZOA) at 127.0.0.1:22002
-the peer has not added this device yet; run `syncthis peer add` there too
-$ syncthis --data-dir /tmp/sdemo/b/data peer add 127.0.0.1:22001 --yes
-device id: DSPJA7DJRBONQ-GGJEGZA2LYI3Q-62KKAY6A7Z7RE-TT5V4KGBEMCNA
-name:      laptop
-added peer laptop (DSPJA7DJRBONQ-GGJEGZA2LYI3Q-62KKAY6A7Z7RE-TT5V4KGBEMCNA) at 127.0.0.1:22001
-```
-
-The last line of the first command is the expected state until the other side
-has run its `peer add`.
-
 ### 3. Add a folder
 
 The same id on both devices. The path may differ.
 
 ```console
-laptop$ syncthis folder add ~/docs --id docs
-nas$    syncthis folder add /srv/docs --id docs
+$ syncthis --data-dir /tmp/sdemo/a/data folder add /tmp/sdemo/a/docs --id docs
+added folder docs at /tmp/sdemo/a/docs
+$ syncthis --data-dir /tmp/sdemo/b/data folder add /tmp/sdemo/b/docs --id docs
+added folder docs at /tmp/sdemo/b/docs
 ```
 
 `folder add`, `folder set`, `folder remove`, `peer add`, `peer remove` and
@@ -566,12 +656,26 @@ $ cat /tmp/sdemo/b/docs/greeting.txt
 hello from A
 ```
 
+The file arrives on the next sync cycle, 30 seconds by default and usually
+sooner; the run above was read ten seconds after the write.
+
 Converged means all four at once: every peer `connected: true`, every folder
 `state: "idle"` with `pending_changes: 0` and `error: null`,
 `transfers.active: 0`, and `conflicts.unresolved: 0`. A folder in `scheduled`
-is outside its sync window and is waiting on purpose. `syncthis sync-plan
-docs` prints what a sync would do without doing it; an empty plan on both sides
-is the other way to say converged.
+is outside its sync window and is waiting on purpose. `sync-plan` is the other
+way to say converged: it prints what a sync would do without doing it.
+
+```console
+$ syncthis --data-dir /tmp/sdemo/b/data sync-plan docs
+peer laptop (PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ) at 127.0.0.1:22001
+ACTION  PATH          REASON
+none    greeting.txt  in-sync
+
+folder is in sync; nothing would change
+```
+
+Stop the two daemons when you are done: `pkill -f 'syncthis --data-dir
+/tmp/sdemo'`, or SIGTERM each pid, which is what they shut down cleanly on.
 
 ### 5. Read the exit code
 
@@ -584,10 +688,11 @@ that come up during an install:
 | 3 | the data directory has no identity: run `syncthis init` |
 | 6 | the daemon is needed and none runs, or a second daemon tried to take a data directory |
 | 7 | the peer could not be dialled, refused the handshake, or presented another identity |
-| 2 | bad flags, or a listen address that is public without `--allow-public` |
+| 2 | bad flags, a path that is not a directory, or a listen address that is public without `--allow-public` |
 | 11 | a `network` command found no running Tailscale client |
 
 ```console
+$ mkdir -p /tmp/sdemo/empty
 $ syncthis --data-dir /tmp/sdemo/empty status; echo "exit=$?"
 syncthis: device identity not initialized: /tmp/sdemo/empty/identity.key missing
 exit=3
