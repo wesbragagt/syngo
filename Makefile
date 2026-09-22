@@ -1,4 +1,4 @@
-.PHONY: build test e2e lint fmt hooks e2e-docker-image e2e-docker e2e-docker-soak e2e-docker-clean
+.PHONY: build release test e2e lint fmt hooks e2e-docker-image e2e-docker e2e-docker-soak e2e-docker-clean
 
 # Build stamp. Both are compiled into the binary and reported by
 # `syncthis version`; a build outside a git checkout falls back to the module
@@ -10,6 +10,16 @@ LDFLAGS := $(if $(VERSION),-X github.com/wesbragagt/syncthis/internal/cli.Versio
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/syncthis ./cmd/syncthis
+
+# A binary that runs on a machine other than the one that built it. A
+# dynamically linked build made on NixOS names its interpreter by an absolute
+# /nix/store path that does not exist on any other machine, so a copy of it
+# dies with exit 127 before it prints anything. CGO_ENABLED=0 removes the
+# interpreter; every dependency is pure Go, so nothing is lost. The
+# two-machine benchmark scenarios build the binary they copy to the peer with
+# exactly these flags. GOOS and GOARCH may be overridden to cross-compile.
+release:
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/syncthis ./cmd/syncthis
 
 # The end-to-end tests run last and on their own: two daemons over loopback
 # compete with the rest of the tree for the machine, and a sync cycle that does
