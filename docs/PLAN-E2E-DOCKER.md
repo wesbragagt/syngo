@@ -432,3 +432,39 @@ other. The device that keeps the path writes a copy for the first peer it
 reconciles with, then the second peer's version is compared against the winner
 it now holds and is dropped rather than kept as a second copy.
 
+### KF-3: a device that rejoins after an absence rolls everyone back
+
+Scenario 6 (`TestOffline_LongAbsenceCatchesUp`, and the one-file version of it,
+`TestOffline_StaleRejoinKeepsTheNewerVersion`). This is the worst of the three:
+a change is lost on every device, silently, with nothing recorded as a
+conflict.
+
+Reproduction, three devices in a mesh, reproduces every run:
+
+1. A writes `f.bin` as v0 and all three converge.
+2. `Isolate(2)`: C leaves the network holding v0.
+3. A writes `f.bin` as v1; A and B converge on v1.
+4. `Rejoin(2)`.
+
+Expected: C takes v1, because it never touched the file. Observed: all three
+devices end up holding **v0**, A's and B's v1 is gone from disk and from the
+database, no conflict is recorded and `conflict list` is empty everywhere.
+
+The cause is in `syncplan.remoteFile` (`internal/domain/syncplan/plan.go`)
+together with the single per-folder baseline `SyncedHash`. When A and B agreed
+on v1, A recorded `SyncedHash = v1`, so A's entry has `Hash == SyncedHash`.
+When C's manifest arrives with v0, the third rule of `remoteFile` reads:
+
+```go
+case local.Kind == manifest.KindFile && local.Hash == local.SyncedHash:
+	// The local copy is still the one both sides agreed on, so the
+	// remote version is the newer one.
+	return with(item, ActionPull, ReasonRemoteNewer)
+```
+
+"Both sides" is true of B, not of C: the baseline says nothing about the peer
+whose manifest is being compared. A therefore pulls C's older version and
+overwrites its own, B follows A, and C's version has won by being stale.
+
+A fix needs a baseline per peer, or a sequence the plan can order two versions
+by, so this one is a design change rather than a patch.
