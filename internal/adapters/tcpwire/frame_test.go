@@ -82,23 +82,3 @@ func TestFrame_HeaderLongerThanBodyRejected(t *testing.T) {
 		t.Fatalf("ReadFrame malformed = %v, want ErrMalformedFrame", err)
 	}
 }
-
-func FuzzReadFrame(f *testing.F) {
-	var seed bytes.Buffer
-	_ = tcpwire.WriteFrame(&seed, tcpwire.Frame{Type: tcpwire.MsgHello, Header: []byte(`{"protocol_version":1}`)})
-	f.Add(seed.Bytes())
-	f.Add([]byte{0, 0, 0, 5, 1, 0, 0, 0, 0})
-	f.Add([]byte{0xFF, 0xFF, 0xFF, 0xFF})
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		frame, err := tcpwire.ReadFrame(bytes.NewReader(data))
-		if err != nil {
-			return
-		}
-		// Whatever was decoded must re-encode, so the reader never
-		// produces a frame the writer would refuse.
-		if err := tcpwire.WriteFrame(io.Discard, frame); err != nil {
-			t.Fatalf("WriteFrame of a decoded frame: %v", err)
-		}
-	})
-}

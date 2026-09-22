@@ -199,6 +199,49 @@ a peer removed while it is connected stops being served at once.
 6. Each daemon dials every known peer and pulls from it, so a pair of devices
    has two connections, one per direction. Nothing is multiplexed.
 
+## Fuzzing
+
+Every parser a peer can reach has a Go fuzz target. They run as ordinary tests
+over their seed corpus during `go test ./...`, and only search for new inputs
+when `-fuzz` names one:
+
+```
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzReadFrame      -fuzztime 60s
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzReadHelloFrame -fuzztime 60s
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzWriteFrame     -fuzztime 60s
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzManifestReply  -fuzztime 60s
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzChunkRequest   -fuzztime 60s
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzHelloHeader    -fuzztime 60s
+go test ./internal/adapters/tcpwire/ -run xxx -fuzz FuzzExchangeHello  -fuzztime 60s
+go test ./internal/domain/manifest/  -run xxx -fuzz FuzzValidRelPath   -fuzztime 60s
+go test ./internal/domain/manifest/  -run xxx -fuzz FuzzValidLinkTarget -fuzztime 60s
+go test ./internal/domain/manifest/  -run xxx -fuzz FuzzParseVersion   -fuzztime 60s
+go test ./internal/domain/ignore/    -run xxx -fuzz FuzzMatcher        -fuzztime 60s
+```
+
+One target at a time: `-fuzz` takes a single name. `-run xxx` keeps the rest of
+the package's tests out of the run.
+
+Each target asserts an invariant rather than the absence of a panic alone:
+
+| Target | Invariant |
+|---|---|
+| `FuzzReadFrame`, `FuzzReadHelloFrame` | a decoded frame re-encodes to the bytes it was read from, fits the limit it was read under, and a refused one names `ErrFrameTooLarge`, `ErrMalformedFrame` or an EOF; a declared length above the limit is refused before the body is allocated |
+| `FuzzWriteFrame` | what `WriteFrame` produces, `ReadFrame` returns with the same type, header and payload |
+| `FuzzManifestReply` | every entry of an accepted manifest passes `ValidRelPath` and `ValidLinkTarget`, has a size within `0..max_file_size`, has a version vector that round-trips through its text form, and the manifest survives a second pass through the wire form |
+| `FuzzChunkRequest` | the hash normalizes to lowercase hex and parses back to the same hash, and the request round-trips to the same header |
+| `FuzzHelloHeader` | an accepted Hello names a device id that parses, keeps its folder list, and re-encodes with the current protocol version |
+| `FuzzExchangeHello` | this side writes its own Hello first whatever the peer sends, a Hello announcing a device other than the certificate's is never accepted, and a refused exchange returns no device id |
+| `FuzzValidRelPath` | an accepted path is already cleaned and, joined to a folder root, stays under that root; it is not absolute, holds no NUL byte and names no reserved path |
+| `FuzzValidLinkTarget` | an accepted target resolves, from the directory holding the link, to a path inside the folder that is not reserved |
+| `FuzzParseVersion` | a parsed vector round-trips through `String`, and its counters are sorted, non-zero and unique |
+| `FuzzMatcher` | matching is total and deterministic, a leading slash does not change the verdict, and an empty rule set ignores nothing |
+
+Corpus entries a run finds live in the build cache, not the repository. A
+`testdata/fuzz` file is committed only to record an input that found a defect;
+`internal/domain/manifest/testdata/fuzz/FuzzParseVersion` holds one, described
+in `TestParseVersionLeadingSpaceDeviceIDDefect`.
+
 ## Pairing
 
 ```
