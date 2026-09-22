@@ -169,10 +169,10 @@ Goal: ship a reliable multi-device Tailscale-first system.
 - [ ] Add direct versus DERP diagnostics.
 - [x] Add database migration handling.
 - [x] Run a security review of the protocol and path handling.
-- [ ] Add fuzz tests for the protocol and filesystem logic.
+- [x] Add fuzz tests for the protocol and filesystem logic.
 - [ ] Run a 30-day soak test.
 - [ ] Run 10,000 forced network interruptions.
-- [ ] Add packaging for Linux, macOS, NAS, container, and headless service. Windows is out of scope.
+- [x] Add packaging for Linux, macOS, NAS, container, and headless service. Windows is out of scope. A Nix flake is the supported install path; see flake.nix and nix/.
 - [ ] Document install, configure, and run instructions for each platform.
 - [ ] Verify three-device non-conflicting convergence reaches 99.99%.
 - [x] Verify upgrades across two schema versions preserve sync state.
