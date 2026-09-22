@@ -81,6 +81,9 @@ type node struct {
 	ID     device.ID
 	Listen string
 	rescan time.Duration
+	// debounce and sync are the folder loop's debounce and the peer
+	// loop's tick, kept so a restart comes back with the same timings.
+	debounce, sync time.Duration
 	// recoverable makes the node bind its peer port through a binder whose
 	// address the test can take away and give back.
 	recoverable bool
@@ -114,6 +117,22 @@ type nodeConfig struct {
 	// address the test can take away, so a Tailscale client restarting
 	// under the daemon can be reproduced without a tailnet.
 	RecoverableListener bool
+	// Debounce overrides how long the folder loop collects watch events
+	// before it scans; zero takes the short one the other tests share. A
+	// benchmark that reports a convergence time sets the shipped default
+	// here, because the number is otherwise a measurement of the test's
+	// own tuning.
+	Debounce time.Duration
+	// SyncInterval overrides how often a peer loop runs a cycle on its
+	// own. It is a fallback, not the path a local change takes: a change
+	// is pushed to the peer as soon as it is scanned.
+	SyncInterval time.Duration
+	// DataDir and Root override where the node's data directory and
+	// folder root go. They exist for the gated large-file benchmarks: the
+	// folder root has to be on a filesystem with room for tens of
+	// gigabytes, while the data directory holds a unix socket and so has
+	// to keep a short path.
+	DataDir, Root string
 }
 
 // startNode initializes a data directory, adds one folder in the given mode
@@ -133,9 +152,27 @@ func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 	if cfg.RescanInterval == 0 {
 		cfg.RescanInterval = testRescanInterval
 	}
+	if cfg.SyncInterval == 0 {
+		cfg.SyncInterval = testSyncInterval
+	}
+	if cfg.Debounce == 0 {
+		cfg.Debounce = testDebounce
+	}
 	n := &node{
 		t: t, name: name, mode: cfg.Mode, rescan: cfg.RescanInterval,
-		DataDir: t.TempDir(), Root: t.TempDir(), recoverable: cfg.RecoverableListener,
+		DataDir: cfg.DataDir, Root: cfg.Root, recoverable: cfg.RecoverableListener,
+		debounce: cfg.Debounce, sync: cfg.SyncInterval,
+	}
+	if n.DataDir == "" {
+		n.DataDir = t.TempDir()
+	}
+	if n.Root == "" {
+		n.Root = t.TempDir()
+	}
+	for _, dir := range []string{n.DataDir, n.Root} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create %s: %v", dir, err)
+		}
 	}
 
 	config := jsonconfig.Default()
@@ -147,7 +184,7 @@ func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 	config.DownloadLimit = int64(cfg.DownloadLimit)
 	config.Listen = "127.0.0.1:0"
 	config.RescanInterval = jsonconfig.Duration(cfg.RescanInterval)
-	config.SyncInterval = jsonconfig.Duration(testSyncInterval)
+	config.SyncInterval = jsonconfig.Duration(cfg.SyncInterval)
 	if err := jsonconfig.Save(n.DataDir, config); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -215,9 +252,9 @@ func (n *node) run() {
 	ready := make(chan struct{})
 	options := compose.DaemonOptions{
 		Listen:         listen,
-		Debounce:       testDebounce,
+		Debounce:       n.debounce,
 		RescanInterval: n.rescan,
-		SyncInterval:   testSyncInterval,
+		SyncInterval:   n.sync,
 		Ready:          ready,
 	}
 	if n.recoverable {
