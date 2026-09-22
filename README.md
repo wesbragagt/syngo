@@ -25,8 +25,9 @@ address and a filesystem of its own, so a test can kill a daemon, cut a link
 between two devices or slow one down, and then check that the folders agree
 again. It needs docker, builds the image itself, and is opt-in; `make test`
 compiles it and skips it. `make e2e-docker-soak MINUTES=30` keeps a cluster
-changing and breaking for half an hour, and `make e2e-docker-clean` removes
-what a run that was interrupted left behind.
+changing and breaking for half an hour, with rewrites, deletes, renames,
+same-path collisions, killed daemons, partitions and shaped links, and `make
+e2e-docker-clean` removes what a run that was interrupted left behind.
 
 ## Quick start
 

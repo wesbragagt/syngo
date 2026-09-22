@@ -244,7 +244,7 @@ Timing defaults: `chunk_size` 64 KiB, `rescan_interval` 2 s, `sync_interval` 1 s
 | 18 | `TestScale_TenThousandSmallFiles` | 3 mesh | generate 10,000 files (100-2,000 bytes) in 100 dirs on A on the host | converged within `10 * convergeTimeout`; `status.folders[0].files == 10000` on all; log throughput (files/s) with `t.Logf` |
 | 19 | `TestScale_LargeFileUnderRateLimitWithKill` | 2 mesh | `Netem(1, "rate 50mbit")` on receiver; A writes 512 MiB (`SYNCTHIS_E2E_BIG_MIB` overrides; 2048 when the bandwidth flags of PLAN-2 item 2 exist and netem is replaced by `--download-limit`); kill receiver at ~40%; restart | resumed, converged, hash equal, `chunks_done` monotonic, memory: `docker stats --no-stream` RSS of the receiver below 512 MiB at the sampled points |
 | 20 | `TestNetem_LatencyAndLoss` | 3 mesh, `Netem(i, "delay 100ms 20ms loss 1%")` on all | scenario 3 with 3 rounds | converged; no `level=error` lines except retry notices |
-| 21 | `TestSoak` | 3 mesh (4 with `SYNCTHIS_E2E_SOAK_DEVICES`) | for `SYNCTHIS_E2E_SOAK_MINUTES`: rounds of random ops (create/modify/delete/rename, 1-3 devices, 10 % same-path collisions) with a chaos action every 5th round (kill daemon, kill container, partition a pair for 10 s, netem for a round); every round ends in `WaitConverged`; a ledger records per round, per path, the set of written hashes | after every round: converged, no `.part`, journal empty, for each collided path the winning content is one of the writers' and every losing content exists as a conflict copy on every device (zero loss); final: `repair --dry-run` exits 0 everywhere; `conflict list --all` counts equal across devices |
+| 21 | `TestSoak` | 3 mesh (4 with `SYNCTHIS_E2E_SOAK_DEVICES`) | for `SYNCTHIS_E2E_SOAK_MINUTES`: rounds of random ops (create/modify/delete/rename, 1-3 devices, 10 % same-path collisions) with a chaos action every 5th round (kill daemon, kill container, partition a pair for 10 s, netem for a round); every round ends in `WaitConverged`; a ledger records per round, per path, the set of written hashes | after every round: converged, no `.part`, journal empty, for each collided path the winning content is one of the writers' and every losing content exists as a conflict copy on every device (zero loss); final: `repair --dry-run` exits 0 everywhere; `conflict list --all` records every collided path somewhere |
 
 Ordering by value for implementation: 1, 3, 4, 7, 8, 5, 6, 10, 12, 13, 16, 17, 9, 14, 15, 18, 19, 20, 11, 21.
 
@@ -400,23 +400,32 @@ columns:
   local change would be noticed in that time, which is a worse failure than a
   scan that runs twice. Scenario 18 now asserts a clean log.
 
-### What the soak leaves out, and why
+### What the soak runs
 
-Scenario 21 (`TestSoak`) runs the rounds and the chaos actions the product
-survives today, and asks for the rest with `SYNCTHIS_E2E_SOAK_CHAOS=all`. The
-full set is blocked, not unwritten: it is in the test, and every part of it
-runs into a known failure above.
+Scenario 21 (`TestSoak`) runs the full set by default: rounds rewrite, delete
+and rename what earlier rounds wrote, a tenth of the rounds have two devices
+write one path at the same instant, and the chaos actions are a killed daemon,
+a killed container, a restart, a ten second partition of a pair, and a shaped
+link. `SYNCTHIS_E2E_SOAK_CHAOS=basic` asks for creations and restarts alone,
+for a run that has no NET_ADMIN.
 
-| Left out of the default set | Blocked by |
-|---|---|
-| Rewriting a path (`hash_changed`), deleting one, renaming one (`not_found`) | KF-1, fixed in PLAN-3 |
-| Two devices writing the same path in one round | KF-1 and KF-2, both fixed in PLAN-3 |
-| Partitioning a pair for ten seconds | KF-1, fixed in PLAN-3 |
-| Taking a device off the network and back | KF-3, fixed in PLAN-3 |
-
-The measurements behind that table were taken before PLAN-3: with rewrites in
-the set a three-device soak failed at round 11 with one `failed` row left in a
+The full set was opt-in until the fixes of PLAN-3 were measured against it.
+The measurements behind that were taken before PLAN-3: with rewrites in the
+set a three-device soak failed at round 11 with one `failed` row left in a
 journal, and with deletes and renames as well at round three; the folders were
-identical every time and the journal was the only thing wrong. The full chaos
-set has not been re-measured since the fixes, so it is still opt-in through
-`SYNCTHIS_E2E_SOAK_CHAOS=all` rather than the default.
+identical every time and the journal was the only thing wrong. Since PLAN-3 two
+five minute runs of the full set pass, at 60 and 64 rounds and 12 chaos actions
+each, with every chaos action exercised.
+
+### What the soak asserts about a collision
+
+For a path two devices wrote at the same instant, every device ends the round
+holding one version at the path and every other version as a conflict copy
+next to it. That is what `checkLedger` asserts, and it is the guarantee.
+
+A conflict row is not that guarantee: it is the record of a resolution one
+device made for itself. The device that had a version of its own to move aside
+records a row; a device that receives the winner and the conflict copy as
+ordinary files has nothing to record, so the devices do not hold the same rows
+and their counts differ. The soak asserts only that every collided path was
+recorded somewhere.

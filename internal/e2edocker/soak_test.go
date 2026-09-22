@@ -12,9 +12,11 @@ import (
 )
 
 // soakChaos is the set of things the soak does to the cluster between rounds.
-// The default set is what the product survives today; the full set adds the
-// actions and the collisions that run into the known failures of section 10
-// of the plan, and is asked for with SYNCTHIS_E2E_SOAK_CHAOS=all.
+// The full set is the default: it rewrites, deletes and renames what earlier
+// rounds wrote, has two devices write one path at the same instant, and adds
+// a partition and a shaped link to the daemons it kills. The basic set is
+// creations and restarts alone, and is asked for with
+// SYNCTHIS_E2E_SOAK_CHAOS=basic for a run that needs no NET_ADMIN.
 type soakChaos struct {
 	full bool
 }
@@ -47,7 +49,7 @@ func soakEnv(t *testing.T) soakSettings {
 	return soakSettings{
 		minutes: minutes,
 		devices: devices,
-		chaos:   soakChaos{full: os.Getenv("SYNCTHIS_E2E_SOAK_CHAOS") == "all"},
+		chaos:   soakChaos{full: os.Getenv("SYNCTHIS_E2E_SOAK_CHAOS") != "basic"},
 	}
 }
 
@@ -80,7 +82,10 @@ func TestSoak(t *testing.T) {
 	// rounds so a later round can rewrite or delete what an earlier one
 	// wrote.
 	live := map[string][]byte{}
-	rounds, chaosActions, conflicts := 0, 0, 0
+	rounds, chaosActions := 0, 0
+	// collided are the paths two devices wrote at the same instant, over
+	// the whole run.
+	var collided []string
 
 	for time.Now().Before(deadline) {
 		rounds++
@@ -93,7 +98,7 @@ func TestSoak(t *testing.T) {
 
 		c.WaitPeersConnected()
 		c.WaitConverged()
-		conflicts += c.checkLedger(rounds, book)
+		collided = append(collided, c.checkLedger(rounds, book)...)
 		for _, dev := range c.Devices {
 			if parts := dev.PartFiles(); len(parts) != 0 {
 				t.Fatalf("round %d: %s left partial downloads: %v", rounds, dev.Name, parts)
@@ -104,56 +109,63 @@ func TestSoak(t *testing.T) {
 	}
 
 	c.CheckInvariants()
-	// Nothing is left to fix anywhere, and every device recorded the same
-	// conflicts: a device that noticed fewer of them lost a version
-	// quietly.
-	counts := make([]int, len(c.Devices))
-	for i, dev := range c.Devices {
+	// Nothing is left to fix anywhere, and every path two devices wrote at
+	// once was recorded as a conflict somewhere. A conflict row is the
+	// record of a resolution a device made for itself, so the devices do
+	// not record the same rows: the device that had a version of its own
+	// to move aside records one, and a device that received the winner and
+	// the conflict copy as ordinary files has nothing to record. What every
+	// device must hold is every version, and that is what checkLedger
+	// asserts round by round.
+	recorded := map[string]bool{}
+	rows := 0
+	for _, dev := range c.Devices {
 		if out, code := dev.Run("repair", folderID, "--dry-run"); code != 0 {
 			t.Errorf("repair --dry-run on %s exited %d, want 0: %s", dev.Name, code, out)
 		}
-		var rows []conflictRow
-		dev.RunJSON(&rows, "conflict", "list", "--all")
-		counts[i] = len(rows)
-	}
-	for i, got := range counts {
-		if got != counts[0] {
-			t.Errorf("%s recorded %d conflicts, %s recorded %d: they saw different histories",
-				c.Devices[i].Name, got, c.Devices[0].Name, counts[0])
+		var found []conflictRow
+		dev.RunJSON(&found, "conflict", "list", "--all")
+		rows += len(found)
+		for _, row := range found {
+			recorded[row.Path] = true
 		}
 	}
-	t.Logf("soak finished: %d rounds, %d chaos actions, %d collided paths, %d conflicts recorded per device",
-		rounds, chaosActions, conflicts, counts[0])
+	for _, path := range collided {
+		if !recorded[path] {
+			t.Errorf("no device recorded a conflict for %s, which two devices wrote at once", path)
+		}
+	}
+	t.Logf("soak finished: %d rounds, %d chaos actions, %d collided paths, %d conflict rows across the cluster",
+		rounds, chaosActions, len(collided), rows)
 }
 
-// soakRound makes one round of changes, every device at the same instant, and
-// returns what was written.
-func (c *Cluster) soakRound(random *rand.Rand, live map[string][]byte, chaos soakChaos) ledger {
-	c.T.Helper()
+// soakOp is one change a round makes on one device.
+type soakOp struct {
+	path    string
+	content []byte
+	remove  bool
+	renamed string
+}
+
+// planSoakRound decides what every device changes in one round, against the
+// state the round starts from. It returns the ops of every device and the
+// ledger of what the round writes, and advances live to the state the round
+// reaches.
+func planSoakRound(random *rand.Rand, names []string, live map[string][]byte, chaos soakChaos) ([][]soakOp, ledger) {
 	book := ledger{live: map[string][]byte{}, collisions: map[string][][]byte{}}
 
 	// Every device owns the directory named after it, so two devices only
 	// ever write the same path when the round says so.
-	type op struct {
-		path    string
-		content []byte
-		remove  bool
-		renamed string
-	}
-	plan := make([][]op, len(c.Devices))
-	writers := random.Perm(len(c.Devices))[:1+random.IntN(len(c.Devices))]
+	plan := make([][]soakOp, len(names))
+	writers := random.Perm(len(names))[:1+random.IntN(len(names))]
 	for _, i := range writers {
-		dev := c.Devices[i]
-		owned := ownedPaths(live, dev.Name)
+		owned := ownedPaths(live, names[i])
 		for n := 0; n < 1+random.IntN(3); n++ {
-			// Only creations are in the default set. Changing a
-			// path a peer may be asking about leaves a permanent
-			// failed row in the journal, whichever way it is
-			// changed: a rewrite is refused with hash_changed, a
-			// delete or a rename with not_found. That is KF-1 of
-			// the plan, and a soak runs into it within a dozen
-			// rounds every time, so the rest is asked for with
-			// SYNCTHIS_E2E_SOAK_CHAOS=all.
+			// Only creations are in the basic set: rewriting,
+			// deleting or renaming a path a peer may be asking
+			// about is the case KF-1 of the plan was about, and
+			// the basic set is there for a run that wants none of
+			// it.
 			action := random.IntN(4)
 			if !chaos.full {
 				action = 0
@@ -161,26 +173,31 @@ func (c *Cluster) soakRound(random *rand.Rand, live map[string][]byte, chaos soa
 			switch {
 			case action == 1 && len(owned) > 0:
 				// Rewrite something this device already owns.
+				// The path stays in owned: a later op of the
+				// same round may change it again, and the file
+				// is still there for it.
 				path := owned[random.IntN(len(owned))]
 				content := payload(random.IntN(3)*chunkSize+random.IntN(500)+1, byte(random.IntN(256)))
-				plan[i] = append(plan[i], op{path: path, content: content})
+				plan[i] = append(plan[i], soakOp{path: path, content: content})
 				live[path], book.live[path] = content, content
 			case action == 2 && len(owned) > 0:
-				path := owned[random.IntN(len(owned))]
-				plan[i] = append(plan[i], op{path: path, remove: true})
+				var path string
+				path, owned = takePath(owned, random.IntN(len(owned)))
+				plan[i] = append(plan[i], soakOp{path: path, remove: true})
 				delete(live, path)
 				delete(book.live, path)
 			case action == 3 && len(owned) > 0:
-				from := owned[random.IntN(len(owned))]
-				to := fmt.Sprintf("%s/moved-%d.bin", dev.Name, random.IntN(1<<20))
-				plan[i] = append(plan[i], op{path: from, renamed: to})
+				var from string
+				from, owned = takePath(owned, random.IntN(len(owned)))
+				to := fmt.Sprintf("%s/moved-%d.bin", names[i], random.IntN(1<<20))
+				plan[i] = append(plan[i], soakOp{path: from, renamed: to})
 				live[to], book.live[to] = live[from], live[from]
 				delete(live, from)
 				delete(book.live, from)
 			default:
-				path := fmt.Sprintf("%s/f-%d.bin", dev.Name, random.IntN(1<<20))
+				path := fmt.Sprintf("%s/f-%d.bin", names[i], random.IntN(1<<20))
 				content := payload(random.IntN(4)*chunkSize+random.IntN(500)+1, byte(random.IntN(256)))
-				plan[i] = append(plan[i], op{path: path, content: content})
+				plan[i] = append(plan[i], soakOp{path: path, content: content})
 				live[path], book.live[path] = content, content
 			}
 		}
@@ -188,17 +205,29 @@ func (c *Cluster) soakRound(random *rand.Rand, live map[string][]byte, chaos soa
 
 	// A tenth of the rounds have two devices write the same path at the
 	// same instant, which is the case the zero-loss check is for. It is
-	// part of the full chaos set only: a path two devices rewrite at once
-	// runs into KF-1 and KF-2 of the plan.
+	// part of the full chaos set only.
 	if chaos.full && len(writers) > 1 && random.IntN(10) == 0 {
 		path := fmt.Sprintf("shared/c-%d.bin", random.IntN(1<<20))
 		for _, i := range writers[:2] {
 			content := payload(chunkSize+random.IntN(500)+1, byte(random.IntN(256)))
-			plan[i] = append(plan[i], op{path: path, content: content})
+			plan[i] = append(plan[i], soakOp{path: path, content: content})
 			book.collisions[path] = append(book.collisions[path], content)
 		}
 		delete(live, path)
 	}
+
+	return plan, book
+}
+
+// soakRound makes one round of changes, every device at the same instant, and
+// returns what was written.
+func (c *Cluster) soakRound(random *rand.Rand, live map[string][]byte, chaos soakChaos) ledger {
+	c.T.Helper()
+	names := make([]string, len(c.Devices))
+	for i, dev := range c.Devices {
+		names[i] = dev.Name
+	}
+	plan, book := planSoakRound(random, names, live, chaos)
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -227,6 +256,18 @@ func (c *Cluster) soakRound(random *rand.Rand, live map[string][]byte, chaos soa
 	return book
 }
 
+// takePath picks the path at an index out of the list of the paths a device
+// may still act on, and returns the list without it. A round plans several ops
+// at once against the state it saw at the start of the round, so a path a
+// planned op deletes or renames away has to leave the list: planning a second
+// op against a path that is gone by the time the round runs describes a state
+// the round never reaches, and the rename or the delete fails on a source that
+// is no longer there.
+func takePath(owned []string, idx int) (string, []string) {
+	path := owned[idx]
+	return path, append(owned[:idx:idx], owned[idx+1:]...)
+}
+
 // ownedPaths lists the paths of the folder a device owns, which are the ones
 // in the directory named after it.
 func ownedPaths(live map[string][]byte, name string) []string {
@@ -241,10 +282,9 @@ func ownedPaths(live map[string][]byte, name string) []string {
 	return owned
 }
 
-// soakChaosAction breaks something. The default set is what the product
-// survives today: a daemon that was killed, a container that was killed, a
-// daemon that was restarted. The full set adds a partition and a shaped link,
-// both of which run into the known failures of the plan.
+// soakChaosAction breaks something: a daemon that was killed, a container that
+// was killed, a daemon that was restarted, and, in the full set, a partition
+// and a shaped link.
 func (c *Cluster) soakChaosAction(random *rand.Rand, chaos soakChaos) {
 	c.T.Helper()
 	actions := 3
@@ -280,8 +320,8 @@ func (c *Cluster) soakChaosAction(random *rand.Rand, chaos soakChaos) {
 // checkLedger asserts that the round lost nothing: every path one device wrote
 // holds that content everywhere, and every path two devices wrote at once
 // holds one of the two versions with the other kept as a conflict copy on
-// every device. It returns how many paths collided.
-func (c *Cluster) checkLedger(round int, book ledger) int {
+// every device. It returns the paths that collided.
+func (c *Cluster) checkLedger(round int, book ledger) []string {
 	c.T.Helper()
 	for path, want := range book.live {
 		for _, dev := range c.Devices {
@@ -296,7 +336,9 @@ func (c *Cluster) checkLedger(round int, book ledger) int {
 		}
 	}
 
+	var collided []string
 	for path, versions := range book.collisions {
+		collided = append(collided, path)
 		for _, dev := range c.Devices {
 			// One of the versions keeps the path, and the ones that
 			// did not are on this device under a conflict name.
@@ -318,5 +360,5 @@ func (c *Cluster) checkLedger(round int, book ledger) int {
 			}
 		}
 	}
-	return len(book.collisions)
+	return collided
 }
