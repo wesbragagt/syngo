@@ -341,6 +341,48 @@ pointing at content that has not reached the disk.
 A target that is no longer the version the plan was made against is left alone:
 the download is discarded rather than the local change.
 
+### Scan watermarks
+
+A folder nothing changed is not walked again. The daemon holds one watermark
+per running folder loop: the folder sequence the last scan wrote, plus the
+claim that every change since then came through the filesystem watcher. While
+the claim holds, the periodic tick reads one row, the folder sequence, instead
+of the whole tree, and publishes `scan.skipped`. The watcher still reports what
+changes, and each burst still gets its subtrees scanned after the debounce, so
+the watermark only removes the pass that would have found nothing.
+
+The watermark lives in memory, not in the database. Nothing has to be stored
+for it, because every case in which it could be wrong is a case in which it
+does not exist: the loop takes a watermark only from a full scan it ran itself,
+with the watch up before that scan started and still up after it.
+
+The claim is dropped, and the whole folder walked again, in every one of these
+cases:
+
+1. The folder loop starts. That is every daemon start, and every folder whose
+   path, symlink policy or hidden-file policy changed. Nothing watched the
+   folder while the process was down, and a data directory put back from a
+   backup is put back while the daemon is stopped, so a restored database is
+   always read against the disk before it is trusted.
+2. The watch is not running, stopped on its own, or had to be attached again.
+   The time before a watch is attached is time nobody reported.
+3. The watcher dropped events and reported an overflow.
+4. A scan failed, or was superseded by another writer and wrote nothing. What
+   it read was never recorded, so it stands for nothing.
+5. The stored folder sequence is below the watermark. A sequence only ever
+   rises, so one that fell is a different database than the one the watermark
+   was taken from, which is what a restore under a running daemon looks like.
+6. The operator asks, with `syncthis rescan`. A queued rescan is always a full
+   scan.
+
+A sequence that rose above the watermark is not a fallback: it is this device's
+own puller recording what it installed, and the watcher reports those writes
+like any other change.
+
+The cost of being wrong is bounded by the interval itself: the watermark only
+decides whether the periodic pass runs, never what a scan writes, so the worst
+case is a change found at the next full scan rather than at the next tick.
+
 ### A crash during a scan
 
 A scan writes its whole result in one transaction against the folder sequence

@@ -403,6 +403,12 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 	})
 }
 
+// FolderSequence returns the last sequence number assigned in a folder, zero
+// when none was ever assigned.
+func (s *Store) FolderSequence(ctx context.Context, id folder.ID) (uint64, error) {
+	return s.folderSequence(ctx, id)
+}
+
 // folderSequence returns the last sequence number assigned in a folder.
 func (s *Store) folderSequence(ctx context.Context, id folder.ID) (uint64, error) {
 	var next int64

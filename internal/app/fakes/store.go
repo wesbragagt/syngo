@@ -341,6 +341,13 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 	return s.SetFolderScan(ctx, id, w.At, w.LastError)
 }
 
+// FolderSequence returns the highest sequence number handed out in a folder.
+func (s *Store) FolderSequence(_ context.Context, id folder.ID) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sequences[id], nil
+}
+
 // SyncFolderSequence raises the folder sequence counter above every sequence
 // already assigned to a file of that folder.
 func (s *Store) SyncFolderSequence(_ context.Context, id folder.ID) error {

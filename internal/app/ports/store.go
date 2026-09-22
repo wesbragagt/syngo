@@ -146,6 +146,11 @@ type FileStore interface {
 	// ErrStaleManifest, and writes nothing, when the folder sequence moved
 	// since the scan loaded the manifest.
 	ApplyScan(ctx context.Context, id folder.ID, w ScanWrite) error
+	// FolderSequence returns the highest sequence number ever handed out in
+	// a folder, zero when nothing was written for it. It costs one row,
+	// where loading the manifest costs the whole folder, which is what
+	// makes it usable as a watermark check on every rescan tick.
+	FolderSequence(ctx context.Context, id folder.ID) (uint64, error)
 	// SyncFolderSequence raises the folder sequence counter above every
 	// sequence already assigned to a file of that folder. It is a no-op when
 	// the counter is already ahead.

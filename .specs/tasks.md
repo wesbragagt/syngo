@@ -131,8 +131,8 @@ Goal: beat the baseline on the target workload.
 - [ ] Implement cross-file and cross-folder chunk deduplication.
 - [ ] Implement parallel transfer pipelines with backpressure.
 - [ ] Implement adaptive concurrency based on disk and network measurements.
-- [ ] Implement rename detection without re-uploading content.
-- [ ] Replace full scans with journal watermarks where possible.
+- [x] Implement rename detection without re-uploading content.
+- [x] Replace full scans with journal watermarks where possible.
 - [ ] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path.
 - [ ] Benchmark a 1 MiB insertion into a 10 GB file transfers less than 2 MiB after caching.
 - [ ] Benchmark a 10 GB rename transfers zero payload bytes.

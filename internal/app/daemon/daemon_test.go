@@ -47,6 +47,15 @@ type recordingScanner struct {
 	// partialErr fails scans of a subtree only, which is what a scan
 	// overtaken by a writer looks like: the tree is fine, the write is not.
 	partialErr error
+	// sequence is the folder sequence every scan reports as its result.
+	sequence uint64
+}
+
+// reportSequence makes every scan report seq as the sequence it wrote.
+func (s *recordingScanner) reportSequence(seq uint64) {
+	s.mu.Lock()
+	s.sequence = seq
+	s.mu.Unlock()
 }
 
 // newRecordingScanner returns a scanner that returns immediately.
@@ -59,6 +68,7 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 	s.mu.Lock()
 	s.calls = append(s.calls, scanCall{ID: f.ID, Paths: o.Paths})
 	release := s.release
+	sequence := s.sequence
 	scanErr := s.err
 	if scanErr == nil && len(o.Paths) > 0 {
 		scanErr = s.partialErr
@@ -79,7 +89,7 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 	if scanErr != nil {
 		return scan.Result{}, scanErr
 	}
-	return scan.Result{FolderID: f.ID}, nil
+	return scan.Result{FolderID: f.ID, Sequence: sequence}, nil
 }
 
 // failWith makes every scan fail with err.
@@ -408,8 +418,12 @@ func TestDaemon_OverflowForcesFullScan(t *testing.T) {
 	}
 }
 
-func TestDaemon_PeriodicFullScan(t *testing.T) {
+// TestDaemon_PeriodicScanIsFullWhileTheWatermarkIsUntrusted covers the ticks of
+// a folder nothing can vouch for: every scan a failing folder gets is a full
+// one, because a failed scan wrote nothing that could stand as a watermark.
+func TestDaemon_PeriodicScanIsFullWhileTheWatermarkIsUntrusted(t *testing.T) {
 	h := startDaemon(t, daemon.Config{RescanInterval: 20 * time.Millisecond}, testFolder("docs", false))
+	h.scanner.failWith(errors.New("folder root does not exist or is not a directory"))
 
 	waitFor(t, "periodic scans", func() bool { return len(h.scanner.snapshot()) >= 3 })
 	for _, call := range h.scanner.snapshot() {
@@ -695,21 +709,32 @@ func TestDaemon_ReattachesWatchWhenTheRootComesBack(t *testing.T) {
 		watcher, nil, testFolder("docs", false))
 	waitFor(t, "startup watch", func() bool { return watcher.attaches() == 1 })
 
-	// The root goes away: scans fail and the watch is dropped.
+	// The root goes away: scans fail and the watch is dropped. The tick
+	// alone would leave the folder unscanned, because the watch it still
+	// holds covers it, so the failing scan is asked for the way a user asks
+	// for one.
 	watcher.setMissing(true)
 	h.scanner.failWith(errors.New("folder root does not exist or is not a directory"))
 	before := len(h.scanner.snapshot())
+	if err := h.daemon.Rescan(h.ctx, "docs"); err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
 	waitFor(t, "a failing scan", func() bool { return len(h.scanner.snapshot()) > before })
 	if got := watcher.attaches(); got != 1 {
 		t.Fatalf("watch attaches = %d while the root is missing, want 1", got)
 	}
 
-	// The root comes back: the next tick watches it again and scans it.
+	// The root comes back: the next tick watches it again and scans it. The
+	// scan comes with the watch, because a watch that had to be attached
+	// leaves a gap only a full scan closes.
+	after := len(h.scanner.snapshot())
 	watcher.setMissing(false)
 	h.scanner.failWith(nil)
 	waitFor(t, "the watch to be re-established", func() bool { return watcher.attaches() >= 2 })
-	after := len(h.scanner.snapshot())
 	waitFor(t, "a scan after the root came back", func() bool { return len(h.scanner.snapshot()) > after })
+	if call := h.scanner.snapshot()[after]; !call.full() {
+		t.Fatalf("scan after the root came back = %+v, want a full scan", call)
+	}
 }
 
 // reload asks the daemon to re-read its configuration the way the CLI does,

@@ -225,7 +225,7 @@ the same shape as `config show`.
 |---|---|
 | `--upload-limit RATE` | outgoing chunk rate; `0` or `unlimited` lifts the limit |
 | `--download-limit RATE` | incoming chunk rate; `0` or `unlimited` lifts the limit |
-| `--rescan-interval DUR` | how often every folder is fully rescanned |
+| `--rescan-interval DUR` | how often every folder is reconciled |
 | `--sync-interval DUR` | how often a connected peer is asked what changed |
 | `--listen HOST:PORT` | address peers connect to |
 | `--interface NAME` | network interface to bind the first IPv4 address of |
@@ -405,6 +405,11 @@ at once, and the output is
 Without a daemon the scan runs in the command and prints an array of the `scan`
 document.
 
+A queued rescan always walks the whole folder, whatever the daemon already
+believes about it. It is the way to ask for a full pass: the periodic tick
+skips a folder the filesystem watcher has covered without a gap since the last
+full scan. See [STATE.md](STATE.md#scan-watermarks).
+
 ### `syncthis repair [ID] [--dry-run]`
 
 Restores agreement between the database and the files on disk: paths the
@@ -531,15 +536,21 @@ are RFC3339 in UTC, or `null`. `transfers.items` holds the same objects as
 
 ### `syncthis daemon run`
 
-Watches every configured folder, rescans them periodically, serves peers and
+Watches every configured folder, reconciles them periodically, serves peers and
 answers the control socket until it is interrupted with SIGINT or SIGTERM.
+
+A tick reconciles rather than rescans: a folder whose watch has been up without
+a gap since its last full scan is not walked at all, because every change since
+then was already reported and scanned. A folder that cannot make that claim is
+walked whole. [STATE.md](STATE.md#scan-watermarks) lists every case that falls
+back to the full scan; `syncthis rescan` asks for one at any time.
 
 | Flag | Meaning |
 |---|---|
 | `--listen HOST:PORT` | address peers connect to; default from `config.json` |
 | `--interface NAME` | bind the first IPv4 address of a network interface, replacing the host part of `--listen` |
 | `--allow-public` | allow binding an address reachable beyond this machine and its private network |
-| `--rescan-interval DUR` | how often every folder is fully rescanned; default from `config.json` |
+| `--rescan-interval DUR` | how often every folder is reconciled; default from `config.json` |
 | `--upload-limit RATE` | outgoing chunk rate for this run; default from `config.json` |
 | `--download-limit RATE` | incoming chunk rate for this run; default from `config.json` |
 

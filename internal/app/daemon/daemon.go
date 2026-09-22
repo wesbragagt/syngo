@@ -1,5 +1,7 @@
 // Package daemon keeps folder metadata current: it watches folders for
-// changes, rescans them periodically and answers control requests.
+// changes, reconciles them periodically and answers control requests. A
+// periodic reconcile walks the whole folder only when the watcher cannot
+// vouch for it; see watermark in folderloop.go.
 package daemon
 
 import (
@@ -57,7 +59,8 @@ type Syncer interface {
 
 // Config holds the daemon's runtime settings.
 type Config struct {
-	// RescanInterval is how often every folder is fully rescanned. It is
+	// RescanInterval is how often every folder is reconciled: walked whole
+	// unless its watermark says the watcher has covered it. It is
 	// also how often the folder and device tables are re-read, as a
 	// backstop: a CLI command that changes them asks the daemon to reload
 	// right away.
@@ -147,7 +150,18 @@ type Deps struct {
 	// Upload and Download pace what this device serves and asks for. A nil
 	// limiter means that direction is unlimited.
 	Upload, Download ports.Limiter
-	Log              *slog.Logger
+	// Events is where the daemon's own named events go. A nil sink
+	// publishes nothing; the scanner and the puller carry their own.
+	Events ports.EventSink
+	Log    *slog.Logger
+}
+
+// publish emits an event when a sink is configured.
+func (d *Daemon) publish(kind string, fields map[string]any) {
+	if d.deps.Events == nil {
+		return
+	}
+	d.deps.Events.Publish(ports.Event{Kind: kind, At: d.deps.Clock.Now(), Fields: fields})
 }
 
 // Daemon owns one folder loop per configured folder and the control server.

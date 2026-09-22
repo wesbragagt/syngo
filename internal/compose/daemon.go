@@ -149,6 +149,7 @@ func (a *App) RunDaemon(ctx context.Context, o DaemonOptions) error {
 		Peers:       a.PeerHandler,
 		Dialer:      a.Dialer,
 		Syncer:      a.Puller,
+		Events:      a.Events,
 		Log:         a.Logger,
 	})
 	if o.Ready != nil {
