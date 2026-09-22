@@ -93,8 +93,24 @@ func (l *Listener) Serve(ctx context.Context, h ports.PeerHandler, known ports.D
 	}
 }
 
-// Close stops accepting connections. Serve returns shortly after.
-func (l *Listener) Close() error { return l.ln.Close() }
+// Close stops accepting connections and drops the ones already accepted.
+// Serve returns shortly after: it waits for the connections it accepted, and
+// a listener is closed because the address under it is gone, which leaves
+// those connections dead whether or not the peers have noticed.
+func (l *Listener) Close() error {
+	err := l.ln.Close()
+
+	l.mu.Lock()
+	conns := make([]*serverConn, 0, len(l.conns))
+	for c := range l.conns {
+		conns = append(conns, c)
+	}
+	l.mu.Unlock()
+	for _, c := range conns {
+		_ = c.tls.Close()
+	}
+	return err
+}
 
 // Broadcast tells every connected peer that a folder changed.
 func (l *Listener) Broadcast(id folder.ID, seq uint64) {

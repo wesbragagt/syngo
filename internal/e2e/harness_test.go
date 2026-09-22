@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
 	"github.com/wesbragagt/syncthis/internal/app/fakes"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/compose"
@@ -32,7 +33,10 @@ const (
 	testRescanInterval = 300 * time.Millisecond
 	testSyncInterval   = 200 * time.Millisecond
 	testDebounce       = 50 * time.Millisecond
-	folderID           = folder.ID("docs")
+	// testHoldCheck is how often a recoverable listener checks that the
+	// machine still has the address it is bound to.
+	testHoldCheck = 20 * time.Millisecond
+	folderID      = folder.ID("docs")
 	// extraID is the second folder some tests configure. It is always
 	// sendreceive on both sides, so a file put in it and waited for proves
 	// that a sync cycle ran, which is what a test needs before it can say
@@ -77,6 +81,11 @@ type node struct {
 	ID     device.ID
 	Listen string
 	rescan time.Duration
+	// recoverable makes the node bind its peer port through a binder whose
+	// address the test can take away and give back.
+	recoverable bool
+	// binder is that binder, replaced on every start.
+	binder *flappingBinder
 
 	cancel context.CancelFunc
 	done   chan error
@@ -101,6 +110,10 @@ type nodeConfig struct {
 	ChunkSize int
 	// UploadLimit and DownloadLimit are bytes per second, 0 for unlimited.
 	UploadLimit, DownloadLimit bandwidth.Rate
+	// RecoverableListener binds the peer port through a binder whose
+	// address the test can take away, so a Tailscale client restarting
+	// under the daemon can be reproduced without a tailnet.
+	RecoverableListener bool
 }
 
 // startNode initializes a data directory, adds one folder in the given mode
@@ -122,7 +135,7 @@ func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 	}
 	n := &node{
 		t: t, name: name, mode: cfg.Mode, rescan: cfg.RescanInterval,
-		DataDir: t.TempDir(), Root: t.TempDir(),
+		DataDir: t.TempDir(), Root: t.TempDir(), recoverable: cfg.RecoverableListener,
 	}
 
 	config := jsonconfig.Default()
@@ -200,15 +213,20 @@ func (n *node) run() {
 		listen = "127.0.0.1:0"
 	}
 	ready := make(chan struct{})
-	go func() {
-		n.done <- n.App.RunDaemon(ctx, compose.DaemonOptions{
-			Listen:         listen,
-			Debounce:       testDebounce,
-			RescanInterval: n.rescan,
-			SyncInterval:   testSyncInterval,
-			Ready:          ready,
-		})
-	}()
+	options := compose.DaemonOptions{
+		Listen:         listen,
+		Debounce:       testDebounce,
+		RescanInterval: n.rescan,
+		SyncInterval:   testSyncInterval,
+		Ready:          ready,
+	}
+	if n.recoverable {
+		n.binder = newFlappingBinder(tcpwire.NewBinder(
+			n.App.Identity.TLSCertificate(), listen, "", false, n.App.Logger))
+		options.Binder = n.binder
+		options.HoldCheck = testHoldCheck
+	}
+	go func() { n.done <- n.App.RunDaemon(ctx, options) }()
 
 	select {
 	case <-ready:
