@@ -175,6 +175,17 @@ peer's id there, together with the size, modification time and inode the file
 has after the install, so the next local scan sees an unchanged file and does
 not send it back.
 
+Every row the puller writes is written conditionally: the row must still carry
+the `version` the plan was made against, and one whose version moved since is
+left alone and logged as superseded by a local change. The read and the write
+share one transaction, so a scan that recorded a local edit between the cycle's
+`LoadManifest` and its write keeps what it wrote, and the next cycle plans
+against it. A mode change is held to the same rule on disk as well: the file
+must still have the size, modification time and content the plan described,
+because the row a chmod writes carries the peer's hash. The row a chmod leaves
+holds the merge of the two vectors, not the peer's alone: no content moved, so
+neither side's history is dropped.
+
 Unlike `synced_mode`, which is local bookkeeping, `version` is sent to peers as
 the `version` field of a manifest entry: it is what lets the other side tell a
 version made on top of its own from one that diverged from it. See

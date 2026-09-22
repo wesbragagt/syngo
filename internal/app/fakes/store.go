@@ -188,6 +188,28 @@ func (s *Store) UpsertEntries(_ context.Context, id folder.ID, entries []manifes
 	return nil
 }
 
+// UpsertEntriesIf stores the entries whose stored version is still the
+// expected one and reports the paths it left alone.
+func (s *Store) UpsertEntriesIf(_ context.Context, id folder.ID, entries []manifest.Entry,
+	expect map[string]manifest.Version) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.files[id]; !ok {
+		s.files[id] = make(map[string]manifest.Entry)
+	}
+	var skipped []string
+	for _, e := range entries {
+		if want, checked := expect[e.Path]; checked && !s.files[id][e.Path].Version.Equals(want) {
+			skipped = append(skipped, e.Path)
+			continue
+		}
+		s.sequences[id]++
+		e.Sequence = s.sequences[id]
+		s.files[id][e.Path] = e
+	}
+	return skipped, nil
+}
+
 // MarkDeleted turns the given paths into tombstones.
 func (s *Store) MarkDeleted(_ context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error {
 	s.mu.Lock()

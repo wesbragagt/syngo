@@ -361,18 +361,18 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Dirs++
-		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
+		return p.record(ctx, f.ID, fromRemote(entry, item, peer))
 
 	case syncplan.ActionReplace:
 		return p.replace(ctx, f, peer, item, summary)
 
 	case syncplan.ActionChmod:
-		entry, err := p.installer.Chmod(ctx, f.Path, *item.Remote)
+		entry, err := p.installer.Chmod(ctx, f.Path, *item.Remote, item.Local)
 		if err != nil {
 			return err
 		}
 		summary.Modes++
-		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
+		return p.record(ctx, f.ID, fromRemote(entry, item, peer))
 
 	case syncplan.ActionSymlink:
 		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
@@ -380,7 +380,7 @@ func (p *Puller) apply(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Symlinks++
-		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
+		return p.record(ctx, f.ID, fromRemote(entry, item, peer))
 
 	case syncplan.ActionDelete:
 		if err := p.installer.Delete(ctx, f.Path, item.Path); err != nil {
@@ -418,14 +418,14 @@ func (p *Puller) replace(ctx context.Context, f folder.Folder, peer device.ID,
 			return err
 		}
 		summary.Dirs++
-		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
+		return p.record(ctx, f.ID, fromRemote(entry, item, peer))
 	default:
 		entry, err := p.installer.Symlink(ctx, f.Path, *item.Remote)
 		if err != nil {
 			return err
 		}
 		summary.Symlinks++
-		return p.record(ctx, f.ID, fromRemote(entry, *item.Remote, peer))
+		return p.record(ctx, f.ID, fromRemote(entry, item, peer))
 	}
 }
 
@@ -440,7 +440,7 @@ func (p *Puller) recordDeletion(ctx context.Context, id folder.ID, peer device.I
 		Deleted: true,
 		ModTime: p.clock.Now(),
 	}
-	return p.record(ctx, id, fromRemote(tombstone, *item.Remote, peer))
+	return p.record(ctx, id, fromRemote(tombstone, item, peer))
 }
 
 // recordAgreement stores what both sides now agree on for a path that needs no
@@ -664,7 +664,7 @@ func (p *Puller) install(ctx context.Context, f folder.Folder, peer device.ID,
 	if err != nil {
 		return nil, err
 	}
-	return []arrived{fromRemote(entry, *item.Remote, peer)}, nil
+	return []arrived{fromRemote(entry, item, peer)}, nil
 }
 
 // transferFor returns the journal entry to continue, or starts a new one. A
@@ -985,13 +985,46 @@ type arrived struct {
 	entry   manifest.Entry
 	author  device.ID
 	version manifest.Version
+	// expect is the version the stored row of the path carried when the
+	// plan was made. The write is refused when the row moved on since, so
+	// a local change a scan recorded in the meantime is never overwritten
+	// by what this cycle planned against the version before it.
+	expect manifest.Version
 }
 
 // fromRemote describes an entry installed as the peer announced it. A peer
 // that names no author is itself the author, which is what an entry written
 // before authors were recorded looks like.
-func fromRemote(e manifest.Entry, remote manifest.Entry, peer device.ID) arrived {
-	return arrived{entry: e, author: authorOf(remote, peer), version: remote.Version}
+func fromRemote(e manifest.Entry, item syncplan.Item, peer device.ID) arrived {
+	return arrived{
+		entry:  e,
+		author: authorOf(*item.Remote, peer),
+		// The mode of a chmod is not content: the path keeps the history
+		// of both sides rather than adopting the peer's vector, which
+		// would drop what this device knows about the same content.
+		version: recordedVersion(item),
+		expect:  plannedVersion(item.Local),
+	}
+}
+
+// recordedVersion is the vector an applied item leaves on the path. Everything
+// that installs the peer's content adopts the peer's vector; a mode change
+// carries no content, so the two vectors merge instead.
+func recordedVersion(item syncplan.Item) manifest.Version {
+	if item.Action == syncplan.ActionChmod && item.Local != nil {
+		return item.Local.Version.Merge(item.Remote.Version)
+	}
+	return item.Remote.Version
+}
+
+// plannedVersion is the version the local side of an item carried when the
+// plan was made. A path the plan found nothing for carries the zero vector,
+// which is also what an absent row compares as.
+func plannedVersion(local *manifest.Entry) manifest.Version {
+	if local == nil {
+		return manifest.Version{}
+	}
+	return local.Version
 }
 
 // record stores what now sits on disk: the author, the vector the content
@@ -1002,7 +1035,21 @@ func (p *Puller) record(ctx context.Context, id folder.ID, a arrived) error {
 	e.ModifiedBy = a.author
 	e.Version = a.version
 	e.SyncedMode = e.Mode
-	return p.store.UpsertEntries(ctx, id, []manifest.Entry{e})
+	skipped, err := p.store.UpsertEntriesIf(ctx, id, []manifest.Entry{e},
+		map[string]manifest.Version{e.Path: a.expect})
+	if err != nil {
+		return err
+	}
+	for _, path := range skipped {
+		// The next cycle plans against the version that won, so nothing
+		// is lost: what this cycle wrote to disk is either what the scan
+		// already recorded or a change the peer sends again.
+		p.log.Info("manifest row superseded by a local change", "folder", id, "path", path)
+		p.publish("sync.record_superseded", map[string]any{
+			"folder_id": string(id), "path": path,
+		})
+	}
+	return nil
 }
 
 // self is the device this puller installs for, empty when it has no identity.

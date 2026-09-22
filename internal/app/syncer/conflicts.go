@@ -92,6 +92,7 @@ func (p *Puller) keepBoth(ctx context.Context, f folder.Folder, peer device.ID,
 		entry:   installed,
 		author:  authorOf(*item.Remote, peer),
 		version: item.Local.Version.Merge(item.Remote.Version),
+		expect:  plannedVersion(item.Local),
 	}
 	return []arrived{outcome, p.keptCopy(ctx, f.ID, kept.Entry, item)}, nil
 }
@@ -109,6 +110,7 @@ func (p *Puller) keptCopy(ctx context.Context, id folder.ID, kept manifest.Entry
 		entry:   kept,
 		author:  p.authorOfLocal(*item.Local),
 		version: prev.Bump(p.self()),
+		expect:  prev,
 	}
 }
 

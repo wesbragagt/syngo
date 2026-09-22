@@ -101,6 +101,18 @@ func (f *FileSystem) AddFile(p string, data []byte, perm fs.FileMode) {
 	f.nodes[p] = &node{mode: perm.Perm(), data: append([]byte(nil), data...), modTime: f.modTime, inode: f.newInode()}
 }
 
+// SetContent replaces the bytes at p, keeping its mode, inode and modification
+// time. It is how a test writes an edit a size and mtime check cannot see.
+func (f *FileSystem) SetContent(p string, data []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.nodes[clean(p)]
+	if !ok {
+		return
+	}
+	n.data = append([]byte(nil), data...)
+}
+
 // AddSymlink creates a symlink pointing at target.
 func (f *FileSystem) AddSymlink(p, target string) {
 	f.mu.Lock()

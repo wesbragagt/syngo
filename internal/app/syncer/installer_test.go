@@ -311,15 +311,23 @@ func TestChmod_SetsThePeersModeWithoutTouchingContent(t *testing.T) {
 	fsys.AddDir(root, 0o755)
 	fsys.AddFile(root+"/a.txt", data, 0o644)
 
+	info, err := fsys.Lstat(root + "/a.txt")
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
 	remote := manifest.Entry{
 		Path: "a.txt", Kind: manifest.KindFile, Mode: 0o700, Hash: hasher.SumBytes(data),
 	}
-	entry, err := installer.Chmod(context.Background(), root, remote)
+	local := &manifest.Entry{
+		Path: "a.txt", Kind: manifest.KindFile, Mode: 0o644, Hash: hasher.SumBytes(data),
+		Size: info.Size, ModTime: info.ModTime,
+	}
+	entry, err := installer.Chmod(context.Background(), root, remote, local)
 	if err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
 
-	info, err := fsys.Lstat(root + "/a.txt")
+	info, err = fsys.Lstat(root + "/a.txt")
 	if err != nil {
 		t.Fatalf("lstat: %v", err)
 	}
@@ -343,8 +351,69 @@ func TestChmod_RefusesWhenThePathIsNoLongerAFile(t *testing.T) {
 	fsys.AddDir(root, 0o755)
 	fsys.AddDir(root+"/a.txt", 0o755)
 
-	_, err := installer.Chmod(context.Background(), root, manifest.Entry{Path: "a.txt", Mode: 0o700})
+	_, err := installer.Chmod(context.Background(), root, manifest.Entry{Path: "a.txt", Mode: 0o700}, nil)
 	if !errors.Is(err, syncer.ErrChangedUnderneath) {
 		t.Fatalf("error = %v, want ErrChangedUnderneath", err)
+	}
+}
+
+// TestChmod_RefusesAFileThatWasEditedSinceThePlan is the installer half of the
+// chmod race: the mode change carries the peer's hash, so a file whose content
+// changed after the plan was made must not be recorded under it.
+func TestChmod_RefusesAFileThatWasEditedSinceThePlan(t *testing.T) {
+	cases := []struct {
+		name  string
+		edit  func(fsys *fakes.FileSystem)
+		local func(planned manifest.Entry) *manifest.Entry
+	}{
+		{
+			name: "size and modification time moved",
+			edit: func(fsys *fakes.FileSystem) {
+				fsys.AddFile(root+"/a.txt", []byte("edited on this device"), 0o644)
+			},
+			local: func(planned manifest.Entry) *manifest.Entry { return &planned },
+		},
+		{
+			name: "content moved but size and modification time did not",
+			edit: func(fsys *fakes.FileSystem) {
+				fsys.SetContent(root+"/a.txt", []byte("edited content!!!"))
+			},
+			local: func(planned manifest.Entry) *manifest.Entry { return &planned },
+		},
+		{
+			name:  "the plan knew of no local version at all",
+			edit:  func(*fakes.FileSystem) {},
+			local: func(manifest.Entry) *manifest.Entry { return nil },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fsys := fakes.NewFileSystem()
+			hasher := fakes.NewHasher()
+			installer := syncer.NewInstaller(fsys, hasher)
+			data := []byte("planned content!!")
+			fsys.AddDir(root, 0o755)
+			fsys.AddFile(root+"/a.txt", data, 0o644)
+			info, err := fsys.Lstat(root + "/a.txt")
+			if err != nil {
+				t.Fatalf("lstat: %v", err)
+			}
+			planned := manifest.Entry{
+				Path: "a.txt", Kind: manifest.KindFile, Mode: 0o644, Hash: hasher.SumBytes(data),
+				Size: info.Size, ModTime: info.ModTime,
+			}
+
+			tc.edit(fsys)
+			remote := manifest.Entry{
+				Path: "a.txt", Kind: manifest.KindFile, Mode: 0o755, Hash: planned.Hash,
+			}
+			_, err = installer.Chmod(context.Background(), root, remote, tc.local(planned))
+			if !errors.Is(err, syncer.ErrChangedUnderneath) {
+				t.Fatalf("chmod = %v, want ErrChangedUnderneath", err)
+			}
+			if got, _ := fsys.Lstat(root + "/a.txt"); got.Mode.Perm() == 0o755 {
+				t.Fatal("the mode was set on a file the plan no longer describes")
+			}
+		})
 	}
 }

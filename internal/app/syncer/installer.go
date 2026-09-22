@@ -388,8 +388,15 @@ func (i *Installer) CheckReplaceable(ctx context.Context, root, rel string, loca
 }
 
 // Chmod sets the permission bits a peer announced on a local file whose
-// content already matches. It returns the entry that now describes the file.
-func (i *Installer) Chmod(_ context.Context, root string, e manifest.Entry) (manifest.Entry, error) {
+// content already matches. expectLocal describes the local version the plan
+// was made against: the file must still be exactly it, down to its content,
+// because the entry the caller records carries the peer's hash and a file
+// edited since would be recorded as holding content it does not hold. A chmod
+// moves no bytes, so hashing it is the cheapest part of the operation.
+//
+// It returns the entry that now describes the file.
+func (i *Installer) Chmod(_ context.Context, root string, e manifest.Entry,
+	expectLocal *manifest.Entry) (manifest.Entry, error) {
 	full, err := i.safeJoin(root, e.Path)
 	if err != nil {
 		return manifest.Entry{}, err
@@ -400,6 +407,17 @@ func (i *Installer) Chmod(_ context.Context, root string, e manifest.Entry) (man
 	}
 	if info.IsDir() || info.IsSymlink() {
 		return manifest.Entry{}, fmt.Errorf("%s is no longer a file: %w", full, ErrChangedUnderneath)
+	}
+	if expectLocal == nil || expectLocal.Deleted || expectLocal.Kind != manifest.KindFile ||
+		info.Size != expectLocal.Size || info.ModTime.UnixNano() != expectLocal.ModTime.UnixNano() {
+		return manifest.Entry{}, fmt.Errorf("%s: %w", full, ErrChangedUnderneath)
+	}
+	switch hash, hashErr := i.hashFile(full); {
+	case hashErr != nil:
+		return manifest.Entry{}, hashErr
+	case hash != expectLocal.Hash:
+		return manifest.Entry{}, fmt.Errorf("%s holds %s, expected %s: %w",
+			full, hash, expectLocal.Hash, ErrChangedUnderneath)
 	}
 
 	mode := fs.FileMode(e.Mode).Perm()

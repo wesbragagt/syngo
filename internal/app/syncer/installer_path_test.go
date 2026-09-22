@@ -69,7 +69,7 @@ func TestMkDirAndChmod_RefuseAPathOutsideTheFolder(t *testing.T) {
 	}
 	if _, err := installer.Chmod(ctx, root, manifest.Entry{
 		Path: "../escape.txt", Kind: manifest.KindFile, Mode: 0o777,
-	}); !errors.Is(err, syncer.ErrUnsafePath) {
+	}, nil); !errors.Is(err, syncer.ErrUnsafePath) {
 		t.Fatalf("chmod = %v, want ErrUnsafePath", err)
 	}
 	if err := installer.RemoveReplaced(ctx, root, "../escape.txt", nil); !errors.Is(err, syncer.ErrUnsafePath) {

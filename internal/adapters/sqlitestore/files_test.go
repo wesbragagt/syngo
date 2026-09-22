@@ -56,6 +56,71 @@ func TestUpsertEntries_AssignsIncreasingSequence(t *testing.T) {
 	}
 }
 
+// TestUpsertEntriesIf_WritesOnlyTheRowsThatDidNotMove is the store half of the
+// lost-edit fix: a cycle that planned against one version must not overwrite a
+// row another writer has moved on since.
+func TestUpsertEntriesIf_WritesOnlyTheRowsThatDidNotMove(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openStore(t)
+	if err := store.SaveFolder(ctx, testFolder("docs", "/home/u/docs")); err != nil {
+		t.Fatalf("SaveFolder error: %v", err)
+	}
+	planned := versionOf(t, "AAA:1")
+	if err := store.UpsertEntries(ctx, "docs", []manifest.Entry{
+		{Path: "kept.txt", Kind: manifest.KindFile, Size: 1, Hash: hashOf(1), ModTime: testTime,
+			Version: planned},
+		{Path: "moved.txt", Kind: manifest.KindFile, Size: 2, Hash: hashOf(2), ModTime: testTime,
+			Version: versionOf(t, "AAA:1,BBB:1")},
+	}); err != nil {
+		t.Fatalf("UpsertEntries error: %v", err)
+	}
+
+	skipped, err := store.UpsertEntriesIf(ctx, "docs", []manifest.Entry{
+		{Path: "kept.txt", Kind: manifest.KindFile, Size: 10, Hash: hashOf(3), ModTime: testTime,
+			Version: versionOf(t, "AAA:2")},
+		{Path: "moved.txt", Kind: manifest.KindFile, Size: 20, Hash: hashOf(4), ModTime: testTime,
+			Version: versionOf(t, "AAA:2")},
+		{Path: "new.txt", Kind: manifest.KindFile, Size: 30, Hash: hashOf(5), ModTime: testTime,
+			Version: versionOf(t, "AAA:1")},
+		{Path: "unchecked.txt", Kind: manifest.KindFile, Size: 40, Hash: hashOf(6), ModTime: testTime},
+	}, map[string]manifest.Version{
+		"kept.txt":  planned,
+		"moved.txt": planned,
+		// A path with no row at all is expected to carry the zero vector.
+		"new.txt": {},
+	})
+	if err != nil {
+		t.Fatalf("UpsertEntriesIf error: %v", err)
+	}
+	if !reflect.DeepEqual(skipped, []string{"moved.txt"}) {
+		t.Fatalf("skipped = %v, want [moved.txt]", skipped)
+	}
+
+	m, err := store.LoadManifest(ctx, "docs")
+	if err != nil {
+		t.Fatalf("LoadManifest error: %v", err)
+	}
+	if m.Entries["kept.txt"].Size != 10 {
+		t.Fatalf("kept.txt = %+v, want the new version written", m.Entries["kept.txt"])
+	}
+	if m.Entries["moved.txt"].Size != 2 {
+		t.Fatalf("moved.txt = %+v, want the stored version untouched", m.Entries["moved.txt"])
+	}
+	if m.Entries["new.txt"].Size != 30 || m.Entries["unchecked.txt"].Size != 40 {
+		t.Fatalf("entries = %+v, want the unconditional rows written", m.Entries)
+	}
+}
+
+// versionOf parses a version vector written as "ID:N,ID:N".
+func versionOf(t *testing.T, s string) manifest.Version {
+	t.Helper()
+	v, err := manifest.ParseVersion(s)
+	if err != nil {
+		t.Fatalf("parse version %q: %v", s, err)
+	}
+	return v
+}
+
 func TestUpsertEntries_BatchesOver500(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openStore(t)

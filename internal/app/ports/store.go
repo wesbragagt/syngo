@@ -117,6 +117,18 @@ type FileStore interface {
 	GetFile(ctx context.Context, id folder.ID, path string) (manifest.Entry, error)
 	// UpsertEntries assigns each entry the next folder sequence number.
 	UpsertEntries(ctx context.Context, id folder.ID, entries []manifest.Entry) error
+	// UpsertEntriesIf writes the entries whose stored version vector is
+	// still the one the caller planned against, and returns the paths of
+	// the entries it did not write because the stored version moved on.
+	//
+	// expect holds the version each path is expected to carry; a path that
+	// has no stored row at all is expected to carry the zero vector. A path
+	// missing from expect is written unconditionally, exactly as
+	// UpsertEntries writes it. The comparison and the write happen
+	// together, so a writer that lost the race is refused rather than
+	// silently overwriting what the winner stored.
+	UpsertEntriesIf(ctx context.Context, id folder.ID, entries []manifest.Entry,
+		expect map[string]manifest.Version) (skipped []string, err error)
 	MarkDeleted(ctx context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error
 	// SetVersion replaces the version vector of one entry without giving it
 	// a new sequence number: the content did not change, only what is known

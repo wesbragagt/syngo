@@ -77,6 +77,45 @@ func (s *Store) UpsertEntries(ctx context.Context, id folder.ID, entries []manif
 	return nil
 }
 
+// UpsertEntriesIf writes the entries whose stored version vector is still the
+// expected one and reports the paths it left alone. The read of the stored
+// version and the write share one transaction, so a scan that recorded a local
+// change between the caller's plan and this write keeps it.
+func (s *Store) UpsertEntriesIf(ctx context.Context, id folder.ID, entries []manifest.Entry,
+	expect map[string]manifest.Version) ([]string, error) {
+	now := time.Now().UnixNano()
+	var skipped []string
+	for start := 0; start < len(entries); start += batchSize {
+		end := min(start+batchSize, len(entries))
+		batch := entries[start:end]
+
+		err := s.tx(ctx, func(tx *sql.Tx) error {
+			writable := make([]manifest.Entry, 0, len(batch))
+			for _, e := range batch {
+				want, checked := expect[e.Path]
+				if !checked {
+					writable = append(writable, e)
+					continue
+				}
+				stored, err := storedVersion(ctx, tx, id, e.Path)
+				if err != nil {
+					return err
+				}
+				if !stored.Equals(want) {
+					skipped = append(skipped, e.Path)
+					continue
+				}
+				writable = append(writable, e)
+			}
+			return upsertEntries(ctx, tx, id, writable, now)
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return skipped, nil
+}
+
 // MarkDeleted turns the given paths into tombstones. Unknown paths are ignored.
 func (s *Store) MarkDeleted(ctx context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error {
 	for start := 0; start < len(paths); start += batchSize {
@@ -262,6 +301,25 @@ func markDeleted(ctx context.Context, tx *sql.Tx, id folder.ID, paths []string, 
 		}
 	}
 	return nil
+}
+
+// storedVersion returns the version vector a path carries, or the zero vector
+// when the folder holds no row for it at all.
+func storedVersion(ctx context.Context, tx *sql.Tx, id folder.ID, path string) (manifest.Version, error) {
+	var stored string
+	err := tx.QueryRowContext(ctx,
+		`SELECT version FROM files WHERE folder_id = ? AND rel_path = ?`, string(id), path).Scan(&stored)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return manifest.Version{}, nil
+	case err != nil:
+		return manifest.Version{}, fmt.Errorf("read version of %q in folder %q: %w", path, id, err)
+	}
+	v, err := manifest.ParseVersion(stored)
+	if err != nil {
+		return manifest.Version{}, fmt.Errorf("file %q in folder %q: %w", path, id, err)
+	}
+	return v, nil
 }
 
 // bumpedVersion returns the stored version vector of a path with the counter
