@@ -1,10 +1,9 @@
 # Syncthis benchmarks
 
-Phase 0 baseline: run Syncthis against the corpus before optimizing anything,
-so later phases have our own first recorded run to compare against. This
-document defines the hardware, the layout, the network scenarios, and the
-target metrics. It does not report results yet; every number below marked
-"unmeasured" is a placeholder until a run fills it in.
+Phase 0 baseline: run Syncthis against the corpus and record what happened.
+This document defines the hardware, the layout, and the network scenarios. It
+does not report results yet; every item below marked "unmeasured" is a
+placeholder until a run fills it in.
 
 ## Reference hardware
 
@@ -48,8 +47,7 @@ against all three.
 ### LAN
 
 What it measures: convergence time and throughput with no NAT traversal and no
-relay, the fastest path available. This is the ceiling every other scenario is
-compared against.
+relay, the fastest path available to the other two scenarios.
 
 Setup: both machines on the same local network segment, wired if possible.
 Syncthis binds to the LAN interface directly, Tailscale is not involved.
@@ -68,29 +66,9 @@ listener binds to the Tailscale interface per the rule in ARCHITECTURE.md.
 ### Tailscale DERP
 
 What it measures: convergence time and throughput when NAT traversal fails and
-traffic falls back to a DERP relay, the worst realistic path. This bounds the
-degradation Syncthis has to tolerate when direct connections are not
-available.
+traffic falls back to a DERP relay, the path Syncthis falls back to when a
+direct connection is not available.
 
 Setup: same tailnet as the direct scenario, but with direct connections
 forced off (for example by blocking UDP between the two machines at the
 firewall) so `tailscale status --json` reports a `relay` value for the peer.
-
-## Target metrics
-
-Absolute targets for Syncthis, taken from the Phase 5 benchmark lines of
-`.specs/tasks.md`. These are not comparisons against another product: the
-baseline a later run is measured against is Syncthis's own first recorded run
-of the corpus, stored in `bench/results/v1/`. The targets below are fixed
-regardless of what that first run measures.
-
-| Metric | Target |
-|---|---|
-| Convergence time for an ordinary document change | under 1 second on a healthy Tailscale direct path |
-| Bytes transferred for a 1 MiB insertion into a 10 GB file, after caching | less than 2 MiB |
-| Bytes transferred for a 10 GB rename | zero payload bytes |
-| Status latency for a 100,000-file folder after an incremental change | under 2 seconds |
-| Bytes transferred for small edits vs. whole-file transfer | at least 90% fewer bytes |
-
-These numbers are unmeasured until Syncthis exists to measure; this table
-states the targets a Phase 5 run has to hit.
