@@ -221,13 +221,33 @@ func TestCLIImportsAllowedPackagesOnly(t *testing.T) {
 }
 
 func TestCmdImportsOnlyCLI(t *testing.T) {
-	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd") {
+	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syncthis") {
 		for _, imp := range f.imports {
 			if isThirdParty(imp) {
 				t.Errorf("%s imports third-party %q; the entry point only wires up the CLI", f.path, imp)
 			}
 			if isInternal(imp) && localPath(imp) != "internal/cli" {
 				t.Errorf("%s imports %q; the entry point may only import internal/cli", f.path, imp)
+			}
+		}
+	}
+}
+
+// TestBenchCmdImportsOnlyItsRunner keeps cmd/syncthis-bench as thin as
+// cmd/syncthis: it parses flags and calls internal/bench/runner, nothing
+// else internal, and no third-party package (see docs/PLAN.md section 0's
+// closed dependency list).
+func TestBenchCmdImportsOnlyItsRunner(t *testing.T) {
+	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syncthis-bench") {
+		for _, imp := range f.imports {
+			if isThirdParty(imp) {
+				t.Errorf("%s imports third-party %q; cmd/syncthis-bench only wires up internal/bench/runner", f.path, imp)
+			}
+			if isInternal(imp) {
+				local := localPath(imp)
+				if local != "internal/bench/runner" && local != "internal/bench/report" {
+					t.Errorf("%s imports %q; cmd/syncthis-bench may only import internal/bench/runner and internal/bench/report", f.path, imp)
+				}
 			}
 		}
 	}

@@ -35,8 +35,11 @@ so `bench/results/v1/` is only ever compared against `bench/corpus/v1/`.
 Comparing a result to a different corpus version is a mistake the directory
 layout makes visible.
 
-Nothing under `bench/corpus/` or `internal/bench/fixture` is built by this
-task; see the corpus generator and runner, owned separately.
+The corpus generator is `internal/bench/fixture`; the runner that drives a
+scenario end to end is `internal/bench/runner`, run through the
+`syncthis-bench` command below. `fixture.Generate` refuses to write into a
+non-empty directory, so a corpus directory that already holds a tree from an
+earlier run is reused rather than regenerated.
 
 ## Network scenarios
 
@@ -72,3 +75,58 @@ direct connection is not available.
 Setup: same tailnet as the direct scenario, but with direct connections
 forced off (for example by blocking UDP between the two machines at the
 firewall) so `tailscale status --json` reports a `relay` value for the peer.
+
+## Running a scenario
+
+`syncthis-bench` (built from `cmd/syncthis-bench`) generates the corpus into
+the versioned corpus directory, starts the devices a scenario needs, pairs
+them, shares a folder, waits for convergence, applies the mutation set
+(rename, delete, modify, editor save), waits again, measures a recovery by
+killing one daemon mid-transfer and restarting it, and writes one
+`internal/bench/report.Result` to the versioned results directory. It prints
+the result path on success, followed by one `unmeasured: <field>: <reason>`
+line for every field it could not fill in on this run.
+
+### LAN
+
+The `lan` scenario is self-contained: it starts two devices in one process
+over loopback and needs nothing beyond the defaults.
+
+```console
+$ go run ./cmd/syncthis-bench --scenario lan --name baseline
+bench/results/v1/20260922T135004Z-lan-baseline.json
+scenario lan, name baseline, took 11s
+```
+
+Fields a `lan` run fills in: `convergence_time_ns`, `bytes_transferred`,
+`recovery_time_ns`, and, on Linux and macOS, `cpu_seconds` and
+`peak_memory_bytes`. `disk_writes` is read from `/proc/self/io` on Linux; it
+is a real number, but a temporary directory backed by tmpfs can report zero
+because nothing was ever written to a block device.
+
+### Tailscale direct and Tailscale DERP
+
+These need two real machines already joined to the same tailnet, set up as
+the sections above describe. This command only ever drives the local side of
+the pair — there is no way for one process to read a folder on the other
+machine — so it needs the peer's address and identity, and the local data
+directory to run the daemon against:
+
+```console
+$ go run ./cmd/syncthis-bench --scenario tailscale-direct --name baseline \
+    --peer-addr 100.64.0.7:22000 \
+    --peer-device-id ETI3RRZ... \
+    --local-data-dir ~/.local/share/syncthis-bench
+```
+
+Run the matching invocation on the peer machine to fill in both sides of a
+comparison. A machine without a running, reachable Tailscale client is
+refused with an actionable message rather than producing a result: this
+runner never fakes a Tailscale measurement.
+
+Fields these scenarios fill in: `bytes_transferred` and, on Linux and macOS,
+`cpu_seconds`, `peak_memory_bytes` and `disk_writes`. `convergence_time_ns`
+and `recovery_time_ns` are always left at zero with an `unmeasured` line
+explaining why: convergence and recovery both need seeing the peer's folder
+or restarting the peer's process, and this command only ever runs on one
+machine.

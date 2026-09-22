@@ -40,14 +40,14 @@ Goal: measure syncthis itself with a repeatable corpus and a repeatable runner.
 Scope decision: no competitor measurement and no comparison. The benchmark
 records our own numbers. See docs/BENCH.md.
 
-- [ ] Pick the reference hardware for the benchmark corpus.
-- [ ] Build a fixture generator for small files, large files, deep trees, renames, deletes, binary files, and editor saves.
-- [ ] Build a runner that executes scenarios from one command.
-- [ ] Capture JSON results for every run: convergence time, bytes, CPU, memory, disk writes, recovery.
-- [ ] Add LAN, Tailscale direct, and Tailscale DERP scenarios.
+- [x] Pick the reference hardware for the benchmark corpus.
+- [x] Build a fixture generator for small files, large files, deep trees, renames, deletes, binary files, and editor saves.
+- [x] Build a runner that executes scenarios from one command.
+- [x] Capture JSON results for every run: convergence time, bytes, CPU, memory, disk writes, recovery.
+- [x] Add LAN, Tailscale direct, and Tailscale DERP scenarios.
 - [x] Run Syncthing against the corpus and record numbers. Dropped: no competitor measurement.
 - [x] Run Obsidian Sync where allowed and record numbers. Dropped: no competitor measurement.
-- [ ] Store the corpus and results under a versioned directory.
+- [x] Store the corpus and results under a versioned directory.
 - [x] Define the target metrics Syncthis must beat. Dropped: no comparison.
 
 ## Phase 1: Local single-device engine
