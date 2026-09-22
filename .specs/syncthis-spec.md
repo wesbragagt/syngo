@@ -207,19 +207,11 @@ Add NAT traversal, relay support, content-defined chunking, multi-device version
 
 ## Benchmark plan
 
-Compare against Syncthing, Mutagen, and one server-backed option using the same hardware and files:
 
-- initial sync of 1 GiB, 10 GiB, and 100 GiB
-- 10,000 small files
-- one 50 GiB file with a 1 MiB insertion near the beginning
-- rename storms and editor save patterns
-- LAN, Wi-Fi, 100 ms WAN, and relay paths
-- interrupted transfer and process restart
-- simultaneous edits and conflict recovery
-- CPU time, peak RSS, disk writes, network bytes, time to convergence
-- battery impact on a laptop
-
-The key metric is not peak throughput alone. Measure time from local change to verified convergence and the bytes transferred after small edits.
+The Phase 0 baseline measures Syncthis alone: establish repeatable convergence,
+bytes transferred, CPU, memory, disk writes, and recovery against a versioned
+corpus across three network scenarios (LAN, Tailscale direct, Tailscale DERP).
+No competitor measurements. [[adr-003-drop-competitor-benchmarking]]
 
 ## Main risks
 
@@ -279,7 +271,7 @@ Validate personal file synchronization across two Tailscale-connected devices. T
 **Include:**
 
 - Go implementation.
-- Linux-first support.
+- Linux and macOS support.
 - Two personal devices.
 - Tailscale hostname or IP pairing.
 - Tailscale-only listener by default.
@@ -288,7 +280,7 @@ Validate personal file synchronization across two Tailscale-connected devices. T
 - One-way replication first, followed by two-way sync in the same release.
 - Filesystem events plus periodic reconciliation scans.
 - Whole-file BLAKE3 hashes.
-- Fixed-size chunks for resumable transfers.
+- Content-defined chunking with resumable transfers (see [[adr-004-chunk-size-64kib]]).
 - Keep-both conflict handling.
 - CLI with JSON output.
 - Interactive TUI.
@@ -299,16 +291,13 @@ Validate personal file synchronization across two Tailscale-connected devices. T
 
 - Mobile clients.
 - Three-way merging.
-- Content-defined chunking.
-- Cross-file deduplication.
 - Public relays.
 - Hosted accounts.
 - Team sharing.
 - Custom VPN functionality.
 - Complex permissions.
 - Automatic binary merging.
-- Windows, on any platform and at any time.
-- macOS packaging until the workflow is validated.
+
 
 ### Initial release success metrics
 
@@ -342,7 +331,7 @@ The first transport should be a simple authenticated stream over Tailscale. Benc
 3. One-way file transfer with fixed-size chunks and resume.
 4. Interactive TUI for setup, status, pause, resume, and repair.
 5. Two-way sync with keep-both conflicts.
-6. Failure testing, benchmark corpus, and comparison against Syncthing.
+6. Failure testing, benchmark corpus, and Phase 5 performance measurements.
 
 ### Future implementation review
 
@@ -512,7 +501,7 @@ V1 is a general file sync daemon for two or more devices connected through Tails
 
 ### Phase 5: Performance and scale
 
-**Goal:** Beat Obsidian Sync and Syncthing on the target document and Tailscale workloads.
+**Goal:** Achieve target performance: small edits use minimal bandwidth, renames have zero payload cost, document changes converge quickly.
 
 **Scope:**
 
@@ -581,7 +570,7 @@ V1 is a general file sync daemon for two or more devices connected through Tails
 
 Build a Tailscale-first, Rust-based sync engine. Use Tailscale for encrypted network reachability, QUIC or another multiplexed transport over the Tailscale path, event-driven journals, BLAKE3 manifests, resumable chunk transfers, and direct peer connections. Keep application-level pairing, folder authorization, conflict safety, and audit logs inside the sync system.
 
-The first release should not claim victory based on raw throughput alone. It should beat Obsidian Sync on CLI control, self-hosted P2P operation, explainable conflicts, recovery after interruption, and small-edit efficiency. Benchmark every claim against the Phase 0 corpus.
+The first release will validate that Syncthis meets its design goals: fast change detection (under two seconds for ordinary files), small-edit efficiency (through content-defined chunking; see [[adr-004-chunk-size-64kib]]), self-hosted P2P operation over Tailscale, explainable conflicts, and recovery after interruption. Benchmark every claim against the Phase 0 corpus.
 ---
         
 > Note: This is a research draft. Validate project activity, protocol compatibility, and security claims before selecting dependencies.
