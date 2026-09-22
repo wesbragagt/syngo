@@ -51,6 +51,11 @@ var (
 	// root: one a peer may not name at all, or one whose parent is a
 	// symbolic link, which the operating system would follow.
 	ErrUnsafePath = errors.New("path is not inside the folder")
+	// ErrParentConflict reports a path whose parent is a file here while
+	// the peer holds it as a directory. Nothing can be written beneath it
+	// until the conflict on the parent is settled, so that one path is
+	// skipped and the rest of the plan goes on.
+	ErrParentConflict = errors.New("parent path is not a directory")
 )
 
 // Installer applies finished downloads and plan decisions to the filesystem.
@@ -86,9 +91,10 @@ func (i *Installer) safeJoin(root, rel string) (string, error) {
 	return full, nil
 }
 
-// checkParents reports a parent directory of rel, inside root, that is a
-// symbolic link. A parent that does not exist yet ends the walk: nothing
-// beneath it exists either.
+// checkParents reports a parent of rel, inside root, that is not a plain
+// directory: a symbolic link, which the operating system would write through,
+// or a file, which is the local side of a conflict on the parent. A parent
+// that does not exist yet ends the walk: nothing beneath it exists either.
 func (i *Installer) checkParents(root, rel string) error {
 	dir := path.Clean(root)
 	for _, segment := range strings.Split(path.Dir(rel), "/") {
@@ -105,6 +111,9 @@ func (i *Installer) checkParents(root, rel string) error {
 		}
 		if info.IsSymlink() {
 			return fmt.Errorf("%s is a symbolic link: %w", dir, ErrUnsafePath)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%s is not a directory: %w", dir, ErrParentConflict)
 		}
 	}
 	return nil

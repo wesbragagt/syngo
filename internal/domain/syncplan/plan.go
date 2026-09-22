@@ -8,6 +8,7 @@ package syncplan
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
@@ -79,6 +80,7 @@ const (
 	ReasonModeChanged       = "mode-changed"
 	ReasonModeUnknown       = "mode-baseline-unknown"
 	ReasonInvalidPath       = "invalid-path"
+	ReasonParentConflict    = "parent-conflict"
 )
 
 // Item is one decision in a plan, describing what to do with Path.
@@ -108,6 +110,11 @@ func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
 	}
 
 	var creates, deletes, replaces []Item
+	// Paths the peer holds as a directory while a local file of the same
+	// name is in conflict with it. Nothing can be written beneath such a
+	// path until the conflict is settled. remote.Sorted is in path order,
+	// so a parent is always decided before its children.
+	var blocked []string
 	for _, r := range remote.Sorted() {
 		entry := r
 		var localEntry *manifest.Entry
@@ -117,6 +124,12 @@ func Plan(local, remote manifest.Manifest, f folder.Folder) []Item {
 		}
 
 		item := decide(localEntry, &entry, f)
+		if under(r.Path, blocked) {
+			item = with(item, ActionNone, ReasonParentConflict)
+		}
+		if item.Action == ActionConflict && item.Reason == ReasonReplaceVsModify {
+			blocked = append(blocked, r.Path)
+		}
 		switch {
 		case item.Action == ActionDelete:
 			deletes = append(deletes, item)
@@ -298,6 +311,16 @@ func with(item Item, a Action, reason string) Item {
 	item.Action = a
 	item.Reason = reason
 	return item
+}
+
+// under reports whether p lies beneath one of the paths.
+func under(p string, paths []string) bool {
+	for _, parent := range paths {
+		if strings.HasPrefix(p, parent+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // dirFirst reports whether an item must be applied before file items.

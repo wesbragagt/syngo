@@ -1111,7 +1111,7 @@ func isPerFile(err error) bool {
 	}
 	return errors.Is(err, ErrIntegrity) || errors.Is(err, ErrChangedUnderneath) ||
 		errors.Is(err, ErrDirNotEmpty) || errors.Is(err, ErrTooManyChunks) ||
-		errors.Is(err, ErrUnsafePath)
+		errors.Is(err, ErrUnsafePath) || errors.Is(err, ErrParentConflict)
 }
 
 // localFailure reports whether a failure is about this device's filesystem

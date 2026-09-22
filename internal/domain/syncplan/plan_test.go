@@ -429,3 +429,36 @@ func TestPlan_FileReplacedByADirComesBeforeItsChildren(t *testing.T) {
 		t.Fatalf("plan = %v, want %v", order, want)
 	}
 }
+
+// TestPlan_ChildrenOfAConflictedFileAreNotPulled covers the second half of a
+// replace-vs-modify conflict: the local file keeps the path, so nothing can be
+// written beneath it until the conflict is settled. Planning the children as
+// pulls would make the puller try, fail on the parent and count a failure for
+// every one of them.
+func TestPlan_ChildrenOfAConflictedFileAreNotPulled(t *testing.T) {
+	local := manifestOf(file("b.txt", "local", vec("A:1,B:1")))
+	remote := manifestOf(
+		dirAt("b.txt", vec("A:2")),
+		file("b.txt/x.txt", "inner", vec("A:2")),
+		dirAt("b.txt/deep", vec("A:2")),
+		file("b.txt/deep/y.txt", "deeper", vec("A:2")),
+		file("unrelated.txt", "elsewhere", vec("A:2")),
+	)
+
+	got := make(map[string]string)
+	for _, item := range syncplan.Plan(local, remote, testFolder()) {
+		got[item.Path] = item.Action.String() + ":" + item.Reason
+	}
+	want := map[string]string{
+		"b.txt":            "conflict:" + syncplan.ReasonReplaceVsModify,
+		"b.txt/x.txt":      "none:" + syncplan.ReasonParentConflict,
+		"b.txt/deep":       "none:" + syncplan.ReasonParentConflict,
+		"b.txt/deep/y.txt": "none:" + syncplan.ReasonParentConflict,
+		"unrelated.txt":    "pull:" + syncplan.ReasonMissing,
+	}
+	for path, decision := range want {
+		if got[path] != decision {
+			t.Fatalf("plan[%s] = %q, want %q (plan = %v)", path, got[path], decision, got)
+		}
+	}
+}

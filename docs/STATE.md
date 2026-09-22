@@ -132,6 +132,11 @@ entries keeps saying so while its downloads land. `status` reports the scan
 failure first, because a folder that cannot be read is why a sync applies
 nothing, and `pending_changes` in the report is `pending_items`.
 
+A path the cycle cannot apply is counted and skipped, never fatal: a file whose
+parent is a directory on the peer and a file here is one of those, so one
+conflicted parent costs that subtree and nothing else. The rest of the plan is
+applied in the same cycle.
+
 A cycle that ended early, because the peer or the store went away, records the
 failures it already collected and clears nothing: it did not get far enough to
 disprove what was there. When two peers share a folder, their cycles are

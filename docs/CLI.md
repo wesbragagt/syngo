@@ -905,13 +905,18 @@ reached. `action` is one of
 `reason` is one of `in-sync`, `missing-locally`, `remote-newer`, `local-newer`,
 `both-modified`, `delete-vs-modify`, `delete-policy-never`,
 `symlink-policy-skip`, `remote-deleted`, `kind-changed`, `replace-vs-modify`,
-`mode-changed`, `mode-baseline-unknown` or `invalid-path`.
+`mode-changed`, `mode-baseline-unknown`, `parent-conflict` or `invalid-path`.
 
 `remote-newer` means the peer's version was made on top of the one this device
 holds, and `local-newer` the other way round; neither reads a clock. Two
 versions where neither was made on top of the other are `both-modified`, or
 `delete-vs-modify` and `replace-vs-modify` when one side deleted the path or
 replaced it by another kind.
+
+`parent-conflict` is a path whose parent is a file here and a directory on the
+peer, with the two versions of that parent in a `replace-vs-modify` conflict.
+Nothing can be written beneath it until the conflict is settled, so the child
+is skipped rather than pulled; the parent is what the user resolves.
 
 `invalid-path` is a path a peer may not name at all, such as one that climbs
 out of the folder or names the state directory, or a symbolic link whose target
