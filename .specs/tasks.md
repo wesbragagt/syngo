@@ -182,6 +182,7 @@ Goal: ship a reliable multi-device Tailscale-first system.
 - [ ] Verify three-device non-conflicting convergence reaches 99.99%.
 - [x] Verify upgrades across two schema versions preserve sync state.
 - [x] Fix `TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost` (internal/e2e/restore_test.go). The test waited for the file content on b before reading the counter floor, but the restore replaces only the database, so that content was already on disk and the wait returned before b had ever spoken to a. The floor it then read was the 2 b's own rescan had produced. The test now waits until b has taken a's version record of the path, which only a sync cycle can write and which happens after adoptCounters in the same cycle. 40 race runs clean; with adoptCounters disabled it still fails 3 out of 3, so the claim is unchanged.
+- [ ] Decide what happens to an edit made on a device between restoring an old database and its first contact with a peer. The counter floor is unknowable until that contact, so such an edit can be dominated and lost rather than recorded as a conflict. Found while fixing the restore-test race above; not yet designed or fixed.
 
 ## Ongoing work
 
