@@ -64,17 +64,17 @@ $ sudo nixos-rebuild switch --flake .#laptop
 ```
 
 Not run here: switching this machine's real system configuration is not
-something a documentation change should do. What was run instead is the same
-configuration built to completion, which is everything short of activating it:
+something a documentation change should do. What was run instead is this
+flake's own check, a NixOS system that imports the module and sets
+`interface = "tailscale0"`, built to completion, which is everything short of
+activating it:
 
 ```console
-$ nix build .#nixosConfigurations.example.config.system.build.toplevel \
-    --no-link --print-out-paths
-/nix/store/1mycx1087d46jxi48fsr2gzaxzbg7h2b-nixos-system-nixos-26.11.20260922.6774f7b
+$ nix build .#checks.x86_64-linux.nixos-module --no-link --print-out-paths
+/nix/store/dp6q7ffbhb74q53jni5a57s2f0ka4c3r-nixos-system-nixos-26.11.20260919.20b1ddd
 ```
 
-That configuration is the snippet above with `path:` pointing at this
-worktree. `nix flake check` additionally boots the module in two VMs.
+`nix flake check` runs that one and additionally boots the module in two VMs.
 
 The module adds `syncthis` to `environment.systemPackages`, creates the
 `syncthis` user and group, creates `/var/lib/syncthis` mode 0700 owned by that
