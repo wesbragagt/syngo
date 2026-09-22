@@ -1,4 +1,4 @@
-.PHONY: build release test e2e lint fmt hooks e2e-docker-image e2e-docker e2e-docker-soak e2e-docker-clean
+.PHONY: build release test e2e scale lint fmt hooks e2e-docker-image e2e-docker e2e-docker-soak e2e-docker-clean
 
 # Build stamp. Both are compiled into the binary and reported by
 # `syncthis version`; a build outside a git checkout falls back to the module
@@ -52,6 +52,37 @@ e2e-docker: e2e-docker-image
 e2e-docker-soak: e2e-docker-image
 	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) SYNCTHIS_E2E_SOAK_MINUTES=$(MINUTES) \
 	  go test ./internal/e2edocker/ -count=1 -run TestSoak -timeout $$(( $(MINUTES) + 30 ))m -v
+
+# The scale suite measures the claims that take minutes and disk rather than
+# seconds: a 100,000-file reconcile, the idle memory of a daemon, a 10 GiB
+# transfer, 1,000 kill-and-restart cycles and a bandwidth limit held to within
+# 5%. It lives in internal/e2e and is opt-in the same way the container suite
+# is: `make test` compiles it and every test skips.
+#
+# SCALE_DIR is where the fixtures, folder roots and staged files go. It must
+# be on a filesystem with room for about three times SCALE_TRANSFER_GIB, which
+# rules out a /tmp backed by tmpfs; the default is a directory in the checkout.
+# Every size and count is overridable, so a machine with less disk or less time
+# runs a smaller version of the same measurement:
+#
+#   make scale SCALE_CYCLES=100 SCALE_TRANSFER_GIB=2
+#
+# Results measured with this target are recorded in docs/BENCH.md.
+SCALE_DIR          ?= .scale
+SCALE_CYCLES       ?= 1000
+SCALE_TRANSFER_GIB ?= 10
+SCALE_RATE_SECONDS ?= 120
+SCALE_FILES_EACH   ?= 500
+
+scale:
+	@mkdir -p $(SCALE_DIR)
+	SYNCTHIS_SCALE=1 \
+	SYNCTHIS_SCALE_DIR=$(abspath $(SCALE_DIR)) \
+	SYNCTHIS_SCALE_CYCLES=$(SCALE_CYCLES) \
+	SYNCTHIS_SCALE_TRANSFER_GIB=$(SCALE_TRANSFER_GIB) \
+	SYNCTHIS_SCALE_RATE_SECONDS=$(SCALE_RATE_SECONDS) \
+	SYNCTHIS_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
+	  go test ./internal/e2e/ -run 'TestScale_' -count=1 -p 1 -v -timeout 180m
 
 # Containers and networks of a run killed before its cleanups ran.
 e2e-docker-clean:
