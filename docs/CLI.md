@@ -280,6 +280,7 @@ sync_interval = 30s
 log_level = info
 upload_limit = 4 MiB/s
 download_limit = unlimited
+text_merge = false
 ```
 
 With `--json` the same settings, with the rates as bytes per second and `0` for
@@ -289,7 +290,8 @@ unlimited:
 {
   "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 1048576,
   "max_file_size": 1099511627776, "rescan_interval": "10m0s", "sync_interval": "30s",
-  "log_level": "info", "upload_limit": 4194304, "download_limit": 0
+  "log_level": "info", "upload_limit": 4194304, "download_limit": 0,
+  "text_merge": false
 }
 ```
 
@@ -308,6 +310,7 @@ the same shape as `config show`.
 | `--listen HOST:PORT` | address peers connect to |
 | `--interface NAME` | network interface to bind the first IPv4 address of |
 | `--log-level L` | level the daemon logs at: `debug`, `info`, `warn` or `error` |
+| `--text-merge` | merge concurrent edits of a text file instead of keeping both versions |
 
 A `RATE` is a whole number of bytes per second, or a number with a unit:
 `KB`, `MB` and `GB` are decimal, `KiB`, `MiB` and `GiB` binary, a trailing
@@ -318,12 +321,31 @@ cannot be read exits 2, as does a `--listen` that cannot be bound or a
 The bandwidth limits take effect at once, on the connections the daemon
 already has. The other settings take effect when the daemon next starts.
 
+`--text-merge` is off by default and is the one setting that settles a
+divergence without asking. With it on, two devices that edited different
+regions of the same text file while apart end up with one file holding both
+edits, and no conflict; two that edited the same region get the keep-both
+conflict they always got. It is only ever attempted on a file that is text
+(no NUL byte, valid UTF-8) and at most 1 MiB, and only against a version both
+sides are recorded as descending from, so it never runs on binary content and
+never guesses. Everything else falls back to keep-both.
+
+Turning it on makes the device keep a copy of the recent versions of every
+small text file, in `merge_bases` in the database, because that content is
+what a merge runs against and nothing else holds it once a file is edited
+over. Nothing is kept while the setting is off, and a merge only works for a
+divergence that started after it was turned on. A merged file is reported as a
+`sync.merged` event, which is how it is told apart from the `sync.conflict` a
+keep-both writes.
+
 ```console
 $ syncthis config set --download-limit 4MiB
 ...
 download_limit = 4 MiB/s
 $ syncthis config set --download-limit 0 --json | jq .download_limit
 0
+$ syncthis config set --text-merge --json | jq .text_merge
+true
 ```
 
 ### `syncthis config export [--output FILE]`

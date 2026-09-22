@@ -178,6 +178,19 @@ local|remote|both`. The winner is renamed onto the path; `both` changes nothing
 on disk and only closes the conflict. See
 [CLI.md](CLI.md#syncthis-conflict-resolve-id---keep-localremoteboth).
 
+**Three-way merge.** The optional exception to keep-both, turned on by
+`text_merge`. Two versions of one text file, both at most a megabyte and both
+descending from a **merge base** this device still holds, are merged line by
+line: a region only one side changed is taken from that side. Two sides that
+changed the same region, content that is not text, and anything else it cannot
+answer keep both versions instead. See
+[CLI.md](CLI.md#syncthis-config-set-flags).
+
+**Merge base.** The version two concurrent edits both came from, which a
+three-way merge runs against. It is the newest recorded version of the path
+that both sides dominate; a path with none is not merged. The content is kept
+only while `text_merge` is on.
+
 **Stale conflict.** A conflict whose files no longer hold either of the two
 versions it recorded, because something edited them since. It cannot be
 resolved in favour of a version that is gone: `conflict list` marks it `stale`

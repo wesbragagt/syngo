@@ -131,6 +131,9 @@ type nodeConfig struct {
 	// own. It is a fallback, not the path a local change takes: a change
 	// is pushed to the peer as soon as it is scanned.
 	SyncInterval time.Duration
+	// TextMerge turns on the three-way merge of text files, which is off
+	// by default.
+	TextMerge bool
 	// DataDir and Root override where the node's data directory and
 	// folder root go. They exist for the gated large-file benchmarks: the
 	// folder root has to be on a filesystem with room for tens of
@@ -187,6 +190,7 @@ func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 	config.ChunkPipeline = cfg.ChunkPipeline
 	config.UploadLimit = int64(cfg.UploadLimit)
 	config.DownloadLimit = int64(cfg.DownloadLimit)
+	config.TextMerge = cfg.TextMerge
 	config.Listen = "127.0.0.1:0"
 	config.RescanInterval = jsonconfig.Duration(cfg.RescanInterval)
 	config.SyncInterval = jsonconfig.Duration(cfg.SyncInterval)

@@ -121,7 +121,7 @@ Goal: handle offline edits without silent data loss.
 - [x] Handle permission-only and symlink-target changes.
 - [x] Add `conflict list`, `conflict show`, and `conflict resolve` commands.
 - [x] Add conflict export for manual review.
-- [ ] Implement optional three-way merge for text files.
+- [x] Implement optional three-way merge for text files.
 - [x] Block automatic binary merging at the application layer.
 - [x] Verify zero silent overwrites in the conflict suite.
 - [x] Verify every divergent edit produces an explainable result.

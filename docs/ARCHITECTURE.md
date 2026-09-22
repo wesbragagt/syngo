@@ -48,6 +48,7 @@ build when a rule is broken.
 | `ControlServer`, `ControlClient` | `unixctl` | the control socket |
 | `EventSink` | the daemon, the tests | what happened, as named events |
 | `Limiter` | `tokenbucket` | waiting for a byte budget |
+| `MergeBaseStore` | `sqlitestore` | the recent versions of a text file's content, which a three-way merge runs against |
 | `SettingsStore` | `jsonconfig` | the settings in `config.json` that change while the process runs |
 | `TailnetDiscovery` | `tailscalecli` | the local Tailscale client, through `tailscale status --json`: this device, the other nodes, and the path to each of them |
 
@@ -142,6 +143,38 @@ The wire carries this because every frame names the request it answers
 of one peer at a time and checks the peer's folder authorization on each of
 them, so a client that pipelines is not a way around the check: there is no
 per-connection decision for a second request to inherit.
+
+## Merging two edits of one text file
+
+Two concurrent edits of one file keep both versions. That is the default and
+it stays the default. `text_merge` in `config.json` turns on one exception:
+when both versions are text, at most a megabyte, and both descend from a
+version this device still has the content of, `domain/textmerge` merges them
+line by line and the path ends up holding both edits with no conflict.
+
+The algorithm is stdlib only and lives in the domain: Myers' diff of each side
+against the base, grouped into hunks over the base's lines. A base region only
+one side changed is taken from that side. Two changes with no untouched base
+line between them are refused, and so is content with a NUL byte or invalid
+UTF-8, a side more than a thousand line edits from the base, and a file that
+moved on disk since the plan was made. Every one of those returns an error,
+and `syncer.tryMerge` turns any error into the keep-both it replaced: a wrong
+automatic merge is worse than a conflict a user resolves by hand.
+
+A merge needs the version both sides came from, and once a file has been
+edited over, nothing else on the device holds that content. So with the
+setting on, the scanner and the puller keep the last few versions of every
+small text file in `ports.MergeBaseStore`, with the version vector each
+carried. `mergeBase` picks the newest candidate that both sides dominate
+(`manifest.Before` against each), which is what makes it an ancestor of both;
+a path with no such candidate is not merged. With the setting off no recorder
+is built, the table stays empty, and the conflict path is the one that was
+there before.
+
+Only the side whose version gives up the path merges, the same side keep-both
+acted on. The merged file's vector is the merge of both sides bumped by this
+device, so it dominates both and the peer pulls it as an ordinary newer
+version. It is reported as a `sync.merged` event, never as `sync.conflict`.
 
 ## Glossary
 
