@@ -356,11 +356,52 @@ func (c *Cluster) Close() {
 		dev.giveMountsBack()
 	}
 	for _, dev := range c.Devices {
-		c.d.quiet("rm", "-f", dev.Ctr)
+		c.remove("container", "rm", "-f", dev.Ctr)
 	}
+	// The network goes after the containers: an endpoint that is still
+	// attached, which is what a container that refused to go leaves,
+	// keeps it alive.
 	if c.Network != "" {
-		c.d.quiet("network", "rm", c.Network)
+		c.remove("network", "network", "rm", c.Network)
 	}
+}
+
+// Cleanup retries: a daemon that is restarting, or a docker busy with the
+// container, makes one `rm -f` fail, and what is left behind outlives the run
+// and the next one trips over its name and its subnet.
+const (
+	removeAttempts = 3
+	removePause    = 500 * time.Millisecond
+)
+
+// remove runs a docker removal until it works, killing the container first so
+// a process that ignores the stop signal cannot hold it. what names the thing
+// for the failure report.
+func (c *Cluster) remove(what string, args ...string) {
+	var last string
+	for attempt := 1; attempt <= removeAttempts; attempt++ {
+		if what == "container" {
+			// A container that is already stopped, or already
+			// gone, refuses this; either is what the removal
+			// wants anyway, so the outcome is not worth a line.
+			_, _ = c.d.try("kill", args[len(args)-1])
+		}
+		res, err := c.d.try(args...)
+		switch {
+		case err != nil:
+			last = err.Error()
+		case res.code == 0:
+			return
+		default:
+			last = strings.TrimSpace(res.stderr)
+			if strings.Contains(last, "No such") || strings.Contains(last, "not found") {
+				return
+			}
+		}
+		time.Sleep(removePause)
+	}
+	c.T.Errorf("%s was not removed after %d attempts, it is left behind: docker %s: %s",
+		what, removeAttempts, strings.Join(args, " "), last)
 }
 
 // giveMountsBack hands the bind mounts of a device that ran as another user
