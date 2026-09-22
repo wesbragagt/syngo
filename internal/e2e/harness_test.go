@@ -111,6 +111,10 @@ type nodeConfig struct {
 	// ChunkSize overrides the chunk size of the node; zero takes the small
 	// one the other tests share.
 	ChunkSize int
+	// ChunkPipeline pins how many chunks of one file the node asks for at
+	// once; zero lets the daemon adapt it. A measurement pins it to
+	// compare one width against another.
+	ChunkPipeline int
 	// UploadLimit and DownloadLimit are bytes per second, 0 for unlimited.
 	UploadLimit, DownloadLimit bandwidth.Rate
 	// RecoverableListener binds the peer port through a binder whose
@@ -180,6 +184,7 @@ func startNodeWith(t *testing.T, name string, cfg nodeConfig) *node {
 	if cfg.ChunkSize > 0 {
 		config.ChunkSize = cfg.ChunkSize
 	}
+	config.ChunkPipeline = cfg.ChunkPipeline
 	config.UploadLimit = int64(cfg.UploadLimit)
 	config.DownloadLimit = int64(cfg.DownloadLimit)
 	config.Listen = "127.0.0.1:0"

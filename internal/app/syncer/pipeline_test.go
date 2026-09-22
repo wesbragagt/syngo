@@ -315,3 +315,52 @@ func TestPipeline_FloorIsSequential(t *testing.T) {
 		t.Fatalf("a wholly disk-bound floor moved to %d, want it held at one", got)
 	}
 }
+
+// TestPipeline_SpeedOnALinkWithLatency measures what the pipeline is actually
+// for. Over loopback a round trip costs nothing, so parallel chunks only buy
+// the overlap of this device's hashing and writing with the peer's reading;
+// on a real path they buy the round trip itself, which is the larger number by
+// far. The peer here answers after a fixed delay, which is that round trip.
+//
+// The assertion is that the wide pipeline is at least three times faster, well
+// under the eight the pin allows, so the test states a real gain without
+// depending on a quiet machine to reach the theoretical one.
+func TestPipeline_SpeedOnALinkWithLatency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	const roundTrip = 3 * time.Millisecond
+
+	sequential := timeLatentPull(t, 1, roundTrip)
+	parallel := timeLatentPull(t, pipeline.Ceiling, roundTrip)
+
+	speedup := sequential.Seconds() / parallel.Seconds()
+	t.Logf("60 chunks at a %v round trip: one at a time %v, %d at a time %v, speedup %.2fx",
+		roundTrip, sequential.Round(time.Millisecond), pipeline.Ceiling,
+		parallel.Round(time.Millisecond), speedup)
+
+	if speedup < 3 {
+		t.Fatalf("speedup %.2fx, want at least 3x on a link where the round trip dominates", speedup)
+	}
+}
+
+// timeLatentPull pulls one file of sixty chunks from a peer that answers after
+// roundTrip, and returns how long the whole pull took.
+func timeLatentPull(t *testing.T, chunkPipeline int, roundTrip time.Duration) time.Duration {
+	t.Helper()
+	src := newSource(t, folder.ModeSendReceive)
+	data := payload(chunkSize*60, 29)
+	src.addFile(t, "big.bin", data)
+
+	d, conn := newDestWith(t, &watching{PeerHandler: src.server, hold: roundTrip}, chunkPipeline)
+	start := time.Now()
+	if summary := d.sync(t, conn); summary.Pulled != 1 {
+		t.Fatalf("summary = %+v, want the file pulled", summary)
+	}
+	elapsed := time.Since(start)
+
+	if got := d.content(t, "big.bin"); string(got) != string(data) {
+		t.Fatal("the pulled file does not match the source")
+	}
+	return elapsed
+}
