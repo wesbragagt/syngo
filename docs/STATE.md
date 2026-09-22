@@ -287,6 +287,34 @@ whose plan was just made can say what it no longer wants.
 it has been verified. Offsets and lengths are derived from the size and the
 chunk size rather than stored.
 
+### Renames and copies
+
+A path a peer announces whose content this device already holds under another
+name is not downloaded. The puller copies the local file into a partial file of
+`.syncthis/tmp` and installs that, so a renamed or copied file costs zero
+payload bytes on the wire whatever its size. This is local behaviour only: the
+sender is asked for nothing and the protocol does not change.
+
+Three rules keep it from losing data:
+
+1. The source is chosen from the local manifest, by content hash and size, and
+   the copy is hashed while it is read. A source whose bytes do not hash to
+   what the peer announced is dropped and the file is downloaded normally, so a
+   stale manifest row costs a download and never a wrong file.
+2. The copy is made before the rest of the plan is applied, and the deletion of
+   the old path is part of that rest. The content is therefore already in the
+   partial file when the old name goes, and the source file itself is only ever
+   read.
+3. The install is the ordinary one: the whole partial file is hashed again, the
+   target is checked against the version the plan was made against, and the
+   rename onto it is atomic. A target that moved keeps the local change and the
+   copy is discarded.
+
+A copy that cannot be installed is not a failure of the file: the puller falls
+back to downloading it from the peer in the same cycle. The partial files of
+copies nothing installed are removed when the cycle ends, and `repair` removes
+the ones a killed process left behind.
+
 ### Journal semantics
 
 The journal is advisory and the partial file is the authority:

@@ -159,6 +159,14 @@ like a request for a file the sender does not have.
 `reason` is one of `not_found`, `hash_changed`, `folder_unknown`,
 `folder_receive_only` or `paused`.
 
+A receiver may ask for no chunk at all. When the manifest a peer sends names a
+path whose content this device already holds under another name, which is what
+a rename or a copy on the peer looks like from here, the file is built from the
+local one and the sender is never asked for a byte. The sender cannot tell the
+difference and nothing on the wire changes, so this is not a protocol version:
+it is a receiver that needs less of the protocol. See
+[STATE.md](STATE.md#renames-and-copies).
+
 ### Errors
 
 A request the peer refuses for an application reason is answered with an Error

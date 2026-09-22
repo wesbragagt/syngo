@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
@@ -301,6 +302,73 @@ func (i *Installer) installAt(root, rel string, t transfer.Transfer,
 		Mode: uint32(mode), Hash: t.Hash,
 	}
 	return i.described(final, entry), nil
+}
+
+// CopyInto fills the partial file at temp with the content of the
+// folder-relative file src, and reports how many bytes it copied. It is how a
+// path the peer renamed is satisfied without asking for a single byte.
+//
+// The copy is hashed while it is read, in one pass, and a source that does not
+// hash to want.Hash leaves nothing behind but the partial file the caller
+// removes: the manifest said this file held the content, the disk says
+// otherwise, and the caller downloads normally instead. The source is only
+// ever read, so the path it is later moved away from cannot lose data.
+func (i *Installer) CopyInto(root, src string, want manifest.Entry, temp string) (int64, error) {
+	full, err := i.safeJoin(root, src)
+	if err != nil {
+		return 0, err
+	}
+	info, err := i.fs.Lstat(full)
+	if err != nil {
+		return 0, fmt.Errorf("stat %s: %w", full, err)
+	}
+	if info.IsDir() || info.IsSymlink() || info.Size != want.Size {
+		return 0, fmt.Errorf("%s no longer holds %d bytes: %w", src, want.Size, ErrChangedUnderneath)
+	}
+
+	rc, err := i.fs.Open(full)
+	if err != nil {
+		return 0, fmt.Errorf("open %s: %w", full, err)
+	}
+	defer func() { _ = rc.Close() }()
+	dst, err := i.fs.OpenTemp(temp)
+	if err != nil {
+		return 0, fmt.Errorf("open %s: %w", temp, err)
+	}
+	defer func() { _ = dst.Close() }()
+
+	w := &offsetWriter{to: dst}
+	hash, err := i.hasher.Sum(io.TeeReader(rc, w))
+	if err != nil {
+		return 0, fmt.Errorf("copy %s: %w", src, err)
+	}
+	if hash != want.Hash {
+		return 0, fmt.Errorf("%s holds %s, expected %s: %w", src, hash, want.Hash, ErrIntegrity)
+	}
+	if w.off != want.Size {
+		return 0, fmt.Errorf("%s gave %d bytes, expected %d: %w", src, w.off, want.Size, ErrChangedUnderneath)
+	}
+	if err := dst.Truncate(w.off); err != nil {
+		return 0, fmt.Errorf("truncate %s: %w", temp, err)
+	}
+	if err := dst.Sync(); err != nil {
+		return 0, fmt.Errorf("flush %s: %w", temp, err)
+	}
+	return w.off, nil
+}
+
+// offsetWriter turns a partial file into a sequential writer, so a copy and
+// its hash share one read of the source.
+type offsetWriter struct {
+	to  ports.TempFile
+	off int64
+}
+
+// Write appends p to the partial file.
+func (o *offsetWriter) Write(p []byte) (int, error) {
+	n, err := o.to.WriteAt(p, o.off)
+	o.off += int64(n)
+	return n, err
 }
 
 // sync flushes a partial file to disk.

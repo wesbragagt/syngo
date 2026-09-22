@@ -327,3 +327,62 @@ func under(p string, paths []string) bool {
 func dirFirst(i Item) bool {
 	return i.Remote != nil && i.Remote.Kind == manifest.KindDir
 }
+
+// LocalSources pairs pull items with a local file that already holds exactly
+// the content they need, so the receiver copies it instead of asking the peer
+// for the bytes. The result maps the path of such an item to the
+// folder-relative path of the file holding the content.
+//
+// This is the receiving half of rename detection: a peer that moved a file
+// announces a new path whose content this device already has under the old
+// one. Nothing here is a guarantee that the content is still on disk under
+// that name, only that the manifest says so; the caller reads the file and
+// hashes it before it uses it, and downloads normally when it does not match.
+//
+// Only pulls of non-empty files with a known hash take part, and only a
+// candidate whose kind, size and hash match the remote entry exactly. When
+// several local files hold the content, the lowest path is chosen, so two runs
+// of the same plan pick the same source.
+func LocalSources(local manifest.Manifest, items []Item) map[string]string {
+	byContent := make(map[contentKey]string)
+	for _, e := range local.Live() {
+		if !contentSource(e) {
+			continue
+		}
+		key := contentKey{e.Hash, e.Size}
+		if first, ok := byContent[key]; !ok || e.Path < first {
+			byContent[key] = e.Path
+		}
+	}
+	if len(byContent) == 0 {
+		return nil
+	}
+
+	var out map[string]string
+	for _, item := range items {
+		if item.Action != ActionPull || item.Remote == nil || !contentSource(*item.Remote) {
+			continue
+		}
+		source, ok := byContent[contentKey{item.Remote.Hash, item.Remote.Size}]
+		if !ok || source == item.Path {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string)
+		}
+		out[item.Path] = source
+	}
+	return out
+}
+
+// contentKey identifies content a file holds, whatever its name.
+type contentKey struct {
+	hash manifest.Hash
+	size int64
+}
+
+// contentSource reports whether an entry describes content another path can be
+// satisfied from.
+func contentSource(e manifest.Entry) bool {
+	return e.Kind == manifest.KindFile && !e.Deleted && e.Size > 0 && !e.Hash.IsZero()
+}

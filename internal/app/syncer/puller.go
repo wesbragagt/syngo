@@ -175,11 +175,8 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		p.log.Debug("plan item skipped", "folder", f.ID, "path", path, "reason", ReasonIgnored)
 	}
 
-	var pulls []syncplan.Item
+	var pulls, rest []syncplan.Item
 	for _, item := range items {
-		if err := ctx.Err(); err != nil {
-			return summary, err
-		}
 		if item.Action == syncplan.ActionPull || isFileReplace(item) || needsRemoteContent(item) {
 			// A file that replaces a directory is downloaded like any
 			// other file, and the directory only goes once the plan
@@ -189,6 +186,19 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 			pulls = append(pulls, item)
 			continue
 		}
+		rest = append(rest, item)
+	}
+
+	// The content a renamed path needs is copied out of the local file
+	// holding it before anything else is applied, because what the plan
+	// applies next may be the deletion of exactly that file.
+	sources := p.localCopies(ctx, f, local, pulls)
+	defer p.dropSources(sources)
+
+	for _, item := range rest {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
 		if err := p.apply(ctx, f, peer, item, &summary); err != nil {
 			// One path that cannot be applied must not cost the folder
 			// the rest of the cycle: the failure is reported and the
@@ -196,7 +206,7 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 			p.itemFailed(f, peer, item, err, &summary)
 		}
 	}
-	if err := p.pullAll(ctx, conn, f, pulls, &summary); err != nil {
+	if err := p.pullAll(ctx, conn, f, pulls, sources, &summary); err != nil {
 		p.recordOutcome(ctx, f, summary, false)
 		return summary, err
 	}
@@ -531,7 +541,7 @@ func (p *Puller) recordOutcome(ctx context.Context, f folder.Folder, summary Sum
 // failure that only concerns one file is counted and the cycle continues; any
 // other failure ends the cycle, because the connection or the store is gone.
 func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Folder,
-	items []syncplan.Item, summary *Summary) error {
+	items []syncplan.Item, sources map[string]localSource, summary *Summary) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -557,7 +567,7 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 			defer wg.Done()
 			defer func() { <-slots }()
 
-			bytes, err := p.pull(ctx, conn, f, item)
+			bytes, err := p.pull(ctx, conn, f, item, sources[item.Path])
 			switch {
 			case err == nil:
 				mu.Lock()
@@ -613,7 +623,7 @@ func (p *Puller) pullAll(ctx context.Context, conn ports.PeerConn, f folder.Fold
 
 // pull downloads one file and installs it, returning how many bytes arrived.
 func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
-	item syncplan.Item) (int64, error) {
+	item syncplan.Item, source localSource) (int64, error) {
 	// A folder paused while the cycle was planning gets no new transfer
 	// journal at all; the file is picked up again when it resumes.
 	if p.pausedNow(ctx, f.ID) {
@@ -624,6 +634,20 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		// does not cost a transfer every cycle.
 		if err := p.installer.CheckReplaceable(ctx, f.Path, item.Path, item.Local); err != nil {
 			return 0, err
+		}
+	}
+	if source.temp != "" {
+		// The content is already here, copied out of another path of
+		// this folder. A copy that cannot be installed, because the
+		// target moved or the copy does not hash right, is not a
+		// failure: the file is downloaded from the peer instead.
+		if err := p.installLocal(ctx, f, conn.RemoteID(), item, source); err == nil {
+			return 0, nil
+		} else if ctx.Err() != nil {
+			return 0, ctx.Err()
+		} else {
+			p.log.Info("local copy not installed, downloading instead",
+				"folder", f.ID, "path", item.Path, "source", source.from, "error", err)
 		}
 	}
 	t, err := p.transferFor(ctx, f, item, conn.RemoteID())
@@ -667,6 +691,104 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		"transfer_id": string(t.ID), "folder_id": string(f.ID), "path": t.Path, "size": t.Size,
 	})
 	return t.Size, nil
+}
+
+// localSource is a partial file already holding what a pull item needs, filled
+// from another path of the same folder instead of from the peer.
+type localSource struct {
+	// from is the folder-relative path the content was copied out of.
+	from string
+	// temp is the partial file holding the copy.
+	temp string
+	// bytes is what the peer did not have to send.
+	bytes int64
+}
+
+// localCopies fills a partial file for every pull the local folder can satisfy
+// itself, which is what a rename on the peer looks like from here: a new path
+// whose content this device already holds under the old name. Nothing is
+// installed yet; the copies are handed to the pull phase, which installs them
+// exactly as it installs a download.
+//
+// It runs before the rest of the plan is applied, so the deletion of the old
+// path cannot take the content away first. A source that cannot be copied, or
+// that does not hash to what the peer announced, is left out and that file is
+// downloaded normally.
+func (p *Puller) localCopies(ctx context.Context, f folder.Folder, local manifest.Manifest,
+	pulls []syncplan.Item) map[string]localSource {
+	candidates := syncplan.LocalSources(local, pulls)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	out := make(map[string]localSource, len(candidates))
+	for _, item := range pulls {
+		from, ok := candidates[item.Path]
+		if !ok {
+			continue
+		}
+		if ctx.Err() != nil {
+			return out
+		}
+		id, err := newTransferID()
+		if err != nil {
+			p.log.Warn("local copy not prepared", "folder", f.ID, "path", item.Path, "error", err)
+			continue
+		}
+		temp, err := p.newTemp(f.Path, id)
+		if err != nil {
+			p.log.Warn("local copy not prepared", "folder", f.ID, "path", item.Path, "error", err)
+			continue
+		}
+		copied, err := p.installer.CopyInto(f.Path, from, *item.Remote, temp)
+		if err != nil {
+			p.removeTemp(temp)
+			p.log.Info("local copy not usable, downloading instead",
+				"folder", f.ID, "path", item.Path, "source", from, "error", err)
+			continue
+		}
+		out[item.Path] = localSource{from: from, temp: temp, bytes: copied}
+		p.log.Debug("local copy prepared", "folder", f.ID, "path", item.Path,
+			"source", from, "bytes", copied)
+	}
+	return out
+}
+
+// dropSources removes the partial files of local copies nothing installed. A
+// copy that was installed was renamed onto its target, so removing it is the
+// no-op of a file that is already gone.
+func (p *Puller) dropSources(sources map[string]localSource) {
+	for _, s := range sources {
+		p.removeTemp(s.temp)
+	}
+}
+
+// installLocal puts a local copy in place of a download. It goes through the
+// same installer, so the target is checked against the version the plan was
+// made against and the rename onto it is the same atomic one, and it records
+// the entry the same way: the file arrived, only its bytes came from this disk
+// rather than from the peer.
+func (p *Puller) installLocal(ctx context.Context, f folder.Folder, peer device.ID,
+	item syncplan.Item, source localSource) error {
+	remote := *item.Remote
+	t := transfer.Transfer{
+		FolderID: f.ID, Path: item.Path, PeerID: peer, Hash: remote.Hash, Size: remote.Size,
+		MTimeNS: remote.ModTime.UnixNano(), Mode: remote.Mode, TempPath: source.temp,
+	}
+	entry, err := p.installer.Install(ctx, f.Path, t, item.Local)
+	if err != nil {
+		return err
+	}
+	if err := p.record(ctx, f.ID, fromRemote(entry, item, peer)); err != nil {
+		return err
+	}
+	p.log.Info("file taken from a local copy", "folder", f.ID, "path", item.Path,
+		"source", source.from, "bytes_saved", source.bytes)
+	p.publish("transfer.local_copy", map[string]any{
+		"folder_id": string(f.ID), "path": item.Path, "source": source.from,
+		"bytes_saved": source.bytes,
+	})
+	return nil
 }
 
 // install puts a finished download in its place and returns the entries that
