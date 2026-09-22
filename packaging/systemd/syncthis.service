@@ -17,6 +17,9 @@ Description=syncthis file synchronization daemon
 Documentation=https://github.com/wesbragagt/syncthis
 After=network-online.target
 Wants=network-online.target
+# Never give up on a crash-looping daemon: without this a burst of restarts
+# puts the unit in the failed state and it stops coming back.
+StartLimitIntervalSec=0
 
 [Service]
 # The data directory the daemon opens: identity, config.json, state.db and the
@@ -25,11 +28,11 @@ Wants=network-online.target
 Environment=SYNCTHIS_DATA_DIR=%h/.local/share/syncthis
 ExecStart=/usr/local/bin/syncthis daemon run
 # A daemon that exits for any reason comes back, including after a peer or
-# filesystem failure it could not recover from itself. StartLimit* let it keep
-# retrying instead of being put in a failed state after a burst.
+# filesystem failure it could not recover from itself. The rate limit that
+# would otherwise stop it after a burst of restarts is disabled in [Unit],
+# which is the section systemd reads StartLimitIntervalSec from.
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 # SIGTERM is what `daemon run` shuts down cleanly on: it finishes the chunk in
 # flight, releases the control socket and removes the pid file.
 KillSignal=SIGTERM
