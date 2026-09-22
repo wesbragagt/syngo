@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -126,7 +127,7 @@ func TestLoadManifest_RoundTripsAllFields(t *testing.T) {
 			t.Fatalf("%s mtime = %v, want %v", w.Path, got.ModTime, w.ModTime)
 		}
 		got.ModTime = w.ModTime
-		if got != w {
+		if !reflect.DeepEqual(got, w) {
 			t.Fatalf("%s = %+v, want %+v", w.Path, got, w)
 		}
 	}

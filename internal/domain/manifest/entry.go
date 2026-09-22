@@ -45,6 +45,12 @@ type Entry struct {
 	ModifiedBy device.ID
 	Sequence   uint64
 	SyncedHash Hash
+	// Version orders this entry against the same path on a peer: the
+	// scanner raises this device's counter on every content change, an
+	// install adopts the peer's vector, and a conflict outcome adopts the
+	// merge of both. It makes Entry non-comparable, so entries are compared
+	// field by field, never with ==.
+	Version Version
 	// SyncedMode is the permission bits the local and the remote side last
 	// agreed on. It is local bookkeeping, never sent to a peer: a local mode
 	// that differs from it is a local change, which the peer must not undo.

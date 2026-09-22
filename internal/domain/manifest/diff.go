@@ -95,6 +95,14 @@ func differs(a, b Entry) bool {
 		a.Mode != b.Mode
 }
 
+// ContentDiffers reports whether two live entries differ in what a version
+// vector counts: the kind, the content hash and the link target. The
+// permission bits are not content, so a chmod is a Modify that carries the
+// version of the entry it changed.
+func ContentDiffers(a, b Entry) bool {
+	return a.Kind != b.Kind || a.Hash != b.Hash || a.LinkTarget != b.LinkTarget
+}
+
 // renameKey groups candidates by identical content.
 type renameKey struct {
 	hash Hash
