@@ -91,12 +91,13 @@ holds it open.
 | `changes` | the scan classification log behind "recent changes" |
 | `devices` | known peers and when they were last seen |
 | `transfers`, `transfer_chunks` | the journal of inbound downloads |
+| `file_chunks` | how every file of this device is cut, and the hash of each piece |
 | `conflicts` | detected divergences, one row per path both sides changed |
 | `device_counters` | the highest version counter ever seen for a device |
 
 ### Migrations
 
-The schema is at version 7. `Open` reads `schema_version`, applies every
+The schema is at version 9. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
@@ -108,6 +109,8 @@ migration above it in one transaction and records the new version:
 | 5 | `005_version.sql` | `files.version`, the version vector of the entry |
 | 6 | `006_sync_error.sql` | `folders.last_sync_error`, `folders.pending_items` |
 | 7 | `007_device_counters.sql` | `device_counters`, the per-device counter floor |
+| 8 | `008_folder_devices.sql` | `folder_devices`, the devices each folder is served to |
+| 9 | `009_chunks.sql` | `file_chunks`, the chunk index; `transfer_chunks.start_offset` and `.byte_length` |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,
@@ -283,9 +286,48 @@ ever ask for it again, and a folder that keeps such a row is reported as
 transferring forever. Rows of other peers are untouched, because only the peer
 whose plan was just made can say what it no longer wants.
 
-`transfer_chunks` has one row per chunk, with the BLAKE3-256 of the chunk once
-it has been verified. Offsets and lengths are derived from the size and the
-chunk size rather than stored.
+`transfer_chunks` has one row per chunk, with the BLAKE3-256 the sender
+announced for it and the byte range the sender cut it at. The range is stored
+because chunking is content-defined: it does not follow from the size and the
+chunk size any more. A row written before migration 8 has neither, and is read
+back the old way, from the transfer's chunk size, so a download in flight
+across the upgrade resumes instead of starting over.
+
+### file_chunks
+
+The chunk index: one row per chunk of every file this device holds, with the
+folder, the path, the index, the byte range and the BLAKE3-256 of that range.
+An index on `hash` alone is what makes deduplication possible: before asking a
+peer for a chunk, the puller looks the hash up here and finds any copy of that
+content, in any file of any folder.
+
+The rows are written by the scanner, which reads the file anyway to hash it and
+cuts it in the same pass, and by the puller when a download is installed, from
+the list it verified every chunk against. They go away with the file through
+the foreign key, and a tombstone clears them explicitly, because a tombstone
+keeps its `files` row and the cascade does not fire: the index must never offer
+bytes of a file the folder no longer has.
+
+The index is advisory. It is only as fresh as the last scan, so the puller
+re-reads and re-hashes what it points at before using it, and falls back to the
+peer when the bytes are not what was announced. A stale row costs one read.
+
+**Cost.** A row is 6 columns, dominated by the 64 character hash and the path:
+about 120 bytes plus the path length in a `WITHOUT ROWID` table, plus roughly
+70 bytes in the hash index. Call it 200 bytes per chunk. At the default average
+chunk size of 1 MiB that is about 200 bytes per mebibyte of content, or 0.02%:
+a 1 TiB folder costs roughly 200 MiB of database. A folder of many small files
+costs one row per file instead, since a file below the minimum chunk size is a
+single chunk: 100,000 small files is about 20 MiB. Lowering `chunk_size` raises
+the cost in proportion.
+
+**Upgrading.** A database written before migration 8 starts with an empty
+index. Nothing is re-downloaded for it: a transfer simply finds nothing to
+reuse, and a peer asking how a file is cut gets an answer read off the disk on
+the spot. The first scan after the upgrade fills the index in, because a file
+the index does not cover is read again even when its size, mtime and inode say
+it has not changed. That scan costs one pass over the folder; after it,
+deduplication is in effect.
 
 ### Renames and copies
 

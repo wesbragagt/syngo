@@ -1,16 +1,22 @@
 package sqlitestore_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // testHash is a valid 64 character content hash for the seeded file row.
@@ -325,6 +331,113 @@ func TestMigrate_6To7_StartsWithNoCounterFloor(t *testing.T) {
 	}
 	if floor != 0 {
 		t.Fatalf("floor = %d, want none recorded for an upgraded device", floor)
+	}
+	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
+	}
+}
+
+// writeVersion7ChunkDB creates a database holding the first seven migrations, one
+// folder, one file that is on disk, and one download that was in flight when
+// the process stopped. It is what a device upgrading to the chunk index starts
+// from, and it returns its path.
+func writeVersion7ChunkDB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	for version := 1; version <= 7; version++ {
+		script, err := sqlitestore.MigrationSQL(version)
+		if err != nil {
+			t.Fatalf("read migration %d: %v", version, err)
+		}
+		if _, err := db.ExecContext(ctx, script); err != nil {
+			t.Fatalf("apply migration %d: %v", version, err)
+		}
+	}
+	for _, stmt := range []string{
+		`INSERT INTO schema_version (version) VALUES (7)`,
+		`INSERT INTO folders (id, path, label, mode, delete_policy, include_hidden, symlink_policy,
+			keep_empty_dirs, paused, last_error, created_at)
+		 VALUES ('docs', '/srv/docs', '', 'sendreceive', 'propagate', 0, 'store', 1, 0, '', 1)`,
+		`INSERT INTO folder_sequence (folder_id, next) VALUES ('docs', 2)`,
+		`INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, sequence, updated_at)
+		 VALUES ('docs', 'held.bin', 1, 8192, 1, 420, '` + strings.Repeat("aa", 32) + `', 1, 1)`,
+		`INSERT INTO transfers (id, folder_id, rel_path, peer_id, hash, size, mtime_ns, mode,
+			chunk_size, chunk_count, temp_path, state, created_at, updated_at)
+		 VALUES ('t1', 'docs', 'coming.bin', 'PEER', '` + strings.Repeat("bb", 32) +
+			`', 12288, 1, 420, 4096, 3, '/srv/docs/.syncthis/tmp/t1.part', 'pending', 1, 1)`,
+		`INSERT INTO transfer_chunks (transfer_id, idx, hash, verified)
+		 VALUES ('t1', 0, '` + strings.Repeat("cc", 32) + `', 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare version 7 database: %v", err)
+		}
+	}
+	return path
+}
+
+// TestMigrate_7ToCurrent_StartsWithAnEmptyChunkIndexAndResumesOldTransfers is the
+// backward-compatibility promise of content-defined chunking. A database
+// written before the chunk index keeps every file row it had and nothing is
+// re-downloaded for it: the index simply starts empty, so the first transfer
+// after the upgrade finds nothing to reuse and the first scan fills it in.
+//
+// A download that was in flight keeps its boundaries too. Its journal rows
+// carry no offset and no length, so they are read back the way they were
+// written, from the transfer's chunk size, and the chunk it had already
+// verified stays verified.
+func TestMigrate_7ToCurrent_StartsWithAnEmptyChunkIndexAndResumesOldTransfers(t *testing.T) {
+	ctx := context.Background()
+	path := writeVersion7ChunkDB(t)
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// The file row is untouched, and the index knows nothing about it.
+	if _, err := store.GetFile(ctx, folder.ID("docs"), "held.bin"); err != nil {
+		t.Fatalf("file after the migration: %v", err)
+	}
+	indexed, err := store.IndexedPaths(ctx, folder.ID("docs"))
+	if err != nil {
+		t.Fatalf("indexed paths: %v", err)
+	}
+	if len(indexed) != 0 {
+		t.Fatalf("indexed paths = %v, want none for an upgraded database", indexed)
+	}
+	var known manifest.Hash
+	copy(known[:], bytes.Repeat([]byte{0xaa}, 32))
+	if _, err := store.FindChunk(ctx, known); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("FindChunk = %v, want ErrNotFound before the first scan", err)
+	}
+
+	// The in-flight download resumes on the boundaries it was started
+	// with, one verified chunk of the three it needs.
+	tr, err := store.GetTransfer(ctx, transfer.ID("t1"))
+	if err != nil {
+		t.Fatalf("transfer after the migration: %v", err)
+	}
+	want := transfer.FixedChunks(12288, 4096)
+	if len(tr.Chunks) != len(want) {
+		t.Fatalf("%d chunks, want %d", len(tr.Chunks), len(want))
+	}
+	for i, c := range tr.Chunks {
+		if c.Offset != want[i].Offset || c.Length != want[i].Length {
+			t.Fatalf("chunk %d = %d bytes at %d, want %d at %d",
+				i, c.Length, c.Offset, want[i].Length, want[i].Offset)
+		}
+	}
+	if !tr.Chunks[0].Verified || tr.Chunks[1].Verified {
+		t.Fatalf("verified chunks = %+v, want only the first", tr.Chunks)
 	}
 	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
 		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)

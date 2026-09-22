@@ -1,4 +1,4 @@
-# Syncthis peer protocol, version 2
+# Syncthis peer protocol, version 3
 
 This is what `internal/adapters/tcpwire` implements. It is the contract between
 two daemons; the application layer sees it through `internal/app/ports`.
@@ -27,7 +27,7 @@ uint32 BE  length      = 1 + 4 + len(header) + len(payload)   // at most 64 MiB
 uint8      type
 uint32 BE  header_len
 [bytes]    header      JSON object (UTF-8)
-[bytes]    payload     raw bytes; empty for every type except ChunkData
+[bytes]    payload     raw bytes; empty except for ChunkData and ChunkListReply
 ```
 
 A frame longer than 64 MiB is refused without reading its body and the
@@ -45,7 +45,7 @@ timeout is dropped.
 
 | Type | Name | Direction | Header |
 |---|---|---|---|
-| 0x01 | Hello | both, first frame after TLS | `{"protocol_version":2,"device_id":"…","device_name":"…","folders":[{"id":"…","mode":"…"}]}` |
+| 0x01 | Hello | both, first frame after TLS | `{"protocol_version":3,"device_id":"…","device_name":"…","folders":[{"id":"…","mode":"…"}]}` |
 | 0x02 | Rejected | server → client, then close | `{"reason":"unknown_device"\|"protocol_version"\|"id_mismatch"}` |
 | 0x03 | Ping | client → server | `{"nonce":123}` |
 | 0x04 | Pong | server → client | `{"nonce":123}` |
@@ -53,9 +53,11 @@ timeout is dropped.
 | 0x11 | ManifestResponse | server → client | `{"folder_id":"…","sequence":N,"entries":[…]}` |
 | 0x12 | ManifestChanged | server → client, unsolicited | `{"folder_id":"…","sequence":N}` |
 | 0x13 | FoldersChanged | either, unsolicited | `{"folders":[{"id":"…","mode":"…"}]}` |
-| 0x20 | ChunkRequest | client → server | `{"folder_id","path","hash","index","chunk_size"}` |
+| 0x20 | ChunkRequest | client → server | `{"folder_id","path","hash","index","offset","length"}` |
 | 0x21 | ChunkData | server → client | `{"folder_id","path","index","offset","length","chunk_hash"}` + payload |
 | 0x22 | ChunkError | server → client | `{"folder_id","path","index","reason":…}` |
+| 0x23 | ChunkListRequest | client → server | `{"folder_id","path","hash"}` |
+| 0x24 | ChunkListReply | server → client | `{"folder_id","path","count":N}` + payload |
 | 0xF0 | Error | either | `{"code":"…","message":"…"}` |
 
 ### Manifest exchange
@@ -89,10 +91,9 @@ must stay inside the folder: an absolute target, or one that climbs out with
 parent that is a symbolic link, whatever the manifest said.
 
 `size` must be between zero and the receiver's `max_file_size`, which defaults
-to one tebibyte. The size decides how many chunks a transfer is split into and
-how many journal rows it takes, so it is not a number a peer may choose freely.
-A single file that would need more than 4 Mi chunks is refused on its own,
-leaving the rest of the cycle to run.
+to one tebibyte. The size is what the chunk list is checked against, so it is
+not a number a peer may choose freely. A single file cut into more than 1 Mi
+chunks is refused on its own, leaving the rest of the cycle to run.
 
 `kind` is 1 for a file, 2 for a directory, 3 for a symlink. `hash` is the
 BLAKE3-256 of the contents, empty for directories, symlinks and tombstones.
@@ -172,14 +173,49 @@ before. There is nothing for a version bump to protect against.
 
 ### Chunk exchange
 
-A `ChunkRequest` names the whole-file hash the receiver is downloading. The
-sender serves the chunk only while the file still hashes to it, and refuses
-with `ChunkError{hash_changed}` once the file has moved on, so two halves of
-two versions can never end up in one file. `chunk_hash` is the BLAKE3-256 of
-the payload; the receiver verifies it before the bytes reach the disk.
+Chunking is content-defined: the boundaries of a file come from its bytes, not
+from a fixed size, so only the side holding the bytes knows where they fall. A
+receiver therefore asks for the chunk list first and then for byte ranges out
+of it.
+
+`ChunkListRequest` names the whole-file hash the receiver is downloading.
+`ChunkListReply` answers with `count` chunks in a binary payload, in order and
+contiguous from offset zero:
+
+```
+repeat count times:
+  uint32 BE  length        // 1..16 MiB
+  [32]byte   chunk_hash    // BLAKE3-256 of those bytes
+```
+
+The offset and the index of each chunk follow from the order, so neither is
+sent: one chunk costs 36 bytes, and a million of them, the limit, stay inside
+the frame limit. The receiver checks the list partitions a file of the
+announced size before it builds anything from it; a list that does not is
+refused and only that file is given up on.
+
+The list is also what deduplication works from. The receiver looks every chunk
+hash up in the content it already holds, across its files and its folders, and
+asks the peer only for what it finds nowhere. Bytes it finds locally are read
+back and hashed before they are used, so an index entry that has gone stale
+since the last scan costs one read and then a normal `ChunkRequest`.
+
+A `ChunkRequest` names the byte range from that list, together with the
+whole-file hash. The sender serves it only while the file still hashes to that,
+and refuses with `ChunkError{hash_changed}` once the file has moved on, so two
+halves of two versions can never end up in one file, and so does a range that
+runs past the end of the file. `chunk_hash` is the BLAKE3-256 of the payload;
+the receiver verifies it against the payload and against what the chunk list
+announced, before the bytes reach the disk.
+
+A sender that has not yet indexed a path, which is every path of a database
+written before the index existed, cuts the file on the spot to answer a
+`ChunkListRequest`, so an upgraded device serves its peers before it has
+rescanned.
 
 A `path` that breaks the rules above is answered with `ChunkError{not_found}`,
-like a request for a file the sender does not have.
+like a request for a file the sender does not have. A refusal of a chunk list
+carries `index` zero: the request is about the whole file.
 
 `reason` is one of `not_found`, `hash_changed`, `folder_unknown`,
 `folder_receive_only` or `paused`.
@@ -211,11 +247,12 @@ a peer removed while it is connected stops being served at once.
    its leaf certificate.
 2. Both sides write `Hello` immediately and read the other's. A `Hello` that
    announces a device ID other than the certificate's is answered with
-   `Rejected{id_mismatch}`; a protocol version other than 2 with
+   `Rejected{id_mismatch}`; a protocol version other than 3 with
    `Rejected{protocol_version}`. The connection closes either way. Both sides
-   check: a version-1 peer sends no version vectors, so its entries cannot be
-   ordered, and there is no mixed-version operation. Every device of a mesh
-   upgrades together.
+   check, and there is no mixed-version operation: a version-1 peer sends no
+   version vectors, so its entries cannot be ordered, and a version-2 peer
+   derives chunk boundaries from a size, so it would answer a byte-range
+   request with the wrong bytes. Every device of a mesh upgrades together.
 3. The server looks the client up in its `devices` table. An unknown device is
    answered with `Rejected{unknown_device}` and closed. The rejection comes
    *after* the server's own `Hello`, on purpose: a `peer add` probe from an

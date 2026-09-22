@@ -404,11 +404,24 @@ func writeFileIn(t *testing.T, root, rel string, data []byte) {
 	}
 }
 
-// payload returns n bytes of content derived from the seed.
+// payload returns n deterministic bytes derived from the seed.
+//
+// The bytes come from a splitmix64 recurrence rather than a counter, because
+// chunking is content-defined: a sequence that repeats every 256 bytes gives
+// the rolling hash the same window over and over, so it cuts nowhere and every
+// chunk is truncated at the maximum size. A boundary that comes from a length
+// rather than from the content is exactly what an insertion shifts, so a
+// fixture built that way would not deduplicate. Pseudorandom bytes cut near the
+// configured average, which is what a real file does.
 func payload(n int, seed byte) []byte {
 	out := make([]byte, n)
+	state := uint64(seed) + 1
 	for i := range out {
-		out[i] = byte(i*31) ^ seed
+		state += 0x9e3779b97f4a7c15
+		z := state
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+		z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+		out[i] = byte(z ^ (z >> 31))
 	}
 	return out
 }

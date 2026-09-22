@@ -1000,7 +1000,9 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 		if err != nil {
 			return err
 		}
+		source := "local"
 		if data == nil {
+			source = "peer"
 			// The budget is taken before the request, not after the
 			// reply: a peer that is never asked sends nothing, so
 			// nothing has to be buffered here while the limit is
@@ -1036,6 +1038,10 @@ func (p *Puller) fetch(ctx context.Context, conn ports.PeerConn, t *transfer.Tra
 		p.publish("transfer.chunk_verified", map[string]any{
 			"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
 			"path": t.Path, "index": idx,
+			// length and source are what a measurement adds up: how
+			// many payload bytes crossed the network and how many
+			// came off this device's own disk.
+			"length": chunk.Length, "source": source,
 		})
 	}
 
@@ -1084,10 +1090,6 @@ func (p *Puller) localChunk(ctx context.Context, c transfer.Chunk) ([]byte, erro
 	}
 	p.log.Debug("chunk taken from local content", "folder", place.FolderID,
 		"path", place.Path, "offset", place.Offset, "length", place.Length)
-	p.publish("transfer.chunk_deduplicated", map[string]any{
-		"folder_id": string(place.FolderID), "path": place.Path,
-		"offset": place.Offset, "length": place.Length,
-	})
 	return data, nil
 }
 

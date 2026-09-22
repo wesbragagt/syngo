@@ -86,6 +86,27 @@ reads it on a timer rather than per request. A node the client describes with
 neither an endpoint nor a relay is reported as unknown with the reason; the
 path is never inferred from anything else.
 
+## Chunking and deduplication
+
+Where a file is cut is a rule, not a policy, so it lives in the domain:
+`domain/chunker` is FastCDC with normalized chunking, stdlib only, no clock and
+no randomness. Two devices deduplicate only while they cut identically, so the
+gear table comes from a fixed integer recurrence and the masks from the
+configured average, and `TestSplit_GoldenCutPoints` freezes the boundaries of a
+known input.
+
+The chunker has one caller on each side of a transfer. The scanner runs it over
+every file it reads, in the same pass that hashes the file, and writes the
+result to the chunk index (`ports.ChunkStore`). The sender serves that index to
+a peer; the receiver looks the peer's chunk hashes up in its own before asking
+for anything, and takes what it already holds off its own disk.
+
+The index is a port like any other, so the puller and the scanner never learn
+that it is SQLite; `ports.ChunkPlacement` is what the domain sees, a folder, a
+path and a byte range. The index is advisory: the puller re-reads and re-hashes
+what it points at, so a row that has gone stale since the last scan costs a
+read rather than a wrong file.
+
 ## Glossary
 
 The domain language, one page: [GLOSSARY.md](GLOSSARY.md). It defines the words

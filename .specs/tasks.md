@@ -131,8 +131,8 @@ Goal: handle offline edits without silent data loss.
 
 Goal: beat the baseline on the target workload.
 
-- [ ] Implement content-defined chunking.
-- [ ] Implement cross-file and cross-folder chunk deduplication.
+- [x] Implement content-defined chunking.
+- [x] Implement cross-file and cross-folder chunk deduplication.
 - [ ] Implement parallel transfer pipelines with backpressure.
 - [ ] Implement adaptive concurrency based on disk and network measurements.
 - [x] Implement rename detection without re-uploading content.
