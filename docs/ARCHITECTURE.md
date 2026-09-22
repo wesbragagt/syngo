@@ -67,6 +67,13 @@ listener comes back where its peers already look for it. A Tailscale client
 restarting, a suspend, and a link that drops and returns are the same event
 seen from here.
 
+Two things end a serving cycle and both are spaced by the same backoff: a bind
+that failed, and a socket that was bound and then stopped serving. They are
+told apart by how long the socket served, not by why it stopped. A socket that
+served longer than the settle time was healthy, so whatever ended it is a new
+event and it is bound again at once; one that stopped sooner is failing as fast
+as it is bound, and the wait is what keeps the loop from spinning.
+
 The reconnect waits are one type, `domain/backoff.Policy`, used by the rebinder
 and by the peer loops: doubling from a floor to a ceiling, never zero, never
 unbounded. `internal/app/daemon` reports the result in `status --json`, in

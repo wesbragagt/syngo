@@ -17,6 +17,13 @@ import (
 // it, so nothing reports the loss by itself; something has to look.
 const DefaultHoldCheck = 2 * time.Second
 
+// DefaultSettle is how long a socket has to serve before the listener counts
+// as healthy again. A socket that serves longer than this and then stops has
+// run into something that happened to it, and is rebound at once; one that
+// stops sooner is failing as fast as it is bound, and is spaced out by the
+// backoff like any other failure.
+const DefaultSettle = time.Second
+
 // ListenState is what the daemon reports about the port peers connect to.
 // Every time is the clock the rebinder was given, so a test controls them.
 type ListenState struct {
@@ -50,6 +57,9 @@ type RebinderConfig struct {
 	// HoldCheck is how often the bound address is checked; zero means
 	// DefaultHoldCheck.
 	HoldCheck time.Duration
+	// Settle is how long a socket has to serve before the listener counts
+	// as healthy again; zero means DefaultSettle.
+	Settle time.Duration
 	// Backoff bounds the wait between bind attempts. Its zero value never
 	// spins and never waits longer than backoff.DefaultMax.
 	Backoff backoff.Policy
@@ -72,6 +82,11 @@ type Rebinder struct {
 	mu      sync.Mutex
 	current ports.BoundListener
 	state   ListenState
+	// shortCycles counts the sockets in a row that stopped serving before
+	// they had settled. It is what spaces the loop, and unlike
+	// state.Failures a successful bind does not reset it: a bind that
+	// succeeds and then stops at once has achieved nothing.
+	shortCycles int
 }
 
 var _ ports.Listener = (*Rebinder)(nil)
@@ -86,6 +101,9 @@ func Bind(binder ports.Binder, cfg RebinderConfig) (*Rebinder, error) {
 	}
 	if cfg.HoldCheck <= 0 {
 		cfg.HoldCheck = DefaultHoldCheck
+	}
+	if cfg.Settle <= 0 {
+		cfg.Settle = DefaultSettle
 	}
 	r := &Rebinder{binder: binder, cfg: cfg}
 	r.state.Interface = cfg.Interface
@@ -121,6 +139,14 @@ func (r *Rebinder) State() ListenState {
 // Serve accepts peer connections until ctx is done, rebinding whenever the
 // address goes away. It returns nil on a clean stop: a bind that fails is a
 // condition to wait out, not a reason to stop serving.
+//
+// Two things can end a cycle, and both are spaced by the same backoff: a bind
+// that failed, and a socket that was bound and stopped serving. They are told
+// apart by how long the socket served, not by why it stopped. A socket that
+// served longer than the settle time was healthy, so whatever happened to it
+// is a new event and it is bound again at once; one that stopped sooner is
+// failing as fast as it is bound, and waiting is the only thing that keeps the
+// loop from spinning.
 func (r *Rebinder) Serve(ctx context.Context, h ports.PeerHandler, known ports.DeviceLookup) error {
 	for ctx.Err() == nil {
 		ln := r.take()
@@ -130,10 +156,42 @@ func (r *Rebinder) Serve(ctx context.Context, h ports.PeerHandler, known ports.D
 				return nil
 			}
 		}
+
+		start := time.Now()
 		r.serveOne(ctx, ln, h, known)
+		if ctx.Err() != nil {
+			break
+		}
+		if wait := r.cycleEnded(time.Since(start)); wait > 0 {
+			r.cfg.Log.Warn("the peer listener stopped serving as soon as it was bound",
+				"served_for", time.Since(start), "retry_in", wait)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(wait):
+			}
+		}
 	}
 	r.closeCurrent()
 	return nil
+}
+
+// cycleEnded records a socket that stopped serving and returns how long to
+// wait before binding again: nothing when it had served long enough to count
+// as healthy, and the backoff when it had not.
+//
+// The elapsed time is measured with the wall clock rather than the injected
+// one: it decides how fast this loop may run, which is a property of the
+// machine and not of what a test moved the clock to.
+func (r *Rebinder) cycleEnded(served time.Duration) time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if served >= r.cfg.Settle {
+		r.shortCycles = 0
+		return 0
+	}
+	r.shortCycles++
+	return r.cfg.Backoff.Wait(r.shortCycles)
 }
 
 // serveOne serves one bound socket until it stops accepting, and records the
