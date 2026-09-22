@@ -87,6 +87,12 @@ func newVersion(counters []Counter) (Version, error) {
 		switch {
 		case c.ID == "":
 			return Version{}, fmt.Errorf("%w: a counter has no device id", ErrInvalidVersion)
+		case string(c.ID) != strings.TrimSpace(string(c.ID)):
+			// An id with leading or trailing whitespace would be mangled
+			// by String and ParseVersion working together: String outputs
+			// it, ParseVersion trims the whole string, and this id
+			// disappears or becomes empty. The round trip breaks.
+			return Version{}, fmt.Errorf("%w: device id %q has leading or trailing whitespace", ErrInvalidVersion, c.ID)
 		case strings.ContainsAny(string(c.ID), ":,"):
 			// The stored and wire forms separate on these, so an id
 			// holding one could not be read back.

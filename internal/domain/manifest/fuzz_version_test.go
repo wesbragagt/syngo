@@ -44,15 +44,6 @@ func FuzzParseVersion(f *testing.F) {
 		// Round trip: the form String writes parses back to the same
 		// vector, which is what the store relies on.
 		text := v.String()
-		if strings.TrimSpace(text) != text {
-			// Known defect: ParseVersion keeps a device id that
-			// begins with whitespace, and the text it writes for it
-			// does not parse again. See
-			// TestParseVersionLeadingSpaceDeviceIDDefect. Nothing
-			// fixes it here, so the round trip is not asserted for
-			// such a vector.
-			return
-		}
 		again, err := manifest.ParseVersion(text)
 		if err != nil {
 			t.Fatalf("ParseVersion(%q) produced %q, which does not parse: %v", s, text, err)
@@ -88,31 +79,20 @@ func FuzzParseVersion(f *testing.F) {
 	})
 }
 
-// TestParseVersionLeadingSpaceDeviceIDDefect records a defect FuzzParseVersion
-// found, with the input that triggers it. It is not fixed here: it asserts the
-// behavior as it stands, so the day the parser is tightened this test fails
-// and says what to change.
-//
-// ParseVersion trims only the whole string, so a counter whose device id is or
-// begins with whitespace is kept. Sorting then puts that id first, and the
-// text String writes begins with a space; parsing it again trims the space,
-// leaves an empty id, and fails. A stored vector written by this code is
-// therefore unreadable. A device id from device.ParseID never holds a space,
-// so the input has to come from a hand-edited or corrupted row rather than
-// from a peer; a manifest frame goes through NewVersion, which calls
-// device.ParseID and refuses it.
+// TestParseVersionLeadingSpaceDeviceIDDefect confirms the defect has been
+// fixed: device ids with leading or trailing whitespace are now rejected.
+// The defect was that ParseVersion used to accept them, String would output
+// them as-is, but parsing the output again would fail because TrimSpace on
+// the whole string would consume the whitespace, leaving an empty device id.
+// This test confirms the fuzz seed "0:1, :1" is now rejected at parse time.
 func TestParseVersionLeadingSpaceDeviceIDDefect(t *testing.T) {
 	const input = "0:1, :1"
 
-	v, err := manifest.ParseVersion(input)
-	if err != nil {
-		t.Fatalf("ParseVersion(%q) error: %v", input, err)
+	_, err := manifest.ParseVersion(input)
+	if err == nil {
+		t.Fatalf("ParseVersion(%q) accepted a device id with leading whitespace; defect persists", input)
 	}
-	if got, want := v.String(), " :1,0:1"; got != want {
-		t.Fatalf("ParseVersion(%q).String() = %q, want %q", input, got, want)
-	}
-	if _, err := manifest.ParseVersion(v.String()); err == nil {
-		t.Fatalf("ParseVersion(%q) now round-trips; the defect is fixed, "+
-			"so drop the whitespace exception in FuzzParseVersion and this test", input)
+	if !strings.Contains(err.Error(), "leading or trailing whitespace") {
+		t.Fatalf("ParseVersion(%q) error %q does not mention whitespace", input, err)
 	}
 }
