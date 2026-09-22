@@ -435,3 +435,191 @@ starts with a burst and the first chunk requests arrive before the pacing
 settles. It also refuses to report a rate measured over less than half the
 requested window. The measured window here was 1m44.9s, and the sustained rate
 was 0.13% below the configured limit.
+
+## The Phase 5 benchmarks
+
+Six lines of .specs/tasks.md Phase 5 are claims about what the chunker, the
+deduplicator, the rename path and the journal watermarks bought. Each one is
+measured here by a test rather than estimated, and each one reports the number
+it measured whether or not the claim held.
+
+Two of them cost seconds and run in `make test`
+(`internal/e2e/bench_convergence_test.go`). Three cost tens of gigabytes of
+disk and minutes of wall time and are opt-in with the rest of the scale suite
+(`internal/e2e/bench_scale_test.go`, run by `make scale`, sized by
+`SCALE_BIGFILE_GIB`, default 10). The sixth is a corpus run of
+`syncthis-bench`.
+
+Every one of them configures the daemon with the timings and the chunk size a
+shipped daemon runs at: a 500 ms debounce, a 30 s sync interval, a 10 minute
+rescan interval and a 1 MiB average chunk. The functional tests use far
+shorter ones, and a convergence time measured with a 50 ms debounce would be a
+measurement of the test harness. The rescan interval being the shipped ten
+minutes also means no periodic full scan can carry a change inside any window
+measured below: every change travels the watcher, scan, notify and pull path.
+
+### Measured results
+
+Machine: `icebox`, AMD Ryzen 7 9700X (8 cores, 16 threads), 60 GiB RAM, NVMe
+(`/dev/nvme0n1p2`, 190 GiB free at the time of the run), NixOS, Linux 7.0.3
+x86_64, Go 1.26.7. Date: 2026-09-22. Commit: `949b08e`.
+
+| Claim | Measured | Verdict |
+| --- | --- | --- |
+| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 509.6 ms median over loopback | **not proved**: loopback, not a tailnet |
+| 1 MiB inserted into a 10 GB file transfers less than 2 MiB after caching | 2,254,262 bytes (2.15 MiB) | **fail** |
+| A 10 GB rename transfers zero payload bytes | 0 bytes | pass |
+| 100,000-file status under two seconds after incremental change | 301.6 ms slowest, 24.8 ms median | pass |
+| Small edits use at least 90% fewer bytes than a whole-file transfer | 98.43% fewer | pass |
+| Compare against the Phase 0 baseline corpus | +1.0% convergence, same bytes | done, see below |
+
+#### Ordinary document change convergence: loopback only
+
+Ten editor saves of a 24 KiB document into a 200-file folder, timed from the
+rename that completes the save to the byte-identical file being readable on
+the other device.
+
+```
+10 document saves of 24.0 KiB over loopback with the shipped timings
+  (debounce 500ms, sync interval 30s, rescan interval 10m0s):
+  median 509.567781ms, slowest 514.777613ms
+  all [508.15827ms 509.567781ms 508.904977ms 510.314331ms 514.777613ms
+       508.074811ms 507.356933ms 506.152452ms 509.784107ms 510.848507ms]
+```
+
+The spread is 8 ms across ten saves because the number is almost entirely the
+500 ms debounce: the watcher reports the save, the folder loop waits for the
+burst to end, scans the one path, tells the peer, and the peer pulls 24 KiB.
+Everything after the debounce costs about 10 ms.
+
+What this does not measure is the claim. The claim names a healthy Tailscale
+direct path, which is this path plus a tailnet round trip and WireGuard
+encryption on both ends, and measuring it needs two machines on a tailnet:
+`syncthis-bench --scenario tailscale-direct --peer-host ...`. Loopback is the
+fastest a direct connection can be, so this result is a lower bound: it rules
+nothing in and would have ruled the claim out had it come in above a second.
+The task line stays open until a two-machine run fills it in. A tailnet round
+trip between two machines on the same LAN is a few milliseconds, so the claim
+is plausible with 490 ms of headroom, but plausible is not measured.
+
+#### A 1 MiB insertion into a 10 GiB file: the 2 MiB budget does not hold
+
+```
+wrote big.bin of 10.00 GiB in 49.3s
+the first copy of 10.00 GiB arrived in 1m3.4s
+wrote big.bin of 10.00 GiB in 29.8s
+a 1.0 MiB insertion into a 10.00 GiB file: 2.1 MiB (2254262 bytes) moved over
+  the network, 10.00 GiB taken from the copy already on disk, in 49.1s
+  (budget 2.0 MiB, 2097152 bytes)
+```
+
+The insertion costs 2,254,262 bytes against a budget of 2,097,152: 7.5% over.
+Everything else about the measurement is what the design predicts. Of the
+10.00 GiB the receiver installed, all but 2.1 MiB came off its own disk
+through the chunk index, and the file it ended with hashes to what the sender
+holds. The same measurement at 1 GiB moves the same 2.1 MiB, which is the
+point: the cost is a function of the insertion and the chunk size, not of the
+file.
+
+Why it is over: at the shipped 1 MiB average chunk size, inserting a megabyte
+changes the chunk the insertion lands in and re-cuts around it, so the
+receiver has to fetch its own megabyte of new content plus the chunk or so
+that content landed in. A budget of "insertion plus one average chunk" is
+2 MiB exactly, and the boundaries do not fall that kindly. The budget holds at
+smaller chunk sizes: `TestDedup_InsertionMovesOnlyWhatChanged` measures the
+same insertion at a 16 KiB chunk size, where it moves well under 2 MiB.
+
+The test asserts the claim, 2 MiB, and therefore fails today, the same way the
+idle memory test does. Lowering the bound to what this machine measures would
+turn the test into a description of the current chunk size rather than a check
+on the claim. The task line stays open with this number.
+
+#### A 10 GiB rename: zero payload bytes
+
+```
+wrote big.bin of 10.00 GiB in 45.6s
+the first copy of 10.00 GiB arrived in 1m31.9s
+renaming 10.00 GiB: 0 bytes moved over the network,
+  10.00 GiB taken from the copy already on disk, in 58.2s
+```
+
+Zero is the literal count of payload bytes the receiver verified for the new
+path: every one of the 10.00 GiB came from the copy it already had, and the
+renamed file hashes to what the sender holds. The 58 s is disk, not network:
+the receiver copies the file into its new name locally.
+
+#### 100,000-file status latency
+
+A daemon over 200 directories of 500 files. Once it reported the folder
+scanned and idle, 1,000 of those files were rewritten and `syncthis status
+--json` was run as a real command, repeatedly, from the moment of the change.
+
+```
+built 100000 files in 200 directories (15.1 MiB) in 944ms
+100000 files, 1000 of them rewritten: 20 status calls while the daemon took
+  the change in, slowest 301.566078ms; the change was reported 1.525696802s
+  after it was made; 10 calls afterwards, median 24.837082ms,
+  slowest 26.017628ms (target 2s)
+```
+
+Two numbers matter and both are under the two seconds. A status call made
+while the daemon is scanning and writing the 1,000 changed rows answers in at
+most 302 ms; once the daemon has settled a call costs 25 ms, which includes
+starting the process and a round trip over the control socket. The change
+itself was visible in `status` 1.53 s after it was made, of which 500 ms is
+the debounce.
+
+The command is measured rather than an in-process call on purpose: what an
+operator waits for includes the process start.
+
+#### Small edits against a whole-file transfer
+
+```
+a 4.0 KiB edit to a 64.0 MiB file at the shipped 1.0 MiB chunk size moved
+  1.0 MiB over the network, 98.43% fewer bytes than the 64.0 MiB a whole-file
+  transfer moves
+```
+
+A four kilobyte rewrite in the middle of a 64 MiB file costs one chunk. The
+claim is 90% fewer; the measurement is 98.43% fewer, and the saving grows with
+the file, because the cost of a small edit is one chunk whatever the file
+size.
+
+### Comparing against the Phase 0 baseline corpus
+
+The Phase 0 corpus is `fixture.DefaultSpec`: 200 small text files, 3 large
+files, 5 binary files and a directory chain ten deep, 26 MiB in all, written
+from a fixed seed. No corpus tree and no Phase 0 result were ever committed,
+and no baseline run had been recorded before this one: everything in this
+document above the scale suite described how to run a scenario rather than
+what one produced. The corpus is regenerated rather than stored, because the
+same seed and the same spec produce the same bytes on any machine;
+`bench/corpus/` is therefore ignored by git and `bench/results/` is kept.
+
+With no recorded Phase 0 result to compare against, the comparison made here
+is between two revisions of the code over one corpus: `4522f9c`, the last
+commit before the Phase 5 chunker landed, and `949b08e`. Both were run with
+`syncthis-bench --scenario lan` against the same
+`bench/corpus/v1`, three runs each, alternating.
+
+| Run | Convergence | Bytes | Peak RSS |
+| --- | --- | --- | --- |
+| pre-Phase 5 (`4522f9c`) | 10.24 s, 10.25 s, 10.25 s | 26,270,468 | 44.4, 43.8, 43.0 MiB |
+| Phase 5 (`949b08e`) | 10.35 s, 10.35 s, 10.35 s | 26,271,414 / 26,270,468 ×2 | 56.1, 45.2, 47.4 MiB |
+
+Phase 5 converges 100 ms slower on this corpus, 1.0%, and holds a few
+megabytes more resident. Neither is surprising and neither is a regression
+worth acting on: the corpus is a first full synchronization of files that
+share no content, which is the one workload where content-defined chunking
+and deduplication have nothing to reuse and only cost. The workloads they were
+built for are the four benchmarks above, where they move 0 bytes for a 10 GiB
+rename and 1 MiB for an edit to a 64 MiB file.
+
+One limitation of this comparison is worth stating rather than hiding. The
+runner's `bytes_transferred` sums the size of each file a node finished
+installing, not the payload it pulled over the network, so it cannot show a
+deduplication saving at all. The 946 bytes that one run differs by is a file
+installed at a different revision of the mutation set, not a payload
+difference; runs of the same revision differ by it too. Every payload figure in this document comes from the chunk-level counters in
+the benchmarks above, which distinguish a chunk taken from the peer from one
+taken off the local disk.

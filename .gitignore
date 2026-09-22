@@ -6,3 +6,8 @@ result
 result-*
 .scale/
 .scale-scratch/
+
+# Generated benchmark corpora. The tree is written by internal/bench/fixture
+# from a fixed seed, so it is reproduced by running a scenario rather than
+# stored; the results next to it are kept.
+bench/corpus/

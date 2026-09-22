@@ -137,12 +137,12 @@ Goal: beat the baseline on the target workload.
 - [ ] Implement adaptive concurrency based on disk and network measurements.
 - [x] Implement rename detection without re-uploading content.
 - [x] Replace full scans with journal watermarks where possible.
-- [ ] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path.
-- [ ] Benchmark a 1 MiB insertion into a 10 GB file transfers less than 2 MiB after caching.
-- [ ] Benchmark a 10 GB rename transfers zero payload bytes.
-- [ ] Benchmark 100,000-file status under two seconds after incremental change.
-- [ ] Benchmark small edits use at least 90% fewer bytes than whole-file transfer.
-- [ ] Compare against the Phase 0 baseline corpus.
+- [ ] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured 509.6 ms median over loopback, which is a lower bound; the tailnet path needs a two-machine run. See docs/BENCH.md.
+- [ ] Benchmark a 1 MiB insertion into a 10 GB file transfers less than 2 MiB after caching. Measured 2,254,262 bytes at the shipped 1 MiB chunk size: the claim does not hold. See docs/BENCH.md.
+- [x] Benchmark a 10 GB rename transfers zero payload bytes.
+- [x] Benchmark 100,000-file status under two seconds after incremental change.
+- [x] Benchmark small edits use at least 90% fewer bytes than whole-file transfer.
+- [x] Compare against the Phase 0 baseline corpus.
 
 ## Phase 6: Interactive terminal product
 
