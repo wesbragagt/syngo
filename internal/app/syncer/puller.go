@@ -196,6 +196,9 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 		p.recordOutcome(ctx, f, summary, false)
 		return summary, err
 	}
+	if err := p.dropUnwanted(ctx, f, peer, pulls); err != nil {
+		return summary, err
+	}
 	p.recordOutcome(ctx, f, summary, true)
 
 	p.log.Debug("folder sync finished", "folder", f.ID, "peer", peer.Short(),
@@ -262,7 +265,7 @@ func (p *Puller) rootUsable(f folder.Folder) bool {
 const ReasonSendOnly = "folder is send-only"
 
 // ResumeAll prepares the live transfers of a folder for a new process or for a
-// resume: a transfer nobody is fetching any more is pending, not active, and a
+// resume, and empties the journal of the rows a stopped process left finished: a transfer nobody is fetching any more is pending, not active, and a
 // transfer of a folder that is no longer paused stops claiming it is. f must
 // be the folder as it is configured now. A folder that cannot receive keeps
 // the transfer pending and says why, because "paused" means the folder is
@@ -273,6 +276,16 @@ func (p *Puller) ResumeAll(ctx context.Context, f folder.Folder) error {
 		return err
 	}
 	for _, t := range list {
+		if t.State == transfer.StateDone {
+			// The files table is the record of what arrived, so a
+			// finished transfer's row is worth nothing. One that is
+			// still here was written by a process that stopped
+			// between the install and the deletion of the row.
+			if err := p.dropTransfer(ctx, t, "the download had finished"); err != nil {
+				return err
+			}
+			continue
+		}
 		reason := ""
 		switch {
 		case t.State == transfer.StateActive || t.State == transfer.StateVerifying:
@@ -289,6 +302,52 @@ func (p *Puller) ResumeAll(ctx context.Context, f folder.Folder) error {
 		p.log.Debug("transfer picked up again", "folder", f.ID, "path", t.Path,
 			"chunks_done", len(t.Chunks)-len(t.MissingChunks()), "reason", reason)
 	}
+	return nil
+}
+
+// dropUnwanted empties the journal of the rows this cycle proved worthless.
+// A row survives a cycle only while the plan still wants its path: a daemon
+// stopped between an install and the deletion of its row leaves one behind
+// that nothing would ever pick up, because the path has arrived and no later
+// plan asks for it again, and `status` would report that folder as busy
+// forever. Rows of other peers are left alone, as are failed rows, which are
+// the integrity failures a user is meant to look at.
+func (p *Puller) dropUnwanted(ctx context.Context, f folder.Folder, peer device.ID, pulls []syncplan.Item) error {
+	rows, err := p.store.ListTransfers(ctx, ports.TransferFilter{FolderID: f.ID})
+	if err != nil {
+		return err
+	}
+	wanted := make(map[string]struct{}, len(pulls))
+	for _, item := range pulls {
+		wanted[item.Path] = struct{}{}
+	}
+	for _, t := range rows {
+		if t.PeerID != peer || t.State == transfer.StateFailed {
+			continue
+		}
+		if _, ok := wanted[t.Path]; ok && t.State != transfer.StateDone {
+			continue
+		}
+		if err := p.dropTransfer(ctx, t, "the plan no longer wants it"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropTransfer removes one journal row and its partial file.
+func (p *Puller) dropTransfer(ctx context.Context, t transfer.Transfer, reason string) error {
+	p.forget(t.ID)
+	p.removeTemp(t.TempPath)
+	if err := p.store.DeleteTransfer(ctx, t.ID); err != nil {
+		return err
+	}
+	p.log.Info("transfer dropped from the journal", "folder", t.FolderID, "path", t.Path,
+		"transfer", t.ID, "state", string(t.State), "reason", reason)
+	p.publish("transfer.dropped", map[string]any{
+		"transfer_id": string(t.ID), "folder_id": string(t.FolderID),
+		"path": t.Path, "reason": reason,
+	})
 	return nil
 }
 

@@ -236,6 +236,16 @@ path, so at most one exists per path, and `repair` deletes the ones whose
 partial file is gone or whose path already holds the content the transfer was
 after. A converged mesh therefore ends with an empty journal.
 
+Two more rows are removed rather than left to rot, both of them what a process
+killed at the wrong moment leaves behind. A row in `done` state outlived the
+install it recorded: what arrived is in `files`, so the next `ResumeAll`, which
+runs when a folder loop starts, deletes it with its partial file, and `repair`
+does the same. A live row whose path the current plan does not pull, from the
+peer whose cycle is running, is deleted at the end of that cycle: no plan will
+ever ask for it again, and a folder that keeps such a row is reported as
+transferring forever. Rows of other peers are untouched, because only the peer
+whose plan was just made can say what it no longer wants.
+
 `transfer_chunks` has one row per chunk, with the BLAKE3-256 of the chunk once
 it has been verified. Offsets and lengths are derived from the size and the
 chunk size rather than stored.

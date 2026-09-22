@@ -42,9 +42,10 @@ type Report struct {
 	Rehashed []string
 	// TransfersReset are transfers whose partial file disappeared.
 	TransfersReset []string
-	// TransfersPruned are failed transfers with nothing left to inspect:
-	// their partial file is gone, or the path already holds the content
-	// they were downloading.
+	// TransfersPruned are journal rows worth nothing any more: a finished
+	// download whose row outlived it, and a failed transfer with nothing
+	// left to inspect, whose partial file is gone or whose path already
+	// holds the content it was downloading.
 	TransfersPruned []string
 	// OrphanTemps are partial files no live transfer claims.
 	OrphanTemps []string
@@ -183,6 +184,13 @@ func (s *Service) inspectTransfers(ctx context.Context, f folder.Folder, m manif
 
 	for _, t := range list {
 		if t.State == transfer.StateDone {
+			// A finished download is recorded in the files table;
+			// its row only kept the journal alive. One that is
+			// still here was left by a process that stopped
+			// between the install and the deletion of the row, and
+			// nothing else would ever remove it.
+			pruned = append(pruned, t)
+			report.TransfersPruned = append(report.TransfersPruned, string(t.ID))
 			continue
 		}
 		if t.State == transfer.StateFailed {

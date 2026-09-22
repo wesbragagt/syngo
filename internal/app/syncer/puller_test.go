@@ -1277,3 +1277,90 @@ func TestSync_CycleThatAppliedEverythingClearsTheFolderError(t *testing.T) {
 		t.Errorf("the puller cleared the scanner's last error: %q", stored.LastError)
 	}
 }
+
+// TestResumeAll_DropsFinishedRowsAndTheirTempFiles is the journal a process
+// killed between an install and the deletion of its row leaves behind. The
+// path has arrived, so no later plan asks for it and nothing else would ever
+// remove the row: `status` would report the folder busy forever.
+func TestResumeAll_DropsFinishedRowsAndTheirTempFiles(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "big.bin", payload(chunkSize*2, 21))
+
+	d, _ := newDest(t, src.server)
+	temp := d.folder.Path + "/.syncthis/tmp/abc.part"
+	d.fs.AddFile(temp, payload(chunkSize, 21), 0o600)
+	done := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
+		peerID, chunkSize, temp, d.clock.Now())
+	done.State = transfer.StateDone
+	if err := d.store.SaveTransfer(ctx, done); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+
+	if err := d.puller.ResumeAll(ctx, d.folder); err != nil {
+		t.Fatalf("resume all: %v", err)
+	}
+	if rows := d.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want it empty", rows)
+	}
+	if temps := d.tempFiles(); len(temps) != 0 {
+		t.Fatalf("partial files left behind: %v", temps)
+	}
+}
+
+// TestSync_DropsRowsTheNewPlanNoLongerWants is the other half of the same
+// leftover: a row the last process left pending for a path the peer no longer
+// offers, or that has arrived since. The cycle that proves the plan does not
+// want it is what removes it.
+func TestSync_DropsRowsTheNewPlanNoLongerWants(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "wanted.bin", payload(chunkSize, 4))
+
+	d, conn := newDest(t, src.server)
+	temp := d.folder.Path + "/.syncthis/tmp/orphan.part"
+	d.fs.AddFile(temp, payload(chunkSize, 9), 0o600)
+	orphan := transfer.NewInbound("orphan", d.folder.ID, manifest.Entry{Path: "gone.bin", Size: chunkSize},
+		peerID, chunkSize, temp, d.clock.Now())
+	orphan.State = transfer.StatePending
+	if err := d.store.SaveTransfer(ctx, orphan); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+
+	d.sync(t, conn)
+
+	if rows := d.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v after a cycle that wanted none of it", rows)
+	}
+	if temps := d.tempFiles(); len(temps) != 0 {
+		t.Fatalf("partial files left behind: %v", temps)
+	}
+	if got := d.content(t, "wanted.bin"); len(got) != chunkSize {
+		t.Fatalf("the file the plan did want is %d bytes, want %d", len(got), chunkSize)
+	}
+}
+
+// TestSync_KeepsFailedRowsOfPathsThePlanDropped is the row the cleanup must
+// not touch: bytes that did not hash right are what a user is meant to look
+// at, and they outlive the plan that produced them.
+func TestSync_KeepsFailedRowsOfPathsThePlanDropped(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	src.addFile(t, "wanted.bin", payload(chunkSize, 4))
+
+	d, conn := newDest(t, src.server)
+	failed := transfer.NewInbound("bad", d.folder.ID, manifest.Entry{Path: "gone.bin", Size: chunkSize},
+		peerID, chunkSize, d.folder.Path+"/.syncthis/tmp/bad.part", d.clock.Now())
+	failed.State = transfer.StateFailed
+	failed.Error = "chunk 0 did not hash right"
+	if err := d.store.SaveTransfer(ctx, failed); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+
+	d.sync(t, conn)
+
+	rows := d.transfers(t)
+	if len(rows) != 1 || rows[0].State != transfer.StateFailed {
+		t.Fatalf("journal holds %+v, want the failed row kept", rows)
+	}
+}

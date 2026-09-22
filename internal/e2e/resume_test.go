@@ -1,15 +1,21 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/app/status"
 	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syncthis/internal/compose"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // hugeFileSize is large enough that the receiver is interrupted in the middle
@@ -238,4 +244,62 @@ func TestResume_SenderRestartIsNotAConflict(t *testing.T) {
 	waitTreeEqual(t, b, a)
 	assertNoConflicts(t, a)
 	assertNoConflicts(t, b)
+}
+
+// TestResume_LeftoverJournalRowsAreClearedOnRestart is the journal a process
+// killed between finishing a download and clearing its row leaves behind. The
+// paths have arrived, so no later plan asks for them and nothing used to
+// remove the rows: the node reported transfers forever. A restart clears what
+// is finished, and the first cycle clears what the plan does not want.
+func TestResume_LeftoverJournalRowsAreClearedOnRestart(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendOnly)
+	b := startNode(t, "b", folder.ModeReceiveOnly)
+	writeFile(t, a, "arrived.bin", payload(4096, 11))
+	pair(t, a, b)
+	waitTreeEqual(t, a, b)
+
+	b.Stop()
+	leftovers := []struct {
+		id    transfer.ID
+		path  string
+		state transfer.State
+	}{
+		{"leftover-done", "arrived.bin", transfer.StateDone},
+		{"leftover-pending", "vanished.bin", transfer.StatePending},
+	}
+	withStore(t, b.DataDir, func(store ports.MetadataStore) {
+		for _, row := range leftovers {
+			temp := filepath.Join(b.Root, ".syncthis", "tmp", string(row.id)+".part")
+			writeFileIn(t, filepath.Dir(temp), filepath.Base(temp), payload(512, 3))
+			entry := manifest.Entry{Path: row.path, Kind: manifest.KindFile, Size: 4096}
+			leftover := transfer.NewInbound(row.id, folderID, entry, a.ID, 1024, temp, time.Now())
+			leftover.State = row.state
+			if err := store.SaveTransfer(context.Background(), leftover); err != nil {
+				t.Fatalf("plant the %s row: %v", row.state, err)
+			}
+		}
+	})
+
+	b.Restart()
+	waitFor(t, "the leftover journal rows to go", convergeTimeout, func() bool {
+		return len(b.Status().Transfers.Items) == 0
+	})
+	if parts := partFiles(t, b.Root); len(parts) != 0 {
+		t.Errorf("partial files of the leftover rows were kept: %v", parts)
+	}
+	waitTreeEqual(t, a, b)
+}
+
+// withStore opens the database of a stopped node, hands it to fn and closes
+// it again, which is how a test plants a row no code path would write.
+func withStore(t *testing.T, dataDir string, fn func(ports.MetadataStore)) {
+	t.Helper()
+	app, err := compose.Build(context.Background(), compose.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("open the data directory of a stopped node: %v", err)
+	}
+	fn(app.Store)
+	if err := app.Close(); err != nil {
+		t.Fatalf("close the data directory: %v", err)
+	}
 }

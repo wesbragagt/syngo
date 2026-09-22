@@ -410,13 +410,15 @@ document.
 Restores agreement between the database and the files on disk: paths the
 database knows and the disk does not become tombstones, files whose size or
 modification time moved are rehashed, transfers whose partial file is gone are
-reset, failed transfers with nothing left to inspect are pruned with their
-partial files, partial files no transfer claims are deleted, and the folder
-sequence is corrected. It runs inside the daemon when one is running.
+reset, transfers worth nothing any more are pruned with their partial files,
+partial files no transfer claims are deleted, and the folder sequence is
+corrected. It runs inside the daemon when one is running.
 
-A failed transfer has nothing left to inspect when its partial file is gone or
-the path already holds the content it was downloading. A dry run lists the rows
-it would prune in `transfers_pruned` without deleting anything.
+A transfer is worth nothing when it has finished, because what arrived is in
+the files table and only the row outlived it, and a failed one when its partial
+file is gone or the path already holds the content it was downloading. A dry
+run lists the rows it would prune in `transfers_pruned` without deleting
+anything.
 
 A folder whose root does not exist, or is no longer a directory, stops the
 command instead: every entry would look missing and the folder would be marked

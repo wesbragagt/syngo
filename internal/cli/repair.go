@@ -134,7 +134,7 @@ func printRepair(deps *Deps, views []repairView) error {
 		}
 		if _, err := fmt.Fprintf(deps.Stdout,
 			"%s: %d missing marked deleted, %d rehashed, %d transfers reset, "+
-				"%d failed transfers pruned, %d orphan temp files, sequence fixed: %t%s\n",
+				"%d spent transfers pruned, %d orphan temp files, sequence fixed: %t%s\n",
 			v.FolderID, len(v.MissingDeleted), len(v.Rehashed), len(v.TransfersReset),
 			len(v.TransfersPruned), len(v.OrphanTemps), v.SequenceFixed, suffix); err != nil {
 			return err

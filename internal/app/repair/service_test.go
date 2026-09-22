@@ -408,3 +408,26 @@ func TestRepair_DryRunListsPrunableTransfersWithoutDeletingThem(t *testing.T) {
 		t.Fatalf("journal holds %+v, want the row still there after a dry run", rows)
 	}
 }
+
+// TestRepair_PrunesAFinishedTransferWhoseRowOutlivedIt is the journal row a
+// process killed between an install and the deletion of its row leaves. The
+// path has arrived, so no plan asks for it again and only repair, or the next
+// resume, can clear it.
+func TestRepair_PrunesAFinishedTransferWhoseRowOutlivedIt(t *testing.T) {
+	e := newEnv(t)
+	entry := e.addFile(t, "big.bin", "what the peer offered")
+	tr := transfer.NewInbound("t1", e.folder.ID, entry, "PEER1", transfer.MinChunkSize,
+		root+"/.syncthis/tmp/t1.part", e.clock.Now())
+	tr.State = transfer.StateDone
+	if err := e.store.SaveTransfer(context.Background(), tr); err != nil {
+		t.Fatalf("save transfer: %v", err)
+	}
+
+	report := e.run(t, false)
+	if len(report.TransfersPruned) != 1 || report.TransfersPruned[0] != string(tr.ID) {
+		t.Fatalf("pruned = %v, want the row of the finished download", report.TransfersPruned)
+	}
+	if rows := e.transfers(t); len(rows) != 0 {
+		t.Fatalf("journal holds %+v, want it empty", rows)
+	}
+}
