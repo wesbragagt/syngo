@@ -1,0 +1,43 @@
+# Headless syncthis for one user, as a systemd user unit.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/systemd/syncthis.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now syncthis
+#
+# It runs as the invoking user, so the daemon owns the data directory it reads
+# and the files it synchronizes. Nothing here needs root.
+#
+# The daemon must already have an identity: run `syncthis init` once first.
+# Add `loginctl enable-linger $USER` to keep it running when that user is not
+# logged in.
+
+[Unit]
+Description=syncthis file synchronization daemon
+Documentation=https://github.com/wesbragagt/syncthis
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The data directory the daemon opens: identity, config.json, state.db and the
+# control socket. Override it, and the listen interface below, with
+#   systemctl --user edit syncthis
+Environment=SYNCTHIS_DATA_DIR=%h/.local/share/syncthis
+ExecStart=/usr/local/bin/syncthis daemon run
+# A daemon that exits for any reason comes back, including after a peer or
+# filesystem failure it could not recover from itself. StartLimit* let it keep
+# retrying instead of being put in a failed state after a burst.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+# SIGTERM is what `daemon run` shuts down cleanly on: it finishes the chunk in
+# flight, releases the control socket and removes the pid file.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

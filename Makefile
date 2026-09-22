@@ -73,3 +73,86 @@ lint:
 hooks:
 	git config core.hooksPath .githooks
 	@echo "git hooks installed from .githooks"
+
+# Release artifacts for every supported platform. Each binary is built with
+# CGO_ENABLED=0 for the same reason `release` is: a dynamically linked build
+# made on NixOS names its interpreter by an absolute /nix/store path, so a copy
+# of it cannot start on any other machine. -trimpath keeps the build machine's
+# paths out of the binary, and the version and commit stamp are the same ones
+# `syncthis version` reports.
+#
+# linux/arm is GOARM=7, the instruction set of the NAS and single-board boxes
+# that are not arm64.
+DIST_DIR     := dist
+DIST_VERSION := $(if $(VERSION),$(VERSION),dev)
+# One entry per artifact: GOOS:GOARCH:GOARM, with an empty GOARM where it does
+# not apply.
+DIST_TARGETS := linux:amd64: linux:arm64: linux:arm:7 darwin:amd64: darwin:arm64: windows:amd64:
+
+.PHONY: dist dist-verify dist-clean
+
+dist: dist-clean
+	@mkdir -p $(DIST_DIR)/build
+	@for t in $(DIST_TARGETS); do \
+	  os=$${t%%:*}; rest=$${t#*:}; arch=$${rest%%:*}; arm=$${rest##*:}; \
+	  name=syncthis_$(DIST_VERSION)_$$os-$$arch$${arm:+v$$arm}; \
+	  bin=syncthis; [ "$$os" = windows ] && bin=syncthis.exe; \
+	  echo "building $$name"; \
+	  mkdir -p $(DIST_DIR)/build/$$name; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$arm \
+	    go build -trimpath -ldflags "$(LDFLAGS)" \
+	      -o $(DIST_DIR)/build/$$name/$$bin ./cmd/syncthis || exit 1; \
+	  if [ "$$os" = windows ]; then \
+	    go run _scripts/dist.go zip $(DIST_DIR)/$$name.zip $(DIST_DIR)/build/$$name/$$bin || exit 1; \
+	  else \
+	    tar -czf $(DIST_DIR)/$$name.tar.gz -C $(DIST_DIR)/build/$$name $$bin || exit 1; \
+	  fi; \
+	done
+	@go run _scripts/dist.go sums $(DIST_DIR)
+	@rm -rf $(DIST_DIR)/build
+	@ls -l $(DIST_DIR)
+
+# Checks every artifact `dist` produced: the digests match, each archive
+# extracts, and the binary inside is statically linked and built for the
+# platform its name claims. The binary for this machine's own platform is run,
+# so the stamped version is checked against what the build asked for; a binary
+# for another platform is only inspected, because this machine cannot run it.
+dist-verify:
+	@go run _scripts/dist.go check $(DIST_DIR)
+	@rm -rf $(DIST_DIR)/verify
+	@host_os=$$(go env GOOS); host_arch=$$(go env GOARCH); \
+	for t in $(DIST_TARGETS); do \
+	  os=$${t%%:*}; rest=$${t#*:}; arch=$${rest%%:*}; arm=$${rest##*:}; \
+	  name=syncthis_$(DIST_VERSION)_$$os-$$arch$${arm:+v$$arm}; \
+	  bin=syncthis; [ "$$os" = windows ] && bin=syncthis.exe; \
+	  dir=$(DIST_DIR)/verify/$$name; mkdir -p $$dir; \
+	  if [ "$$os" = windows ]; then \
+	    unzip -q -o $(DIST_DIR)/$$name.zip -d $$dir || exit 1; \
+	  else \
+	    tar -xzf $(DIST_DIR)/$$name.tar.gz -C $$dir || exit 1; \
+	  fi; \
+	  echo "extract ok  $$name"; \
+	  go run _scripts/dist.go static $$dir/$$bin $$os $$arch || exit 1; \
+	  if [ "$$os" = "$$host_os" ] && [ "$$arch" = "$$host_arch" ]; then \
+	    got=$$($$dir/$$bin version) || exit 1; \
+	    case "$$got" in \
+	      *"$(DIST_VERSION)"*) echo "version ok  $$name: $$got";; \
+	      *) echo "version bad $$name: $$got, want $(DIST_VERSION)"; exit 1;; \
+	    esac; \
+	  fi; \
+	done
+	@rm -rf $(DIST_DIR)/verify
+	@echo "dist-verify: all artifacts ok"
+
+dist-clean:
+	rm -rf $(DIST_DIR)
+
+# The release image, one daemon per container. It is not the end-to-end image:
+# see the comment at the top of packaging/container/Dockerfile.
+IMAGE ?= syncthis:$(DIST_VERSION)
+
+.PHONY: container
+
+container:
+	docker build -f packaging/container/Dockerfile \
+	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
