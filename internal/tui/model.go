@@ -432,6 +432,15 @@ func short(id string) string {
 // Run starts the TUI against the given streams and returns when the user
 // quits. It is the whole entry point: cmd/syncthis's `tui` subcommand calls it
 // with the process streams and a Runner that invokes the command line.
+//
+// Nothing about this process is load-bearing for synchronization. It opens no
+// connection it keeps, holds no lock, owns no transfer and writes nothing to
+// the data directory: every screen is a command that runs, answers and is
+// over. Losing the terminal, detaching a tmux window, dropping an SSH session
+// or killing this process therefore cannot touch the daemon or a transfer in
+// flight, and a new TUI started against the same data directory is in the same
+// place the old one was after its first refresh. That claim is tested end to
+// end in internal/e2e/tui_reconnect_test.go.
 func Run(ctx context.Context, opts Options, in io.Reader, out io.Writer) error {
 	p := tea.NewProgram(
 		New(opts),
@@ -441,5 +450,21 @@ func Run(ctx context.Context, opts Options, in io.Reader, out io.Writer) error {
 		tea.WithAltScreen(),
 	)
 	_, err := p.Run()
-	return err
+	return cleanExit(err)
+}
+
+// cleanExit turns the ways a terminal can go away into a successful return. A
+// cancelled context is the process being asked to stop, and a killed program
+// is Bubble Tea's answer to the same thing; neither is a failure of
+// synchronization, and reporting one would make a dropped SSH session look
+// like a syncthis error in a log or an exit code.
+func cleanExit(err error) error {
+	switch {
+	case err == nil,
+		errors.Is(err, context.Canceled),
+		errors.Is(err, tea.ErrProgramKilled):
+		return nil
+	default:
+		return err
+	}
 }
