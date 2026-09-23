@@ -137,7 +137,7 @@ Goal: beat the baseline on the target workload.
 - [x] Implement adaptive concurrency based on disk and network measurements.
 - [x] Implement rename detection without re-uploading content.
 - [x] Replace full scans with journal watermarks where possible.
-- [ ] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured 507.3 ms median over loopback, which is a lower bound; the tailnet path needs a two-machine run. See docs/BENCH.md.
+- [x] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured 2026-09-23 between icebox and macpro-nixos over a confirmed direct tailnet path: 1028 ms median round trip over 8 trials, so about 514 ms one way, against 507 ms over loopback. The tailnet costs about 7 ms; the rest is the 500 ms debounce. See docs/BENCH.md.
 - [x] Benchmark a 1 MiB insertion into a 10 GB file transfers less than 2 MiB after caching. Measured 1,254,397 bytes into a 10 GiB file at the 64 KiB default, and under the budget at all six insertion positions swept over a 1 GiB file. See docs/BENCH.md.
 - [x] Evaluate lowering `DefaultChunkSize`, or making it size-adaptive, to close the 2 MiB insertion budget. Done: lowered from 1 MiB to 64 KiB, size-adaptive rejected on the data. Measured at eight averages and six insertion positions, against the throughput, memory and chunk index cost of an ordinary large-file transfer. See "Choosing the default chunk size" in docs/BENCH.md.
 - [x] Benchmark a 10 GB rename transfers zero payload bytes.

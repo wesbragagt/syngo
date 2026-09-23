@@ -507,13 +507,42 @@ Everything after the debounce costs about 10 ms.
 
 What this does not measure is the claim. The claim names a healthy Tailscale
 direct path, which is this path plus a tailnet round trip and WireGuard
-encryption on both ends, and measuring it needs two machines on a tailnet:
-`syncthis-bench --scenario tailscale-direct --peer-host ...`. Loopback is the
-fastest a direct connection can be, so this result is a lower bound: it rules
-nothing in and would have ruled the claim out had it come in above a second.
-The task line stays open until a two-machine run fills it in. A tailnet round
-trip between two machines on the same LAN is a few milliseconds, so the claim
-is plausible with 490 ms of headroom, but plausible is not measured.
+encryption on both ends. The two-machine measurement below fills that in.
+
+#### Ordinary document change convergence: two machines over Tailscale
+
+Date: 2026-09-23. Machines: `icebox` (AMD Ryzen 7 9700X, NixOS) and
+`macpro-nixos`, both on the same tailnet and the same LAN segment. Commit
+`bf8e3cb`, built with `make release`.
+
+The two clocks disagree by 38 to 67 ms, and the disagreement is noisy, so a
+one-way number taken by comparing timestamps across the two machines would
+carry more error than the tailnet hop it is trying to measure. This is
+measured as a round trip on one clock instead: `icebox` writes a token into
+`ping.md`, a loop on `macpro-nixos` copies whatever token it reads into
+`pong.md`, and `icebox` times from its write to reading its own token back.
+Both legs are ordinary syncs, so the round trip is two convergences plus the
+responder's own poll, and half of it is the one-way figure.
+
+```
+8 round trips of a small note, icebox -> macpro-nixos -> icebox:
+  round trips: 1029 1028 1032 1026 1029 1027 1026 1029 ms
+  median 1028 ms round trip, so about 514 ms one way
+  min 1026 ms, max 1032 ms
+```
+
+The path was direct, not relayed, confirmed while the daemons were connected:
+`syncthis network path` reported `direct` with an endpoint of
+`192.168.68.75:41641`, a LAN address, because both machines sit on the same
+subnet. `tailscale status --json` agreed: a non-empty `CurAddr`. The `Relay:
+"iad"` field on the same peer is its home DERP region, not the path in use.
+
+**The tailnet costs about 7 ms.** Loopback converges in 507 ms and two real
+machines in 514 ms, so the claim holds with roughly 486 ms of headroom. Almost
+the whole number is the 500 ms debounce: the watcher sees the save and waits
+for the burst to end before it scans. A deployment that wants a faster note
+sync should shorten the debounce, not blame the network. On a remote network,
+add the real wide-area round trip to the 514 ms.
 
 #### A 1 MiB insertion into a 10 GiB file: the 2 MiB budget holds at 64 KiB
 
