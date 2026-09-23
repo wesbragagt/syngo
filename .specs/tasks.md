@@ -220,7 +220,12 @@ Goal: ship a reliable multi-device Tailscale-first system.
       file recorded a pid that a different process had since been given, and
       the liveness check correctly said that pid was alive, so the data
       directory refused every further start. See the pid-reuse task below. The
-      soak must be run again to completion once that is fixed.
+      soak must be run again to completion once that is fixed. Re-run
+      2026-09-23 with the pid fix in place and it got much further, 1,719
+      rounds over 2h17m against 924 over 1h12m, with no pid failure. It then
+      failed differently: after the harness killed daemon a, a held two files
+      c never received (`a/f-120186.bin`, `a/f-360791.bin`) and the cluster did
+      not converge while settling. Under diagnosis; see the task below.
 - [x] Fix the stale pid file that stops a killed daemon restarting. A daemon
       killed with SIGKILL cannot run its cleanup, so `daemon.pid` survived it;
       `acquirePIDFile` then read that pid and the liveness check reported it
