@@ -42,6 +42,7 @@ $ bin/syncthis --data-dir /tmp/b/data folder add /tmp/b/docs --id docs
 
 $ bin/syncthis --data-dir /tmp/a/data daemon run &
 $ bin/syncthis --data-dir /tmp/b/data daemon run &
+$ sleep 2      # both daemons return before their listener is up
 
 $ bin/syncthis --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
 $ bin/syncthis --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
@@ -50,51 +51,21 @@ $ A=$(bin/syncthis --data-dir /tmp/a/data status --json | jq -r .device.id)
 $ B=$(bin/syncthis --data-dir /tmp/b/data status --json | jq -r .device.id)
 $ bin/syncthis --data-dir /tmp/a/data folder grant docs "$B"
 $ bin/syncthis --data-dir /tmp/b/data folder grant docs "$A"
+
+$ echo "hello from A" > /tmp/a/docs/greeting.txt
+$ sleep 10; cat /tmp/b/docs/greeting.txt
+hello from A
 ```
 
 Pairing a device and sharing a folder with it are two decisions: a folder is
 served to no device until `folder grant` names one, so without the two grants
-above the devices connect and move nothing.
+above the devices connect and move nothing. `peer add` tells the running daemon
+to reload, so both sides connect at once; the same happens after `folder add`,
+`folder set`, `folder remove` and `folder grant`. Nothing has to be restarted.
 
-`peer add` tells the running daemon to reload, so both sides connect at once;
-the same happens after `folder add`, `folder set`, `folder remove` and
-`folder grant`. Nothing has to be restarted. Write a file on one side and watch
-it appear on the other:
-
-```console
-$ echo "hello from A" > /tmp/a/docs/greeting.txt
-$ bin/syncthis --data-dir /tmp/b/data status
-```
-
-## Pairing over Tailscale
-
-On a tailnet the devices find each other by name. Check the client first:
-
-```console
-$ bin/syncthis network tailscale detect       # present, running, interface
-$ bin/syncthis network peers                  # the devices on this tailnet
-```
-
-Then run each daemon on its tailnet interface and trust the other side by its
-Tailscale host name:
-
-```console
-laptop$ bin/syncthis daemon run --interface tailscale0 &
-nas$    bin/syncthis daemon run --interface tailscale0 &
-
-laptop$ bin/syncthis peer add nas    --device-id <id of nas>
-nas$    bin/syncthis peer add laptop --device-id <id of laptop>
-
-laptop$ bin/syncthis folder grant docs <id of nas>
-nas$    bin/syncthis folder grant docs <id of laptop>
-```
-
-The name is looked up through the local Tailscale client and the address that
-answers is stored, so no firewall port is opened and no name lookup happens at
-dial time. `syncthis status --json | jq -r .device.id` prints the id each side
-pins. Nothing else in syncthis needs Tailscale: without it, give `peer add` an
-address. The full walkthrough is in
-[docs/CLI.md](docs/CLI.md#pairing-two-devices-over-tailscale).
+That is the whole thing on loopback. The install for a real device, the same
+walkthrough with the output each step prints, the Tailscale path and the exit
+codes are in [docs/INSTALL.md](docs/INSTALL.md#run-and-verify).
 
 ## What it does
 
@@ -131,7 +102,7 @@ address. The full walkthrough is in
 - [docs/INSTALL.md](docs/INSTALL.md) — how to install, configure and run it
   on NixOS, home-manager, Linux, macOS, a NAS and in a container.
 - [docs/CLI.md](docs/CLI.md) — every command, its flags, its JSON shape, the
-  exit codes, the daemon lifecycle and a pairing walkthrough over Tailscale.
+  exit codes and the daemon lifecycle.
 - [docs/TUI.md](docs/TUI.md) — the interactive interface, `syncthis tui`, and
   the command behind every key it answers to.
 - [docs/STATE.md](docs/STATE.md) — the data directory, the database schema and

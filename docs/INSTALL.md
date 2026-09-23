@@ -610,12 +610,17 @@ $ sudo systemctl start syncthis            # system unit, NixOS module included
 ```console
 $ syncthis --data-dir /tmp/sdemo/a/data daemon run > /tmp/sdemo/a.log 2>&1 &
 $ syncthis --data-dir /tmp/sdemo/b/data daemon run > /tmp/sdemo/b.log 2>&1 &
+$ sleep 2
 $ syncthis --data-dir /tmp/sdemo/a/data status --json | jq .daemon.running
+true
+$ syncthis --data-dir /tmp/sdemo/b/data status --json | jq .daemon.running
 true
 ```
 
 `daemon.running` is `true` when the daemon answers its control socket. A
-`status` that exits 3 means this data directory has no identity yet.
+`status` that exits 3 means this data directory has no identity yet. Check both
+before step 2: a backgrounded `daemon run` returns before its listener accepts,
+and a `peer add` that arrives first fails with exit 7.
 
 ### 2. Pair two devices
 
@@ -645,10 +650,13 @@ laptop$ syncthis peer add nas    --device-id JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL
 nas$    syncthis peer add laptop --device-id PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
 ```
 
-`syncthis status --json | jq -r .device.id` prints the id each side pins. A
-bare host name is looked up through the local Tailscale client and the address
-that answers is stored. Without Tailscale, give an address:
-`syncthis peer add 100.70.66.9:22000`.
+`syncthis status --json | jq -r '.device.id, .daemon.listen'` prints the id and
+the address each side pins. A bare host name is looked up through the local
+Tailscale client and the address that answers is stored. Without Tailscale,
+give an address: `syncthis peer add 100.70.66.9:22000`. Without `--device-id`
+the command prints the identity the peer presents and asks whether to trust it,
+which is the same decision made by eye; `--yes` answers it, as the loopback
+block above does.
 
 ### 3. Add a folder
 
@@ -679,6 +687,11 @@ device PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ may synchronize fold
 `peer add`, `peer remove`, `config set` and `config import` all ask the running
 daemon to reload. Nothing is restarted.
 
+A backup topology is two `folder set` calls: `--mode sendonly` on the laptop
+and `--mode receiveonly --delete-policy never` on the nas. The nas then takes
+every change the laptop makes and never removes a file, and nothing the nas
+holds travels back.
+
 ### 4. Confirm convergence
 
 Write a file on one side and read the other's report. One `jq` line covers it:
@@ -690,6 +703,10 @@ $ syncthis --data-dir /tmp/sdemo/b/data status --json | jq -c '{running: .daemon
 $ cat /tmp/sdemo/b/docs/greeting.txt
 hello from A
 ```
+
+`syncthis peer test <id of the other device>` is the narrower check: it dials
+the peer, reports the identity it presented and the latency, and exits 7 if the
+peer could not be dialled, refused the handshake or presented another identity.
 
 The file arrives on the next sync cycle, 30 seconds by default and usually
 sooner; the run above was read ten seconds after the write.

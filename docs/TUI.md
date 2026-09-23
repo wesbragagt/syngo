@@ -89,7 +89,7 @@ itself as soon as a daemon answers.
 
 A data directory with no identity answers exit 3 to `status`. That is not a
 failure, it is the state the guided walk exists for, and the TUI starts in it.
-The walk is [CLI.md's quick start](CLI.md#quick-start-on-loopback) with the
+The walk is [INSTALL.md's walkthrough](INSTALL.md#run-and-verify) with the
 commands filled in for you; each step shows the command it is about to run.
 
 | Step | What it asks | Command |
