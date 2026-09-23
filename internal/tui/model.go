@@ -29,6 +29,9 @@ const (
 	// screenNoDaemon is a device that is initialized with no daemon
 	// running. Nothing is live, so the screen says which command starts one.
 	screenNoDaemon
+	// screenSetup is the guided walk from an empty data directory to a
+	// paired, synchronized folder.
+	screenSetup
 	// screenDashboard shows devices, folders, the queue, the paths and the
 	// current error.
 	screenDashboard
@@ -68,6 +71,9 @@ type Model struct {
 	noticeErr bool
 	// quitting stops the poll from rescheduling itself.
 	quitting bool
+
+	// setup is the guided walk, which takes over when there is no identity.
+	setup setupModel
 }
 
 // New builds the root model. It does not talk to the daemon: Init does, so a
@@ -84,6 +90,7 @@ func New(opts Options) Model {
 		previous: screenDashboard,
 		width:    80,
 		height:   24,
+		setup:    newSetup(opts.Client),
 	}
 }
 
@@ -151,7 +158,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fetchStatus(m.client)
 	}
 
-	return m, nil
+	return m.routeToScreen(msg)
+}
+
+// routeToScreen passes a message to the screen that owns it.
+func (m Model) routeToScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if m.screen == screenSetup {
+		m.setup, cmd = m.setup.update(msg)
+	}
+	return m, cmd
 }
 
 // applyStatus takes one status answer and decides which screen it puts the
@@ -160,6 +176,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // fatal.
 func (m Model) applyStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		// Exit 3 is a data directory with no identity, which is not a
+		// failure but the state the guided walk exists for.
+		if ExitCode(msg.err) == ExitNotInitialized {
+			m.fatal = nil
+			m.screen = screenSetup
+			m.setup.begin()
+			return m, nil
+		}
 		m.fatal = msg.err
 		m.screen = screenFatal
 		return m, nil
@@ -168,6 +192,13 @@ func (m Model) applyStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	m.fatal = nil
 	m.status = msg.status
 	m.statusAt = time.Now()
+
+	if m.screen == screenSetup {
+		// The walk stays in charge once the identity exists: adding the
+		// folder, the peer and the authorization is the rest of it.
+		m.setup.observe(msg.status)
+		return m, nil
+	}
 
 	switch m.screen {
 	case screenLoading, screenFatal, screenNoDaemon:
@@ -187,6 +218,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
 		return m, tea.Quit
+	}
+
+	if m.screen == screenSetup {
+		if m.setup.done {
+			m.screen = screenDashboard
+			return m, fetchStatus(m.client)
+		}
+		return m.routeToScreen(msg)
 	}
 
 	switch msg.String() {
@@ -212,6 +251,8 @@ func (m Model) View() string {
 		body = m.fatalView()
 	case screenNoDaemon:
 		body = m.noDaemonView()
+	case screenSetup:
+		body = m.setup.view(m.width)
 	case screenDashboard:
 		body = m.dashboardView()
 	}
@@ -236,6 +277,8 @@ func (m Model) footer() string {
 // keyHelp lists the keys the current screen answers to.
 func (m Model) keyHelp() string {
 	switch m.screen {
+	case screenSetup:
+		return m.setup.help()
 	case screenFatal, screenNoDaemon:
 		return "r refresh · q quit"
 	default:

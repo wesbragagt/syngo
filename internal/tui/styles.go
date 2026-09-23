@@ -14,3 +14,18 @@ var (
 	styleErr   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleCmd   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 )
+
+// stateStyle colours a folder or peer state word. Anything unrecognized is
+// left plain rather than guessed at.
+func stateStyle(state string) lipgloss.Style {
+	switch state {
+	case "idle", "connected":
+		return styleOK
+	case "scanning", "syncing", "connecting":
+		return styleWarn
+	case "error", "unreachable":
+		return styleErr
+	default:
+		return styleDim
+	}
+}

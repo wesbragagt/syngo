@@ -67,11 +67,31 @@ func TestModel_QuittingStopsThePoll(t *testing.T) {
 	}
 }
 
-// TestModel_NoIdentityIsAnErrorScreenNamingInit is the uninitialized data
-// directory: exit 3 from the command line.
-func TestModel_NoIdentityIsAnErrorScreenNamingInit(t *testing.T) {
+// TestModel_NoIdentityStartsTheGuidedSetup is the uninitialized data
+// directory: exit 3 from the command line is not a failure, it is the state
+// the guided walk exists for.
+func TestModel_NoIdentityStartsTheGuidedSetup(t *testing.T) {
 	runner := newFakeRunner().failsWith("status", ExitNotInitialized,
-		"data directory is not initialized; run syncthis init")
+		"data directory is not initialized")
+	m := New(Options{Client: fakeClient(runner)})
+	m, _ = drive(t, m, fetchStatus(m.client)())
+
+	if m.screen != screenSetup {
+		t.Fatalf("screen is %v, want the guided setup", m.screen)
+	}
+	view := m.View()
+	if !strings.Contains(view, "syncthis setup") {
+		t.Errorf("the setup screen did not render:\n%s", view)
+	}
+	if !strings.Contains(view, "init") {
+		t.Errorf("the first step does not name `init`:\n%s", view)
+	}
+}
+
+// TestModel_AFailureThatIsNotExitThreeIsFatal keeps the error screen for the
+// failures the TUI genuinely cannot act on.
+func TestModel_AFailureThatIsNotExitThreeIsFatal(t *testing.T) {
+	runner := newFakeRunner().failsWith("status", ExitError, "database is locked")
 	m := New(Options{Client: fakeClient(runner)})
 	m, _ = drive(t, m, fetchStatus(m.client)())
 
@@ -79,11 +99,11 @@ func TestModel_NoIdentityIsAnErrorScreenNamingInit(t *testing.T) {
 		t.Fatalf("screen is %v, want the error screen", m.screen)
 	}
 	view := m.View()
-	if !strings.Contains(view, "syncthis init") {
-		t.Errorf("the error screen does not name the command that fixes it:\n%s", view)
+	if !strings.Contains(view, "database is locked") || !strings.Contains(view, "exit code 1") {
+		t.Errorf("the error screen hides the reason or the code:\n%s", view)
 	}
-	if !strings.Contains(view, "exit code 3") {
-		t.Errorf("the error screen does not report the exit code:\n%s", view)
+	if !strings.Contains(view, "syncthis --data-dir /tmp/data status") {
+		t.Errorf("the error screen does not name the command that failed:\n%s", view)
 	}
 }
 
