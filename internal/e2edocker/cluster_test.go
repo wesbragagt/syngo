@@ -329,6 +329,25 @@ func (c *Cluster) Pair(a, b int) {
 	c.T.Helper()
 	c.Devices[a].addPeer(c.Devices[b])
 	c.Devices[b].addPeer(c.Devices[a])
+	c.Devices[a].grant(c.Devices[b])
+	c.Devices[b].grant(c.Devices[a])
+}
+
+// grant authorizes a paired device for every folder this one holds.
+//
+// It is not optional and it is not part of `peer add`: since folder-level
+// device authorization landed, a device serves a folder only to the devices
+// that folder names, so a pair that merely knows each other connects, stays
+// connected and moves nothing. internal/e2e/scale_pair_test.go writes the
+// same grant rows directly for the same reason.
+func (d *Device) grant(peer *Device) {
+	d.c.T.Helper()
+	if !d.Spec.NoFolder {
+		d.RunOK("folder", "grant", folderID, peer.ID)
+	}
+	if d.Spec.ExtraFolder {
+		d.RunOK("folder", "grant", extraID, peer.ID)
+	}
 }
 
 // Unpair makes two devices forget each other.
