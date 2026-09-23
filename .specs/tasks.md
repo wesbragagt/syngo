@@ -214,10 +214,21 @@ Goal: ship a reliable multi-device Tailscale-first system.
       adr-006: what a soak finds is a function of how many change-and-break
       rounds go by, and the container soak forces a partition, a shaped link
       or a daemon kill every fifth round, which is denser than a personal
-      tailnet sees in a month. Not run: `make e2e-docker-soak MINUTES=480`
-      needs eight uninterrupted hours of this machine and was not available in
-      the session that rescoped it. The target is recorded; the measurement is
-      not, and this line stays open until it is.
+      tailnet sees in a month. Run 2026-09-23 and it FAILED after 72 minutes
+      and 924 rounds: a daemon killed by the harness could not restart, exiting
+      6 with `daemon already running with pid 14 (/data/daemon.pid)`. The pid
+      file recorded a pid that a different process had since been given, and
+      the liveness check correctly said that pid was alive, so the data
+      directory refused every further start. See the pid-reuse task below. The
+      soak must be run again to completion once that is fixed.
+- [ ] Fix the stale pid file that stops a killed daemon restarting. A daemon
+      killed with SIGKILL cannot run its cleanup, so `daemon.pid` survives it.
+      `acquirePIDFile` then reads that pid and `processAlive` reports it alive,
+      because a container recycles low pids fast and an unrelated process now
+      holds it, and the daemon refuses to start against its own data directory.
+      Not container-only: any system that recycles pids can hit it, and a power
+      loss or an OOM kill could leave a data directory unstartable until the
+      file is deleted by hand. Found by the soak above, 2026-09-23.
 - [x] Run 1,000 forced network interruptions. Rescoped from 10,000 by adr-006
       and already passing:
       `TestScale_InterruptionCyclesWithoutCorruption` SIGKILLs the receiving
