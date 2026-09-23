@@ -2,9 +2,11 @@ package syncer_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 )
 
@@ -126,5 +128,60 @@ func TestSync_LocalSourceThatDoesNotHashRightIsDownloaded(t *testing.T) {
 	}
 	if files := d.tempFiles(); len(files) != 0 {
 		t.Fatalf("partial files left behind: %v", files)
+	}
+}
+
+// TestSync_LocalCopyDropsTheIndexOfTheVersionItReplaced covers the one writer
+// that puts content at a path without knowing how that content is cut: the
+// bytes come from another path of the folder, so there is no chunk list to
+// record. The index the path already had describes the version just overwritten
+// and has to go, otherwise it would be offered to a peer and, whenever the two
+// versions are the same length, would pass every check the offsets allow.
+func TestSync_LocalCopyDropsTheIndexOfTheVersionItReplaced(t *testing.T) {
+	ctx := context.Background()
+	src := newSource(t, folder.ModeSendReceive)
+	kept := payload(chunkSize*4, 51)
+	replaced := payload(chunkSize*4, 52)
+	src.addFile(t, "a.bin", kept)
+	src.addFile(t, "b.bin", replaced)
+
+	d, conn := newDest(t, src.server)
+	if summary := d.sync(t, conn); summary.Pulled != 2 {
+		t.Fatalf("first sync = %+v, want both files pulled", summary)
+	}
+	stale, err := d.store.FileChunks(ctx, d.folder.ID, "b.bin")
+	if err != nil {
+		t.Fatalf("the download did not index b.bin: %v", err)
+	}
+
+	// b.bin now holds a.bin's content, which this device already has: the
+	// pull is satisfied from the local copy and never sees a chunk list.
+	src.addFile(t, "b.bin", kept)
+	if summary := d.sync(t, conn); summary.Pulled != 1 {
+		t.Fatalf("second sync = %+v, want b.bin pulled", summary)
+	}
+	if d.events.Count("transfer.local_copy") != 1 {
+		t.Fatalf("%d local copy events, want the pull to have been served from disk",
+			d.events.Count("transfer.local_copy"))
+	}
+	if string(d.content(t, "b.bin")) != string(kept) {
+		t.Fatal("b.bin does not hold the content the peer announced")
+	}
+
+	entry, err := d.store.GetFile(ctx, d.folder.ID, "b.bin")
+	if err != nil {
+		t.Fatalf("entry of b.bin: %v", err)
+	}
+	switch ix, err := d.store.FileChunks(ctx, d.folder.ID, "b.bin"); {
+	case errors.Is(err, ports.ErrNotFound):
+	case err != nil:
+		t.Fatalf("chunks of b.bin: %v", err)
+	default:
+		if derr := ix.Describes(entry.Hash, entry.Size); derr != nil {
+			t.Fatalf("b.bin kept an index of the version it replaced: %v", derr)
+		}
+	}
+	if stale.Hash == entry.Hash {
+		t.Fatal("the two versions hash the same, the case needs two contents")
 	}
 }

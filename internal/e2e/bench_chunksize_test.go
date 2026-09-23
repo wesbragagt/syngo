@@ -101,7 +101,7 @@ func waitIndexed(t *testing.T, n *node, path string) int {
 	var chunks int
 	waitFor(t, "the chunk index of "+path+" on "+n.name, convergeTimeout, func() bool {
 		found, err := n.App.Store.FileChunks(context.Background(), folderID, path)
-		chunks = len(found)
+		chunks = len(found.Chunks)
 		return err == nil && chunks > 0
 	})
 	return chunks

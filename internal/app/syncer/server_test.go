@@ -359,3 +359,56 @@ func TestChunk_NotFoundAndPolicyRefusals(t *testing.T) {
 		t.Fatalf("reason = %s, want paused", refused.Reason)
 	}
 }
+
+// TestChunks_AnIndexCutFromOtherContentIsNotServed is the case geometry alone
+// cannot see. The index of a path holds offsets, lengths and chunk hashes; a
+// list left behind by an earlier version of the file partitions a file of that
+// length exactly as well as a fresh one, so a check that only adds the lengths
+// up serves a peer the hashes of bytes this device no longer holds. The peer's
+// own per-chunk check then rejects every chunk it asked for and the pull fails.
+//
+// The index records the whole-file hash it was cut from, so the server can tell
+// the two apart and reads the file instead.
+func TestChunks_AnIndexCutFromOtherContentIsNotServed(t *testing.T) {
+	ctx := context.Background()
+	s := newSource(t, folder.ModeSendReceive)
+
+	// The version the index is written for.
+	before := payload(chunkSize*8, 61)
+	old := s.addFile(t, "same-length.bin", before)
+	stale, err := s.chunkListOf(ctx, "same-length.bin", old.Hash)
+	if err != nil {
+		t.Fatalf("chunk list of the first version: %v", err)
+	}
+	if err := s.store.SetFileChunks(ctx, s.folder.ID, "same-length.bin",
+		transfer.ChunkIndex{Hash: old.Hash, Chunks: stale}); err != nil {
+		t.Fatalf("index the first version: %v", err)
+	}
+
+	// The file is replaced by different content of exactly the same length
+	// and the entry is rewritten, but nothing rewrites the index: a crash
+	// between the two writes, or a writer that installs bytes it did not
+	// cut itself.
+	after := payload(chunkSize*8, 62)
+	if len(after) != len(before) {
+		t.Fatalf("the two versions are %d and %d bytes, the case needs one length", len(before), len(after))
+	}
+	now := s.addFile(t, "same-length.bin", after)
+	if now.Hash == old.Hash {
+		t.Fatal("the two versions hash the same, the case needs two contents")
+	}
+
+	got, err := s.chunkListOf(ctx, "same-length.bin", now.Hash)
+	if err != nil {
+		t.Fatalf("chunk list of the second version: %v", err)
+	}
+	if err := transfer.ValidateChunks(now.Size, got); err != nil {
+		t.Fatalf("the served list does not partition the file: %v", err)
+	}
+	for _, c := range got {
+		if want := s.hasher.SumBytes(after[c.Offset : c.Offset+int64(c.Length)]); c.Hash != want {
+			t.Fatalf("chunk %d is served as %s, the file holds %s: the stale index was served",
+				c.Index, c.Hash, want)
+		}
+	}
+}

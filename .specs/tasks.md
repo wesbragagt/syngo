@@ -308,11 +308,24 @@ Goal: ship a reliable multi-device Tailscale-first system.
       stops every stale loop before it starts any new one, and
       `forgetPeerState` already refuses to drop a state another loop owns.
       20 of 20 clean runs of the reproducing command afterwards.
-- [ ] `transfer.ValidateChunks` checks the geometry of a chunk list against the
+- [x] `transfer.ValidateChunks` checked the geometry of a chunk list against the
       entry size but not its hashes, so a stale index whose cut happens to
-      cover the right number of bytes is served to a peer and only caught by
+      cover the right number of bytes was served to a peer and only caught by
       the receiver's per-chunk hash check, which costs a failed pull and a
       repair. Noticed while closing the chunk-index loose end, 2026-09-23.
+      Reachable without a crash: `Puller.installLocal` wrote the entry of a
+      path filled from a local copy and never touched that path's index, so a
+      rename or copy on the peer onto a path this device already held left the
+      previous version's cut in place, and the two versions only had to be the
+      same length. `ApplyScan` writes entries and index in one transaction and
+      is not affected; the puller's download path writes them in two, which is
+      a crash window. Fixed 2026-09-23 by making the index self-describing: a
+      chunk row carries the whole-file hash it was cut from (migration 012,
+      existing rows stamped from their file row), `transfer.ChunkIndex.Describes`
+      checks that hash before the geometry, and `Server.Chunks` re-chunks from
+      disk when the index does not describe the entry. `installLocal` drops the
+      index of the version it replaces. No wire change: the chunk list on the
+      wire is unchanged and the hash is never sent.
 - [x] Fix the stale pid file that stops a killed daemon restarting. A daemon
       killed with SIGKILL cannot run its cleanup, so `daemon.pid` survived it;
       `acquirePIDFile` then read that pid and the liveness check reported it

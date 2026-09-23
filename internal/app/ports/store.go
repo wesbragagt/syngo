@@ -69,11 +69,12 @@ type ScanWrite struct {
 	// change that only moved permission bits hands out no counter and is
 	// not provisional. See manifest.Entry.Provisional.
 	Provisional bool
-	// Chunks is how the scan cut each file it read, by path. A path that
+	// Chunks is how the scan cut each file it read, by path, each with the
+	// hash of the content it was cut from. A path that
 	// is in Upserts but not here kept the chunks the index already has,
 	// which is what an unchanged file does. The chunk index is part of the
 	// scan's write so a folder never records content it cannot describe.
-	Chunks map[string][]transfer.Chunk
+	Chunks map[string]transfer.ChunkIndex
 }
 
 // TransferFilter narrows a transfer listing. Zero values mean "no filter".
@@ -253,16 +254,20 @@ type ChunkPlacement struct {
 // the puller before it asks a peer for anything.
 type ChunkStore interface {
 	// FileChunks returns how a file of this device was cut, in index
-	// order, or ErrNotFound when the index has nothing for that path.
-	FileChunks(ctx context.Context, id folder.ID, path string) ([]transfer.Chunk, error)
+	// order, together with the hash of the content it was cut from, or
+	// ErrNotFound when the index has nothing for that path. The caller
+	// checks that hash against the entry it is serving: an index whose
+	// geometry still fits says nothing about which bytes it describes.
+	FileChunks(ctx context.Context, id folder.ID, path string) (transfer.ChunkIndex, error)
 	// FindChunk returns somewhere this device holds a chunk with that
 	// hash, or ErrNotFound. The caller re-reads and re-hashes the bytes
 	// before using them: the index is only as fresh as the last scan.
 	FindChunk(ctx context.Context, h manifest.Hash) (ChunkPlacement, error)
-	// SetFileChunks replaces the chunk index of one path. It is called
-	// with the path's file row already written, so the index never names
-	// content the folder does not have.
-	SetFileChunks(ctx context.Context, id folder.ID, path string, chunks []transfer.Chunk) error
+	// SetFileChunks replaces the chunk index of one path with a cut of the
+	// content named by ix.Hash. It is called with the path's file row
+	// already written, so the index never names content the folder does
+	// not have. An index with no chunks clears the path.
+	SetFileChunks(ctx context.Context, id folder.ID, path string, ix transfer.ChunkIndex) error
 	// IndexedPaths returns the paths of a folder the chunk index covers.
 	// A scan uses it to tell a file it has already chunked from one whose
 	// content it knows but whose chunks it does not, which is every file

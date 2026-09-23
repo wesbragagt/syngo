@@ -83,3 +83,27 @@ func FixedChunks(size int64, chunkSize int) []Chunk {
 	}
 	return out
 }
+
+// ChunkIndex is a stored chunk list together with the whole-file hash of the
+// content it was cut from. The hash is what makes the list self-describing: a
+// list of offsets and lengths says nothing about which bytes it was cut from,
+// so an index left behind by an earlier version of a file is indistinguishable
+// from a fresh one whenever the two versions happen to be the same length.
+type ChunkIndex struct {
+	Hash   manifest.Hash
+	Chunks []Chunk
+}
+
+// ErrStaleIndex reports a chunk index that was cut from content other than the
+// one it is being read for.
+var ErrStaleIndex = errors.New("stale chunk index")
+
+// Describes reports whether the index was cut from exactly this content: the
+// hash it was stored with is the file's, and its chunks partition a file of
+// that size. A zero-byte file is described by an empty index.
+func (ix ChunkIndex) Describes(hash manifest.Hash, size int64) error {
+	if ix.Hash != hash {
+		return fmt.Errorf("%w: cut from %s, the file is %s", ErrStaleIndex, ix.Hash.String(), hash.String())
+	}
+	return ValidateChunks(size, ix.Chunks)
+}

@@ -443,3 +443,79 @@ func TestMigrate_7ToCurrent_StartsWithAnEmptyChunkIndexAndResumesOldTransfers(t 
 		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
 	}
 }
+
+// writeVersion11ChunkDB builds a database at version 11 holding one file and
+// the chunk index of it, which is what every database written before the index
+// recorded the content it was cut from looks like.
+func writeVersion11ChunkDB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	for version := 1; version <= 11; version++ {
+		script, err := sqlitestore.MigrationSQL(version)
+		if err != nil {
+			t.Fatalf("read migration %d: %v", version, err)
+		}
+		if _, err := db.ExecContext(ctx, script); err != nil {
+			t.Fatalf("apply migration %d: %v", version, err)
+		}
+	}
+	for _, stmt := range []string{
+		`INSERT INTO schema_version (version) VALUES (11)`,
+		`INSERT INTO folders (id, path, label, mode, delete_policy, include_hidden, symlink_policy,
+			keep_empty_dirs, paused, last_error, created_at)
+		 VALUES ('docs', '/srv/docs', '', 'sendreceive', 'propagate', 0, 'store', 1, 0, '', 1)`,
+		`INSERT INTO folder_sequence (folder_id, next) VALUES ('docs', 2)`,
+		`INSERT INTO files (folder_id, rel_path, kind, size, mtime_ns, mode, hash, sequence, updated_at)
+		 VALUES ('docs', 'held.bin', 1, 8192, 1, 420, '` + strings.Repeat("aa", 32) + `', 1, 1)`,
+		`INSERT INTO file_chunks (folder_id, rel_path, idx, start_offset, byte_length, hash)
+		 VALUES ('docs', 'held.bin', 0, 0, 8192, '` + strings.Repeat("cc", 32) + `')`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("prepare version 11 database: %v", err)
+		}
+	}
+	return path
+}
+
+// TestMigrate_11ToCurrent_StampsTheIndexWithTheHashItWasCutFrom is what keeps
+// the upgrade free. A chunk row written before the index recorded its content
+// was written for the file row it hangs off, so the migration stamps it with
+// that row's hash rather than throwing the index away and making every path be
+// read again. The index goes on being served, and a row the next scan or
+// download rewrites carries the hash that writer cut from.
+func TestMigrate_11ToCurrent_StampsTheIndexWithTheHashItWasCutFrom(t *testing.T) {
+	ctx := context.Background()
+	path := writeVersion11ChunkDB(t)
+
+	store, err := sqlitestore.Open(ctx, path, sqlitestore.Options{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	stored, err := store.GetFile(ctx, folder.ID("docs"), "held.bin")
+	if err != nil {
+		t.Fatalf("file after the migration: %v", err)
+	}
+	ix, err := store.FileChunks(ctx, folder.ID("docs"), "held.bin")
+	if err != nil {
+		t.Fatalf("chunks after the migration: %v", err)
+	}
+	if len(ix.Chunks) != 1 {
+		t.Fatalf("%d chunks, want the one the database had", len(ix.Chunks))
+	}
+	if err := ix.Describes(stored.Hash, stored.Size); err != nil {
+		t.Fatalf("the migrated index does not describe its own file row: %v", err)
+	}
+	if got := schemaVersionOf(t, path); got != sqlitestore.SchemaVersion {
+		t.Fatalf("schema version = %d, want %d", got, sqlitestore.SchemaVersion)
+	}
+}

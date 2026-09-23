@@ -997,7 +997,8 @@ func TestScan_RetryLeavesTheChunkIndexOfWhatAnotherWriterWrote(t *testing.T) {
 			if err := e.store.UpsertEntries(ctx, e.folder.ID, []manifest.Entry{winner}); err != nil {
 				t.Errorf("install: %v", err)
 			}
-			if err := e.store.SetFileChunks(ctx, e.folder.ID, winner.Path, winnerChunks); err != nil {
+			ix := transfer.ChunkIndex{Hash: winner.Hash, Chunks: winnerChunks}
+			if err := e.store.SetFileChunks(ctx, e.folder.ID, winner.Path, ix); err != nil {
 				t.Errorf("index the install: %v", err)
 			}
 		})
@@ -1016,7 +1017,8 @@ func TestScan_RetryLeavesTheChunkIndexOfWhatAnotherWriterWrote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chunks of note.txt: %v", err)
 	}
-	if len(got) != 1 || got[0].Hash != winner.Hash || int64(got[0].Length) != winner.Size {
+	if got.Hash != winner.Hash || len(got.Chunks) != 1 || got.Chunks[0].Hash != winner.Hash ||
+		int64(got.Chunks[0].Length) != winner.Size {
 		t.Errorf("the chunk index of note.txt is %v, want the cut of the entry the store holds (%v)",
 			got, winnerChunks)
 	}

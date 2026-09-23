@@ -758,7 +758,8 @@ func (p *Puller) pull(ctx context.Context, conn ports.PeerConn, f folder.Folder,
 		// disk, without waiting for a scan.
 		if a.entry.Kind == manifest.KindFile && !a.entry.Deleted &&
 			a.entry.Hash == t.Hash && a.entry.Size == t.Size {
-			if err := p.store.SetFileChunks(ctx, f.ID, a.entry.Path, t.Chunks); err != nil {
+			ix := transfer.ChunkIndex{Hash: t.Hash, Chunks: t.Chunks}
+			if err := p.store.SetFileChunks(ctx, f.ID, a.entry.Path, ix); err != nil {
 				return 0, err
 			}
 		}
@@ -867,6 +868,13 @@ func (p *Puller) installLocal(ctx context.Context, f folder.Folder, peer device.
 	}
 	a := fromRemote(entry, item, peer)
 	if err := p.record(ctx, f.ID, a); err != nil {
+		return err
+	}
+	// The copy was made from another path's bytes, so this path's cut is
+	// not known here; whatever the index held describes the version that
+	// was at the path and was just replaced. It is dropped, and the next
+	// scan fills it in.
+	if err := p.store.SetFileChunks(ctx, f.ID, item.Path, transfer.ChunkIndex{}); err != nil {
 		return err
 	}
 	p.bases.Remember(ctx, f, recorded(a))

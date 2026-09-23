@@ -174,10 +174,11 @@ func (p *Puller) installMerged(ctx context.Context, f folder.Folder, item syncpl
 		return manifest.Entry{}, err
 	}
 	// The chunk index still describes the version that was at the path, and
-	// the merged file is the same size, so nothing downstream would notice:
-	// a peer asking for the chunk list would be served hashes the file no
-	// longer holds. The index is dropped, and the next scan fills it in.
-	if err := p.store.SetFileChunks(ctx, f.ID, item.Path, nil); err != nil {
+	// the merged file may be the same size. The index records the hash it
+	// was cut from, so a peer would not be served it, but a stale row is
+	// still a wasted read for deduplication. The index is dropped, and the
+	// next scan fills it in.
+	if err := p.store.SetFileChunks(ctx, f.ID, item.Path, transfer.ChunkIndex{}); err != nil {
 		return manifest.Entry{}, err
 	}
 	p.removeTemp(t.TempPath)

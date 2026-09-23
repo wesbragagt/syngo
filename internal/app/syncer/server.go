@@ -139,25 +139,30 @@ func (s *Server) Chunks(ctx context.Context, peer device.ID, req ports.ChunkList
 		return nil, nil
 	}
 
-	chunks, err := s.store.FileChunks(ctx, req.FolderID, req.Path)
+	ix, err := s.store.FileChunks(ctx, req.FolderID, req.Path)
 	switch {
 	case err == nil:
-		if verr := transfer.ValidateChunks(entry.Size, chunks); verr == nil {
+		verr := ix.Describes(entry.Hash, entry.Size)
+		if verr == nil {
 			s.log.Debug("served chunk list", "peer", peer.Short(), "folder", req.FolderID,
-				"path", req.Path, "chunks", len(chunks), "source", "index")
-			return chunks, nil
+				"path", req.Path, "chunks", len(ix.Chunks), "source", "index")
+			return ix.Chunks, nil
 		}
-		// The index disagrees with the entry, which a crash between
-		// two writes can leave behind. Reading the file is always
-		// right, so it is what answers.
-		s.log.Warn("chunk index disagrees with the file entry, re-chunking",
-			"folder", req.FolderID, "path", req.Path)
+		// The index was cut from other content, or does not partition
+		// the entry at all: a writer that put a file row down and did
+		// not get to the index. Before the index recorded what it was
+		// cut from, an earlier version of the path that happened to be
+		// the same length passed this check and the peer was sent a cut
+		// of bytes this device no longer holds. Reading the file is
+		// always right, so it is what answers.
+		s.log.Warn("chunk index does not describe the file entry, re-chunking",
+			"folder", req.FolderID, "path", req.Path, "error", verr)
 	case errors.Is(err, ports.ErrNotFound):
 	default:
 		return nil, err
 	}
 
-	chunks, err = s.chunkFile(path.Join(f.Path, req.Path))
+	chunks, err := s.chunkFile(path.Join(f.Path, req.Path))
 	if err != nil {
 		return nil, err
 	}

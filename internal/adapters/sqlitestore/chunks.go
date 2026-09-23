@@ -11,24 +11,28 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
-// SetFileChunks replaces the chunk index of one path. An empty list leaves the
-// path out of the index, which is what a zero-byte file and a tombstone are.
-func (s *Store) SetFileChunks(ctx context.Context, id folder.ID, path string, chunks []transfer.Chunk) error {
+// SetFileChunks replaces the chunk index of one path with a cut of the content
+// named by ix.Hash. An index with no chunks leaves the path out of the index,
+// which is what a zero-byte file and a tombstone are.
+func (s *Store) SetFileChunks(ctx context.Context, id folder.ID, path string, ix transfer.ChunkIndex) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		return setFileChunks(ctx, tx, id, path, chunks)
+		return setFileChunks(ctx, tx, id, path, ix)
 	})
 }
 
-// setFileChunks writes one path's chunk rows inside a transaction.
-func setFileChunks(ctx context.Context, tx *sql.Tx, id folder.ID, path string, chunks []transfer.Chunk) error {
+// setFileChunks writes one path's chunk rows inside a transaction. Every row
+// carries the whole-file hash the cut was made from, so a reader can tell an
+// index of this content from one left behind by a version that happened to be
+// the same length.
+func setFileChunks(ctx context.Context, tx *sql.Tx, id folder.ID, path string, ix transfer.ChunkIndex) error {
 	if err := deleteFileChunks(ctx, tx, id, path); err != nil {
 		return err
 	}
-	for _, c := range chunks {
+	for _, c := range ix.Chunks {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO file_chunks (folder_id, rel_path, idx, start_offset, byte_length, hash)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			string(id), path, c.Index, c.Offset, c.Length, c.Hash.String()); err != nil {
+			INSERT INTO file_chunks (folder_id, rel_path, idx, start_offset, byte_length, hash, file_hash)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			string(id), path, c.Index, c.Offset, c.Length, c.Hash.String(), ix.Hash.String()); err != nil {
 			return fmt.Errorf("index chunk %d of %q in folder %q: %w", c.Index, path, id, err)
 		}
 	}
@@ -44,38 +48,48 @@ func deleteFileChunks(ctx context.Context, tx *sql.Tx, id folder.ID, path string
 	return nil
 }
 
-// FileChunks returns how a file of this device was cut, or ErrNotFound when
-// the index has nothing for that path.
-func (s *Store) FileChunks(ctx context.Context, id folder.ID, path string) ([]transfer.Chunk, error) {
+// FileChunks returns how a file of this device was cut and the whole-file hash
+// the cut was made from, or ErrNotFound when the index has nothing for that
+// path. Rows written before the file hash was recorded, and rows the migration
+// found no file row for, come back with a zero hash, which describes nothing.
+func (s *Store) FileChunks(ctx context.Context, id folder.ID, path string) (transfer.ChunkIndex, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT idx, start_offset, byte_length, hash FROM file_chunks
+		SELECT idx, start_offset, byte_length, hash, file_hash FROM file_chunks
 		WHERE folder_id = ? AND rel_path = ? ORDER BY idx`, string(id), path)
 	if err != nil {
-		return nil, fmt.Errorf("chunks of %q in folder %q: %w", path, id, err)
+		return transfer.ChunkIndex{}, fmt.Errorf("chunks of %q in folder %q: %w", path, id, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []transfer.Chunk
+	var ix transfer.ChunkIndex
 	for rows.Next() {
 		var c transfer.Chunk
-		var hashHex string
-		if err := rows.Scan(&c.Index, &c.Offset, &c.Length, &hashHex); err != nil {
-			return nil, fmt.Errorf("chunks of %q in folder %q: %w", path, id, err)
+		var hashHex, fileHex string
+		if err := rows.Scan(&c.Index, &c.Offset, &c.Length, &hashHex, &fileHex); err != nil {
+			return transfer.ChunkIndex{}, fmt.Errorf("chunks of %q in folder %q: %w", path, id, err)
 		}
 		h, err := manifest.ParseHash(hashHex)
 		if err != nil {
-			return nil, fmt.Errorf("chunk %d of %q in folder %q: %w", c.Index, path, id, err)
+			return transfer.ChunkIndex{}, fmt.Errorf("chunk %d of %q in folder %q: %w", c.Index, path, id, err)
 		}
 		c.Hash = h
-		out = append(out, c)
+		if fileHex != "" {
+			// Every row of one path is written by one statement, so
+			// they all carry the same file hash; an unparseable one
+			// stays zero and the index describes nothing.
+			if fh, err := manifest.ParseHash(fileHex); err == nil {
+				ix.Hash = fh
+			}
+		}
+		ix.Chunks = append(ix.Chunks, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("chunks of %q in folder %q: %w", path, id, err)
+		return transfer.ChunkIndex{}, fmt.Errorf("chunks of %q in folder %q: %w", path, id, err)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("chunks of %q in folder %q: %w", path, id, ports.ErrNotFound)
+	if len(ix.Chunks) == 0 {
+		return transfer.ChunkIndex{}, fmt.Errorf("chunks of %q in folder %q: %w", path, id, ports.ErrNotFound)
 	}
-	return out, nil
+	return ix, nil
 }
 
 // FindChunk returns somewhere this device holds a chunk with that hash. The

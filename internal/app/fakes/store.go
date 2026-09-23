@@ -29,7 +29,7 @@ type Store struct {
 	floors    map[device.ID]uint64
 	transfers map[transfer.ID]transfer.Transfer
 	// chunks is the chunk index: folder, then path, then the chunk list.
-	chunks map[folder.ID]map[string][]transfer.Chunk
+	chunks map[folder.ID]map[string]transfer.ChunkIndex
 	// bases is the merge base history: folder, then path, then the
 	// candidates in the order they were saved, oldest first.
 	bases     map[folder.ID]map[string][]ports.MergeBase
@@ -49,7 +49,7 @@ func NewStore() *Store {
 		grants:    make(map[folder.ID]map[device.ID]struct{}),
 		floors:    make(map[device.ID]uint64),
 		transfers: make(map[transfer.ID]transfer.Transfer),
-		chunks:    make(map[folder.ID]map[string][]transfer.Chunk),
+		chunks:    make(map[folder.ID]map[string]transfer.ChunkIndex),
 		bases:     make(map[folder.ID]map[string][]ports.MergeBase),
 	}
 }
@@ -352,13 +352,13 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 	if err := s.AppendChanges(ctx, id, w.Changes, w.At); err != nil {
 		return err
 	}
-	for path, chunks := range w.Chunks {
-		if err := s.SetFileChunks(ctx, id, path, chunks); err != nil {
+	for path, ix := range w.Chunks {
+		if err := s.SetFileChunks(ctx, id, path, ix); err != nil {
 			return err
 		}
 	}
 	for _, path := range w.Deleted {
-		if err := s.SetFileChunks(ctx, id, path, nil); err != nil {
+		if err := s.SetFileChunks(ctx, id, path, transfer.ChunkIndex{}); err != nil {
 			return err
 		}
 	}
@@ -695,29 +695,31 @@ func (s *Store) ListConflicts(_ context.Context, id folder.ID, includeResolved b
 }
 
 // SetFileChunks replaces the chunk index of one path.
-func (s *Store) SetFileChunks(_ context.Context, id folder.ID, path string, chunks []transfer.Chunk) error {
+func (s *Store) SetFileChunks(_ context.Context, id folder.ID, path string, ix transfer.ChunkIndex) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.chunks[id] == nil {
-		s.chunks[id] = make(map[string][]transfer.Chunk)
+		s.chunks[id] = make(map[string]transfer.ChunkIndex)
 	}
-	if len(chunks) == 0 {
+	if len(ix.Chunks) == 0 {
 		delete(s.chunks[id], path)
 		return nil
 	}
-	s.chunks[id][path] = append([]transfer.Chunk(nil), chunks...)
+	s.chunks[id][path] = transfer.ChunkIndex{
+		Hash: ix.Hash, Chunks: append([]transfer.Chunk(nil), ix.Chunks...),
+	}
 	return nil
 }
 
 // FileChunks returns how a file of this device was cut, or ErrNotFound.
-func (s *Store) FileChunks(_ context.Context, id folder.ID, path string) ([]transfer.Chunk, error) {
+func (s *Store) FileChunks(_ context.Context, id folder.ID, path string) (transfer.ChunkIndex, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chunks, ok := s.chunks[id][path]
+	ix, ok := s.chunks[id][path]
 	if !ok {
-		return nil, fmt.Errorf("chunks of %q in folder %q: %w", path, id, ports.ErrNotFound)
+		return transfer.ChunkIndex{}, fmt.Errorf("chunks of %q in folder %q: %w", path, id, ports.ErrNotFound)
 	}
-	return append([]transfer.Chunk(nil), chunks...), nil
+	return transfer.ChunkIndex{Hash: ix.Hash, Chunks: append([]transfer.Chunk(nil), ix.Chunks...)}, nil
 }
 
 // FindChunk returns somewhere this device holds a chunk with that hash. The
@@ -739,7 +741,7 @@ func (s *Store) FindChunk(_ context.Context, h manifest.Hash) (ports.ChunkPlacem
 		}
 		sort.Strings(paths)
 		for _, path := range paths {
-			for _, c := range byPath[path] {
+			for _, c := range byPath[path].Chunks {
 				if c.Hash == h {
 					return ports.ChunkPlacement{
 						FolderID: folder.ID(id), Path: path,

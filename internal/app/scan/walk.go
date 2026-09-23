@@ -90,9 +90,10 @@ type walker struct {
 	// indexed are the paths the chunk index already covers, so an unchanged
 	// file is not read again just to describe how it is cut.
 	indexed map[string]struct{}
-	// chunks is how this walk cut each file it read, by path. It becomes
-	// the chunk index of the folder.
-	chunks map[string][]transfer.Chunk
+	// chunks is how this walk cut each file it read, by path, each with the
+	// hash of the content it was cut from. It becomes the chunk index of
+	// the folder.
+	chunks map[string]transfer.ChunkIndex
 }
 
 // collect walks the subtree sub of the folder root, adding every entry that
@@ -217,7 +218,10 @@ func (w *walker) addFile(rel string, info ports.FileInfo) error {
 	if prev, ok := w.old.Entries[rel]; ok {
 		e.SyncedMode = prev.SyncedMode
 	}
-	w.chunks[rel] = chunks
+	// The hash and the cut come from one read, so the index records the
+	// content it actually describes and a later reader can tell it from a
+	// cut of some other version of this path.
+	w.chunks[rel] = transfer.ChunkIndex{Hash: hash, Chunks: chunks}
 	w.result.Hashed++
 	w.result.Bytes += info.Size
 	w.add(w.carrying(e))

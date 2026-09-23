@@ -198,3 +198,35 @@ func TestComplete(t *testing.T) {
 		}
 	})
 }
+
+// TestChunkIndex_Describes covers what geometry cannot answer: which content a
+// stored cut was made from. Two versions of a path that are the same length
+// produce chunk lists that both partition the file, so the hash the index was
+// written with is the only thing that tells them apart.
+func TestChunkIndex_Describes(t *testing.T) {
+	const size = 4 * transfer.MinChunkSize
+	fresh := transfer.ChunkIndex{
+		Hash: hashOf(1), Chunks: fixedChunks(size, transfer.MinChunkSize),
+	}
+
+	if err := fresh.Describes(hashOf(1), size); err != nil {
+		t.Fatalf("an index of this content is refused: %v", err)
+	}
+	// Same lengths, same offsets, other content: the case a length check
+	// waves through.
+	err := fresh.Describes(hashOf(2), size)
+	if !errors.Is(err, transfer.ErrStaleIndex) {
+		t.Fatalf("an index cut from other content = %v, want ErrStaleIndex", err)
+	}
+	// A cut of the right content that does not partition the file is still
+	// unusable, and is reported as the geometry error it is.
+	short := transfer.ChunkIndex{Hash: hashOf(1), Chunks: fixedChunks(size/2, transfer.MinChunkSize)}
+	if err := short.Describes(hashOf(1), size); !errors.Is(err, transfer.ErrInvalidChunks) {
+		t.Fatalf("an index that covers half the file = %v, want ErrInvalidChunks", err)
+	}
+	// A zero-byte file has no chunks, and an index with none describes it.
+	var empty transfer.ChunkIndex
+	if err := empty.Describes(manifest.Hash{}, 0); err != nil {
+		t.Fatalf("the empty index of an empty file is refused: %v", err)
+	}
+}

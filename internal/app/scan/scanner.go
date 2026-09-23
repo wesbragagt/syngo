@@ -109,7 +109,7 @@ func (s *Scanner) Scan(ctx context.Context, f folder.Folder, o Options) (Result,
 	w := &walker{
 		scanner: s, folder: f, opts: o, matcher: matcher,
 		old: old, cur: manifest.New(f.ID), result: &result,
-		indexed: indexed, chunks: make(map[string][]transfer.Chunk),
+		indexed: indexed, chunks: make(map[string]transfer.ChunkIndex),
 	}
 	subtrees := cleanPaths(o.Paths)
 	if len(subtrees) == 0 {
@@ -190,7 +190,7 @@ const persistRetries = 5
 // the write; the scan then reloads the manifest, re-diffs the tree it already
 // walked and tries again, so the change log never records the same scan twice.
 func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifest.Manifest,
-	chunks map[string][]transfer.Chunk, result *Result, now time.Time) error {
+	chunks map[string]transfer.ChunkIndex, result *Result, now time.Time) error {
 	base := old.Sequence
 	// The floor is the highest counter this device has ever handed out or
 	// seen a peer hold for it. Every version this scan writes is raised
@@ -336,11 +336,11 @@ func deferRenameTargets(changes []manifest.Change, reloaded, cur manifest.Manife
 // scan of that path are the one stale case, and the server re-chunks from disk
 // whenever the index it finds does not describe the entry, so a peer is never
 // served a cut for content the folder no longer has.
-func chunksExcept(chunks map[string][]transfer.Chunk, deferred map[string]bool) map[string][]transfer.Chunk {
+func chunksExcept(chunks map[string]transfer.ChunkIndex, deferred map[string]bool) map[string]transfer.ChunkIndex {
 	if len(deferred) == 0 {
 		return chunks
 	}
-	out := make(map[string][]transfer.Chunk, len(chunks))
+	out := make(map[string]transfer.ChunkIndex, len(chunks))
 	for p, c := range chunks {
 		if deferred[p] {
 			continue

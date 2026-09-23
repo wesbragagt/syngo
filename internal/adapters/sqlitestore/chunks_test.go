@@ -16,8 +16,18 @@ import (
 // folder does not have.
 func indexedFile(t *testing.T, store interface {
 	UpsertEntries(context.Context, folder.ID, []manifest.Entry) error
-	SetFileChunks(context.Context, folder.ID, string, []transfer.Chunk) error
+	SetFileChunks(context.Context, folder.ID, string, transfer.ChunkIndex) error
 }, id folder.ID, path string, chunks []transfer.Chunk) {
+	t.Helper()
+	indexedFileAs(t, store, id, path, hashOf(9), chunks)
+}
+
+// indexedFileAs is indexedFile with the file hash spelled out, for a test that
+// cares which content the index claims to describe.
+func indexedFileAs(t *testing.T, store interface {
+	UpsertEntries(context.Context, folder.ID, []manifest.Entry) error
+	SetFileChunks(context.Context, folder.ID, string, transfer.ChunkIndex) error
+}, id folder.ID, path string, hash manifest.Hash, chunks []transfer.Chunk) {
 	t.Helper()
 	ctx := context.Background()
 	var size int64
@@ -25,12 +35,12 @@ func indexedFile(t *testing.T, store interface {
 		size += int64(c.Length)
 	}
 	entry := manifest.Entry{
-		Path: path, Kind: manifest.KindFile, Size: size, Hash: hashOf(9), ModTime: testTime,
+		Path: path, Kind: manifest.KindFile, Size: size, Hash: hash, ModTime: testTime,
 	}
 	if err := store.UpsertEntries(ctx, id, []manifest.Entry{entry}); err != nil {
 		t.Fatalf("record %s: %v", path, err)
 	}
-	if err := store.SetFileChunks(ctx, id, path, chunks); err != nil {
+	if err := store.SetFileChunks(ctx, id, path, transfer.ChunkIndex{Hash: hash, Chunks: chunks}); err != nil {
 		t.Fatalf("index %s: %v", path, err)
 	}
 }
@@ -64,12 +74,15 @@ func TestFileChunks_RoundTripsTheBoundariesAndHashes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileChunks error: %v", err)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("%d chunks, want %d", len(got), len(want))
+	if got.Hash != hashOf(9) {
+		t.Fatalf("index describes %s, want the file hash %s", got.Hash, hashOf(9))
+	}
+	if len(got.Chunks) != len(want) {
+		t.Fatalf("%d chunks, want %d", len(got.Chunks), len(want))
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("chunk %d = %+v, want %+v", i, got[i], want[i])
+		if got.Chunks[i] != want[i] {
+			t.Fatalf("chunk %d = %+v, want %+v", i, got.Chunks[i], want[i])
 		}
 	}
 	if _, err := store.FileChunks(ctx, "docs", "absent.bin"); !errors.Is(err, ports.ErrNotFound) {
@@ -128,7 +141,7 @@ func TestFileChunks_DeletingTheFileDropsItsIndex(t *testing.T) {
 	}
 	indexedFile(t, store, "docs", "gone.bin", chunksOf([]int{512}, []byte{21}))
 
-	if err := store.SetFileChunks(ctx, "docs", "gone.bin", nil); err != nil {
+	if err := store.SetFileChunks(ctx, "docs", "gone.bin", transfer.ChunkIndex{}); err != nil {
 		t.Fatalf("clear the index: %v", err)
 	}
 	if _, err := store.FindChunk(ctx, hashOf(21)); !errors.Is(err, ports.ErrNotFound) {
@@ -159,8 +172,8 @@ func TestSetFileChunks_ReplacesTheWholeList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileChunks error: %v", err)
 	}
-	if len(got) != 1 || got[0].Hash != hashOf(34) {
-		t.Fatalf("chunks = %+v, want only the new cut", got)
+	if len(got.Chunks) != 1 || got.Chunks[0].Hash != hashOf(34) {
+		t.Fatalf("chunks = %+v, want only the new cut", got.Chunks)
 	}
 	if _, err := store.FindChunk(ctx, hashOf(32)); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("a chunk of the previous version is still offered: %v", err)

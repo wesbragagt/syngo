@@ -24,9 +24,9 @@ func TestDedup_ContentAlreadyHeldIsNeverAskedFor(t *testing.T) {
 	// The receiver already holds the same bytes under another name, cut
 	// the way the sender cut them.
 	d, conn := newDest(t, src.server)
-	d.record(t, "original.bin", data, manifest.Version{})
+	local := d.record(t, "original.bin", data, manifest.Version{})
 	if err := d.store.SetFileChunks(ctx, d.folder.ID, "original.bin",
-		src.chunkList(t, "copy.bin")); err != nil {
+		transfer.ChunkIndex{Hash: local.Hash, Chunks: src.chunkList(t, "copy.bin")}); err != nil {
 		t.Fatalf("index the local copy: %v", err)
 	}
 
@@ -56,9 +56,9 @@ func TestDedup_StaleIndexFallsBackToThePeer(t *testing.T) {
 	// The index claims a local file holds the sender's chunks, but the
 	// file on disk holds something else entirely: an edit the last scan
 	// did not see.
-	d.record(t, "stale.bin", payload(chunkSize*8, 43), manifest.Version{})
+	local := d.record(t, "stale.bin", payload(chunkSize*8, 43), manifest.Version{})
 	if err := d.store.SetFileChunks(ctx, d.folder.ID, "stale.bin",
-		src.chunkList(t, "wanted.bin")); err != nil {
+		transfer.ChunkIndex{Hash: local.Hash, Chunks: src.chunkList(t, "wanted.bin")}); err != nil {
 		t.Fatalf("plant the stale index: %v", err)
 	}
 
@@ -93,13 +93,13 @@ func TestDedup_InstalledContentIsIndexedAtOnce(t *testing.T) {
 		t.Fatalf("chunk index of the installed file: %v", err)
 	}
 	want := src.chunkList(t, "first.bin")
-	if len(indexed) != len(want) {
-		t.Fatalf("%d chunks indexed, want %d", len(indexed), len(want))
+	if len(indexed.Chunks) != len(want) {
+		t.Fatalf("%d chunks indexed, want %d", len(indexed.Chunks), len(want))
 	}
 	for i := range want {
-		if indexed[i].Offset != want[i].Offset || indexed[i].Length != want[i].Length ||
-			indexed[i].Hash != want[i].Hash {
-			t.Fatalf("indexed chunk %d = %+v, want %+v", i, indexed[i], want[i])
+		if indexed.Chunks[i].Offset != want[i].Offset || indexed.Chunks[i].Length != want[i].Length ||
+			indexed.Chunks[i].Hash != want[i].Hash {
+			t.Fatalf("indexed chunk %d = %+v, want %+v", i, indexed.Chunks[i], want[i])
 		}
 	}
 

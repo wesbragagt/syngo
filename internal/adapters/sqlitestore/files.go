@@ -397,8 +397,8 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 		// The chunk index goes in with the entries that describe the
 		// same bytes: a folder never records content it cannot say how
 		// it cut. A path the scan did not read keeps the rows it has.
-		for path, chunks := range w.Chunks {
-			if err := setFileChunks(ctx, tx, id, path, chunks); err != nil {
+		for path, ix := range w.Chunks {
+			if err := setFileChunks(ctx, tx, id, path, ix); err != nil {
 				return err
 			}
 		}

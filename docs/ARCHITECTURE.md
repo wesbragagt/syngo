@@ -135,6 +135,14 @@ path and a byte range. The index is advisory: the puller re-reads and re-hashes
 what it points at, so a row that has gone stale since the last scan costs a
 read rather than a wrong file.
 
+An index also records the whole-file hash it was cut from, because offsets and
+lengths say nothing about which bytes they describe. Two versions of a path that
+are the same length produce chunk lists that both partition the file, so a
+length check alone would let a cut of the old version be served for the new one.
+`transfer.ChunkIndex.Describes` compares the stored hash against the entry
+before checking the geometry, and `Server.Chunks` reads the file instead
+whenever they disagree.
+
 ## The transfer pipeline
 
 A download asks for several chunks of one file at once. Chunks are independent:
