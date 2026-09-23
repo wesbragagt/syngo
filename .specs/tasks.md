@@ -150,18 +150,18 @@ Goal: beat the baseline on the target workload.
 Goal: a usable terminal interface without a GUI.
 
 - [x] Define the local daemon API used by both the CLI and TUI.
-- [ ] Build the interactive TUI with Bubble Tea.
-- [ ] Add guided initialization and pairing.
-- [ ] Show live device, folder, queue, path, and error views.
-- [ ] Add conflict review and version restore screens.
-- [ ] Add searchable event logs.
-- [ ] Support reattach after SSH or terminal disconnect.
-- [ ] Document a CLI equivalent for every TUI action.
+- [x] Build the interactive TUI with Bubble Tea. `syncthis tui`, in internal/tui; see docs/TUI.md and the architecture note in docs/ARCHITECTURE.md.
+- [x] Add guided initialization and pairing.
+- [x] Show live device, folder, queue, path, and error views.
+- [x] Add conflict review and version restore screens. Restoring a version is `conflict resolve --keep local|remote|both`, the only three the command line has; the screen adds no fourth. There is no per-file version history in this program to restore from, so "version restore" means those three and nothing more.
+- [x] Add searchable event logs. Two sources, marked apart: the changes this process saw between successive `status --json` answers, and the daemon's own structured log tailed from `--log-file`. There is no event stream on the control socket to subscribe to; adding one would be a change to the daemon's API. docs/TUI.md says so.
+- [x] Support reattach after SSH or terminal disconnect.
+- [x] Document a CLI equivalent for every TUI action. docs/TUI.md, cross-linked from docs/CLI.md; internal/arch keeps internal/tui from importing the application at all, so the only path from a key press to the daemon is a documented command.
 - [x] Add `--json`, `--no-input`, and `--yes` flags.
 - [x] Add shell completion.
 - [x] Document exit codes.
-- [ ] Add a usability test: pair and sync a folder in under five minutes with no docs.
-- [ ] Add a reconnect test that drops the TUI without losing daemon state.
+- [x] Add a usability test: pair and sync a folder in under five minutes with no docs. `TestTUI_GuidedWalkPairsAndSyncsAFolder` drives the guided walk from an empty data directory to a converged folder against two real daemons, inside a 30 s wall-clock bound. It is a proxy for the human claim and the test says so in as many words: no automated test can measure a person reading, thinking and mistyping. What it does prove is that the walk works end to end, that every step is a documented command, and that nothing in it needs knowledge that is not on the screen at the time.
+- [x] Add a reconnect test that drops the TUI without losing daemon state. `TestTUI_KillingItLeavesTheDaemonAndItsTransferAlone`: two daemons as real processes, a paced 4 MiB transfer in flight, the TUI killed with SIGKILL, the daemon the same pid afterwards, the transfer completed, and a fresh TUI showing the same device, folder and peer.
 
 ## Phase 7: Multi-device hardening and release
 
