@@ -260,6 +260,7 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 // creation. Deferring the path costs nothing, because the walk's view of it is
 // stale in either direction and the next scan diffs it against the state that
 // won.
+//
 // Every path it defers is recorded in deferred, whose keys are the paths this
 // scan must not write: not the entry, and not the chunk index either. The cut
 // the walk read of such a path describes the content that lost, so writing it
@@ -294,10 +295,11 @@ func rebaseConcurrent(prev, reloaded, cur manifest.Manifest, deferred map[string
 // pair to the next scan, which reads both halves against the state that won and
 // classifies them as the one rename they are.
 //
-// The target is dropped only when the store has no entry for it, so the diff
-// sees a path that is absent on both sides, which is no change. A target the
-// store does know is one another writer wrote, and rebaseConcurrent has already
-// put the stored state of it in the tree.
+// Two conditions bound it. The source the store now holds must still have the
+// bytes that moved, so the next scan has a pair to make. And the store must
+// have no entry for the target, so the diff sees a path absent on both sides,
+// which is no change: a target the store does know is one another writer wrote,
+// and rebaseConcurrent has already put its stored state in the tree.
 func deferRenameTargets(changes []manifest.Change, reloaded, cur manifest.Manifest, deferred map[string]bool) {
 	for _, c := range changes {
 		if c.Type != manifest.Rename || !deferred[c.OldPath] || deferred[c.Path] {
@@ -306,7 +308,15 @@ func deferRenameTargets(changes []manifest.Change, reloaded, cur manifest.Manife
 		// A source the store now holds as a tombstone is gone for good:
 		// no later scan can pair it with anything, so the target is
 		// classified now rather than delayed for nothing.
-		if src, ok := reloaded.Entries[c.OldPath]; !ok || src.Deleted {
+		src, ok := reloaded.Entries[c.OldPath]
+		if !ok || src.Deleted {
+			continue
+		}
+		// Nor can a later scan pair the two when the source no longer
+		// holds the bytes that moved: what the other writer put there
+		// is different content, and the target is a create whichever
+		// scan classifies it. Delaying it would buy nothing.
+		if c.New == nil || src.Hash != c.New.Hash || src.Size != c.New.Size {
 			continue
 		}
 		if _, known := reloaded.Entries[c.Path]; known {
