@@ -375,6 +375,15 @@ Goal: ship a reliable multi-device Tailscale-first system.
 
   Covered by `TestRestore_AnEditMadeBeforeTheFirstContactIsNotLost` (30 race runs clean; with the rule disabled the edit is gone from both trees), `TestPlan_ProvisionalVersions`, `TestSync_AnEditFromAnUnconfirmedFloorIsNotOverwritten` and the scanner and store tests beside them. `TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost` is unchanged and clean over 20 race runs.
 
+- [ ] Let `folder set` change the options `folder add` accepts. `folder add`
+      takes `--include-hidden`, `--ignore`, `--symlinks` and `--no-empty-dirs`;
+      `folder set` takes none of them, so a folder's hidden-file policy, ignore
+      patterns, symlink policy and empty-directory policy are fixed at creation
+      and can only be changed by removing the folder and adding it again, which
+      throws away its database rows. Found 2026-09-23 while syncing a real
+      Obsidian vault: `.obsidian` did not sync because hidden files are off by
+      default, and there was no way to turn them on for the existing folder.
+
 ## Ongoing work
 
 Always tracked, never deferred.
