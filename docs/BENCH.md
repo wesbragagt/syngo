@@ -1,8 +1,9 @@
 # Syncthis benchmarks
 
-Phase 0 baseline: run Syncthis against the corpus and record what happened.
-This document defines the hardware, the layout, and the network scenarios. It
-does not report results yet; every item below marked "unmeasured" is a
+This document defines the hardware, the layout and the network scenarios a run
+is measured under, and records what the runs produced: the scale suite, the
+Phase 5 benchmarks, the chunk size evaluation and the two-machine tailnet
+convergence measurement are all below. An item still marked "unmeasured" is a
 placeholder until a run fills it in.
 
 ## Reference hardware
@@ -476,7 +477,7 @@ document save).
 
 | Claim | Measured | Verdict |
 | --- | --- | --- |
-| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 507.3 ms median over loopback | **not proved**: loopback, not a tailnet |
+| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 507.3 ms median over loopback; 514 ms one way between two machines over a direct tailnet path | pass |
 | 1 MiB inserted into a 10 GB file transfers less than 2 MiB after caching | 1,254,397 bytes (1.20 MiB) at the 64 KiB default | pass |
 | A 10 GB rename transfers zero payload bytes | 0 bytes | pass |
 | 100,000-file status under two seconds after incremental change | 301.6 ms slowest, 24.8 ms median | pass |
@@ -505,9 +506,10 @@ The spread is 8 ms across ten saves because the number is almost entirely the
 burst to end, scans the one path, tells the peer, and the peer pulls 24 KiB.
 Everything after the debounce costs about 10 ms.
 
-What this does not measure is the claim. The claim names a healthy Tailscale
-direct path, which is this path plus a tailnet round trip and WireGuard
-encryption on both ends. The two-machine measurement below fills that in.
+What this figure on its own does not measure is the claim. The claim names a
+healthy Tailscale direct path, which is this path plus a tailnet round trip and
+WireGuard encryption on both ends. The two-machine measurement below fills that
+in, and is what makes the verdict in the table a pass.
 
 #### Ordinary document change convergence: two machines over Tailscale
 

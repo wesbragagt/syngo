@@ -94,6 +94,8 @@ holds it open.
 | `file_chunks` | how every file of this device is cut, and the hash of each piece |
 | `conflicts` | detected divergences, one row per path both sides changed |
 | `device_counters` | the highest version counter ever seen for a device |
+| `folder_devices` | which devices each folder is served to |
+| `merge_bases` | the recent content of small text files, which a three-way merge runs against |
 
 ### Migrations
 
@@ -303,7 +305,7 @@ whose plan was just made can say what it no longer wants.
 `transfer_chunks` has one row per chunk, with the BLAKE3-256 the sender
 announced for it and the byte range the sender cut it at. The range is stored
 because chunking is content-defined: it does not follow from the size and the
-chunk size any more. A row written before migration 8 has neither, and is read
+chunk size any more. A row written before migration 9 has neither, and is read
 back the old way, from the transfer's chunk size, so a download in flight
 across the upgrade resumes instead of starting over.
 
@@ -342,7 +344,7 @@ rows, about 35 MiB at the measured per-row figure, whatever the average is. Rais
 proportion, and raises what an edit to a large file moves by about the same
 proportion.
 
-**Upgrading.** A database written before migration 8 starts with an empty
+**Upgrading.** A database written before migration 9 starts with an empty
 index. Nothing is re-downloaded for it: a transfer simply finds nothing to
 reuse, and a peer asking how a file is cut gets an answer read off the disk on
 the spot. The first scan after the upgrade fills the index in, because a file
@@ -482,8 +484,11 @@ The whole state of a device is its data directory: back it up with the daemon
 stopped, so the database has no open transaction, and copy the directory
 whole rather than the database file alone.
 
+There is no `daemon stop` subcommand: the daemon shuts down cleanly on SIGINT
+or SIGTERM, so stop its service, or signal the pid in `daemon.pid`.
+
 ```console
-$ syncthis daemon stop
+$ systemctl --user stop syncthis        # or: kill $(cat ~/.local/share/syncthis/daemon.pid)
 $ cp -a ~/.local/share/syncthis ~/backups/syncthis-2026-09-22
 ```
 
@@ -491,7 +496,7 @@ To restore, put the directory back with the daemon stopped, start the daemon
 and let it reach its peers before editing anything in the synced folders:
 
 ```console
-$ syncthis daemon stop
+$ systemctl --user stop syncthis
 $ rm -rf ~/.local/share/syncthis && cp -a ~/backups/syncthis-2026-09-22 ~/.local/share/syncthis
 $ syncthis daemon run &
 $ syncthis rescan

@@ -358,12 +358,12 @@ The primary network goal is direct peer-to-peer synchronization over the user's 
 ### Tailscale-focused commands
 
 ```bash
-docsync network tailscale detect
-docsync network peers
-docsync peer add nas.tailnet-name.ts.net --verify
-docsync peer test nas.tailnet-name.ts.net
-docsync daemon run --interface tailscale0
-docsync status --network --json
+syncthis network tailscale detect
+syncthis network peers
+syncthis peer add nas.tailnet-name.ts.net --verify
+syncthis peer test nas.tailnet-name.ts.net
+syncthis daemon run --interface tailscale0
+syncthis status --network --json
 ```
 
 Interactive mode should show each peer's Tailscale hostname, tailnet IP, online state, direct-path status, latency, and last successful transfer. It should explain when traffic is direct, DERP-relayed by Tailscale, blocked by ACLs, or failing because a node is offline.
@@ -568,7 +568,7 @@ V1 is a general file sync daemon for two or more devices connected through Tails
 
 ## Bottom line
 
-Build a Tailscale-first, Rust-based sync engine. Use Tailscale for encrypted network reachability, QUIC or another multiplexed transport over the Tailscale path, event-driven journals, BLAKE3 manifests, resumable chunk transfers, and direct peer connections. Keep application-level pairing, folder authorization, conflict safety, and audit logs inside the sync system.
+Build a Tailscale-first, Go-based sync engine (see [[adr-001-go-tech-stack]]). Use Tailscale for encrypted network reachability, QUIC or another multiplexed transport over the Tailscale path, event-driven journals, BLAKE3 manifests, resumable chunk transfers, and direct peer connections. Keep application-level pairing, folder authorization, conflict safety, and audit logs inside the sync system.
 
 The first release will validate that Syncthis meets its design goals: fast change detection (under two seconds for ordinary files), small-edit efficiency (through content-defined chunking; see [[adr-004-chunk-size-64kib]]), self-hosted P2P operation over Tailscale, explainable conflicts, and recovery after interruption. Benchmark every claim against the Phase 0 corpus.
 ---

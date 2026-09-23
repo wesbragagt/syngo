@@ -377,10 +377,10 @@ The document:
   "schema_version": 1,
   "exported_at": "2026-09-21T08:32:15Z",
   "settings": {
-    "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 262144,
+    "listen": "127.0.0.1:22000", "interface": "", "chunk_size": 65536,
     "max_file_size": 1099511627776, "rescan_interval": "10m0s",
     "sync_interval": "30s", "log_level": "info",
-    "upload_limit": 0, "download_limit": 1048576
+    "upload_limit": 0, "download_limit": 1048576, "text_merge": false
   },
   "folders": [
     {"id": "docs", "path": "/home/u/docs", "label": "", "mode": "sendreceive",
@@ -722,8 +722,9 @@ than this device admits and nothing is buffered waiting for the limit.
    listener, and removes the pid file and the socket before it returns.
 
 The folder and device tables are read when the daemon starts and again at every
-rescan interval. `folder add`, `folder set`, `folder remove`, `peer add`,
-`peer remove` and `config set` do not wait for that tick: each asks the running daemon to reload
+rescan interval. `folder add`, `folder set`, `folder remove`, `folder grant`,
+`folder revoke`, `peer add`, `peer remove`, `config set` and `config import` do
+not wait for that tick: each asks the running daemon to reload
 over the control socket, which starts and stops folder loops, dials peers that
 were added, drops peers that were removed together with the connections those
 peers had opened, announces the new folder list to the peers that are already
@@ -1383,9 +1384,17 @@ $ syncthis --data-dir /tmp/b/data daemon run &
 
 $ syncthis --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
 $ syncthis --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
+
+$ A=$(syncthis --data-dir /tmp/a/data status --json | jq -r .device.id)
+$ B=$(syncthis --data-dir /tmp/b/data status --json | jq -r .device.id)
+$ syncthis --data-dir /tmp/a/data folder grant docs "$B"
+$ syncthis --data-dir /tmp/b/data folder grant docs "$A"
 ```
 
-`peer add` tells each running daemon to reload, so both connect at once. Then:
+`peer add` tells each running daemon to reload, so both connect at once, and
+`folder grant` is what makes each side serve `docs` to the other: without it
+the two are paired and move nothing, see
+[Folder authorization](#folder-authorization). Then:
 
 ```console
 $ echo "hello from A" > /tmp/a/docs/greeting.txt
@@ -1436,7 +1445,17 @@ Both devices are on the same tailnet and have a `100.64.0.0/10` address.
    `--device-id` the command shows the identity the peer presents and asks
    whether to trust it, which is the same decision made by eye.
 
-6. Each `peer add` tells the local daemon to dial the new peer at once. Check:
+6. Share the folder with the device you just trusted. Pairing and folder
+   access are two decisions, so a folder nobody was granted is served to
+   nobody:
+
+   ```console
+   laptop$ syncthis folder grant docs <id of nas>
+   nas$    syncthis folder grant docs <id of laptop>
+   ```
+
+7. Each `peer add` and each `folder grant` tells the local daemon at once.
+   Check:
 
    ```console
    $ syncthis peer test <id of the other device>

@@ -42,6 +42,12 @@ exclusive; a start after the end wraps past midnight. A folder without windows
 pulls at any time. Outside its windows a folder still scans and still serves.
 See [CLI.md](CLI.md#sync-windows).
 
+**Folder authorization.** Which devices a folder is served to, one grant per
+pair, set with `folder grant` and withdrawn with `folder revoke`. It is
+separate from pairing: a folder nobody was granted is served to nobody, and a
+device that is not authorized is not told the folder exists. See
+[CLI.md](CLI.md#folder-authorization).
+
 **Scheduled.** The state `status` reports for a folder that is outside its sync
 windows and is otherwise idle: it is not paused, has no error and is neither
 scanning nor syncing, it is waiting for its next window.
@@ -126,8 +132,10 @@ the actions in [CLI.md](CLI.md#syncthis-sync-plan-folder---peer-id).
 
 ## Downloading
 
-**Chunk.** A fixed-size slice of a file, 1 MiB by default, verified against the
-hash the sender announced before it is written. See
+**Chunk.** A slice of a file, verified against the hash the sender announced
+before it is written. The boundaries are content-defined, so a chunk has no
+fixed length: `chunk_size` is the average a device cuts at, 64 KiB by default,
+and the sender's chunk list is what a receiver asks byte ranges out of. See
 [PROTOCOL.md](PROTOCOL.md#chunk-exchange).
 
 **Transfer.** One inbound file download, with a journal row per chunk. The

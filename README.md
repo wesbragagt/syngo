@@ -45,11 +45,21 @@ $ bin/syncthis --data-dir /tmp/b/data daemon run &
 
 $ bin/syncthis --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
 $ bin/syncthis --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
+
+$ A=$(bin/syncthis --data-dir /tmp/a/data status --json | jq -r .device.id)
+$ B=$(bin/syncthis --data-dir /tmp/b/data status --json | jq -r .device.id)
+$ bin/syncthis --data-dir /tmp/a/data folder grant docs "$B"
+$ bin/syncthis --data-dir /tmp/b/data folder grant docs "$A"
 ```
 
+Pairing a device and sharing a folder with it are two decisions: a folder is
+served to no device until `folder grant` names one, so without the two grants
+above the devices connect and move nothing.
+
 `peer add` tells the running daemon to reload, so both sides connect at once;
-the same happens after `folder add`, `folder set` and `folder remove`. Nothing
-has to be restarted. Write a file on one side and watch it appear on the other:
+the same happens after `folder add`, `folder set`, `folder remove` and
+`folder grant`. Nothing has to be restarted. Write a file on one side and watch
+it appear on the other:
 
 ```console
 $ echo "hello from A" > /tmp/a/docs/greeting.txt
@@ -74,6 +84,9 @@ nas$    bin/syncthis daemon run --interface tailscale0 &
 
 laptop$ bin/syncthis peer add nas    --device-id <id of nas>
 nas$    bin/syncthis peer add laptop --device-id <id of laptop>
+
+laptop$ bin/syncthis folder grant docs <id of nas>
+nas$    bin/syncthis folder grant docs <id of laptop>
 ```
 
 The name is looked up through the local Tailscale client and the address that
@@ -99,6 +112,9 @@ address. The full walkthrough is in
   see what diverged and decide what to keep.
 - Per-folder sync windows: `folder set docs --sync-window 22:00-06:00` pulls
   the folder at night only, while it keeps scanning and keeps serving.
+- Folder-level device authorization: a paired device sees nothing until
+  `folder grant` names it for a folder; `folder revoke` and `folder devices`
+  are the other two.
 - `config export` and `config import` move a whole configuration, folders,
   peers and settings, to another machine; identity keys are never part of it.
 - `network tailscale detect` and `network peers` report what the local

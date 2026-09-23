@@ -457,14 +457,15 @@ reaches the control socket in `/data`:
 
 ```console
 $ docker exec syncthis syncthis status --json | jq -c .daemon
-{"running":true,"pid":1,"listen":"172.17.0.2:22000","started_at":"2026-09-22T17:11:37Z","upload_limit":0,"download_limit":0}
+{"running":true,"pid":1,"listen":"172.17.0.2:22000","started_at":"2026-09-22T17:11:37Z","upload_limit":0,"download_limit":0,"listener":{"bound":true,"address":"172.17.0.2:22000","interface":"eth0","bound_at":"2026-09-22T17:11:37Z","lost_at":null,"rebinds":0,"failures":0,"error":null}}
 $ docker exec syncthis syncthis folder add /folders/docs --id docs
 added folder docs at /folders/docs
 ```
 
 The directory has to exist inside the container before `folder add`: the
 command exits 2 on a path that is not a directory, which is why the `mkdir`
-above created `/tmp/sdemo/c/folders/docs`.
+above created `/tmp/sdemo/c/folders/docs`. The folder is served to no device
+until `docker exec syncthis syncthis folder grant docs <device id>` names one.
 
 A peer outside the container reaches it at the published port, `22003` above.
 The address the daemon binds is the container's, so tell the peer the host's
@@ -660,8 +661,23 @@ $ syncthis --data-dir /tmp/sdemo/b/data folder add /tmp/sdemo/b/docs --id docs
 added folder docs at /tmp/sdemo/b/docs
 ```
 
-`folder add`, `folder set`, `folder remove`, `peer add`, `peer remove` and
-`config set` all ask the running daemon to reload. Nothing is restarted.
+Then share it with the device you paired with. Pairing and folder access are
+two decisions: a folder is served to no device until `folder grant` names one,
+so without these two lines the daemons connect and move nothing.
+
+```console
+$ syncthis --data-dir /tmp/sdemo/a/data folder grant docs JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
+device JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA may synchronize folder docs
+$ syncthis --data-dir /tmp/sdemo/b/data folder grant docs PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
+device PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ may synchronize folder docs
+```
+
+`syncthis folder devices docs` shows what a folder is authorized for, and
+`folder revoke` takes it back.
+
+`folder add`, `folder set`, `folder remove`, `folder grant`, `folder revoke`,
+`peer add`, `peer remove`, `config set` and `config import` all ask the running
+daemon to reload. Nothing is restarted.
 
 ### 4. Confirm convergence
 
