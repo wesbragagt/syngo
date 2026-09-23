@@ -244,7 +244,7 @@ Goal: ship a reliable multi-device Tailscale-first system.
       direction, and the next scan diffs it against the state that won.
       `TestScan_RetryKeepsWhatAnotherWriterInstalled` reproduces it
       deterministically and fails against the old re-diff.
-- [ ] Rebase the chunk index with the entries on a stale scan retry. When
+- [x] Rebase the chunk index with the entries on a stale scan retry. When
       `rebaseConcurrent` defers a path because another writer rewrote it, the
       entry row keeps the winner's version but `write.Chunks` still carries the
       cut the walk read, of the older content, and `ApplyScan` writes it. A
@@ -252,12 +252,27 @@ Goal: ship a reliable multi-device Tailscale-first system.
       the entry's hash, which fails the pull and sends it to repair. Not data
       loss, and strictly better than the behaviour before the retry fix, but a
       real loose end in the same function. Found by the verification of the
-      scan-retry fix, 2026-09-23.
-- [ ] Handle a rename whose source path is concurrently rewritten. The stale
+      scan-retry fix, 2026-09-23. Fixed the same day: `rebaseConcurrent` records
+      every path it defers and `chunksExcept` keeps those paths out of
+      `write.Chunks`, so the scan writes a cut only for the entries it writes.
+      A deferred path keeps the chunk rows it has, which are the ones whoever
+      wrote the entry wrote; rows left from an older scan are the one stale
+      case, and the server re-chunks from disk whenever the index does not
+      describe the entry, so no peer is served a cut for content that is gone.
+      `TestScan_RetryLeavesTheChunkIndexOfWhatAnotherWriterWrote` guards it.
+- [x] Handle a rename whose source path is concurrently rewritten. The stale
       retry holds the source live in the walked tree, so `detectRenames` sees
       only the create of the target: the result is a copy plus a stale source
       row until the next scan reaps it, instead of a rename. No data loss.
-      Found by the verification of the scan-retry fix, 2026-09-23.
+      Found by the verification of the scan-retry fix, 2026-09-23. Fixed the
+      same day: `deferRenameTargets` drops the target of such a rename from the
+      walked tree, so the next scan reads both halves against the state that
+      won and classifies the one rename. The target is dropped only when the
+      store has no entry for it, so the diff sees a path absent on both sides,
+      which is no change and cannot become a tombstone. A source the store now
+      holds as a tombstone is left alone: no later scan could pair it, so the
+      target is classified at once rather than delayed for nothing.
+      `TestScan_RetryDefersARenameWhoseSourceAnotherWriterWrote` guards it.
 - [ ] Fix the intermittent failure of `TestReload_PeerAddressChangeKeepsTheNewConnection`
       and `TestReload_KeepsTheLoopOfAnUnchangedFolder` (internal/app/daemon).
       Under `-race` the two fail together about one run in three; each passes

@@ -201,9 +201,13 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 	if err != nil {
 		return err
 	}
+	// The paths another writer changed under the walk are not this scan's
+	// to classify, and the set of them only grows as retries reload. It is
+	// what keeps both the entries and the chunk index off those paths.
+	deferred := make(map[string]bool)
 	for attempt := 0; ; attempt++ {
 		write := s.writeOf(result, old, base, now, floor)
-		write.Chunks = chunks
+		write.Chunks = chunksExcept(chunks, deferred)
 		err := s.store.ApplyScan(ctx, f.ID, write)
 		if err == nil {
 			// The store hands out one sequence number per written
@@ -230,7 +234,11 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 		// The paths the other writer touched are not this scan's to
 		// classify, so the tree it walked takes their stored state
 		// before the re-diff.
-		rebaseConcurrent(old, reloaded, cur)
+		rebaseConcurrent(old, reloaded, cur, deferred)
+		// A rename whose source another writer rewrote would be left
+		// as the create half alone, a copy of bytes the peers already
+		// hold. Its target waits for the scan that can see both halves.
+		deferRenameTargets(result.Changes, reloaded, cur, deferred)
 		// The versions the write raises are the ones of the manifest it
 		// diffed against, so the reloaded manifest replaces the stale
 		// one for both the diff and the vectors.
@@ -252,7 +260,12 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 // creation. Deferring the path costs nothing, because the walk's view of it is
 // stale in either direction and the next scan diffs it against the state that
 // won.
-func rebaseConcurrent(prev, reloaded, cur manifest.Manifest) {
+// Every path it defers is recorded in deferred, whose keys are the paths this
+// scan must not write: not the entry, and not the chunk index either. The cut
+// the walk read of such a path describes the content that lost, so writing it
+// would leave the chunk rows of one version under the entry of another, and a
+// peer asking for that path would be handed a cut its hash does not match.
+func rebaseConcurrent(prev, reloaded, cur manifest.Manifest, deferred map[string]bool) {
 	for p, now := range reloaded.Entries {
 		if before, had := prev.Entries[p]; had && storedSame(before, now) {
 			continue
@@ -261,12 +274,67 @@ func rebaseConcurrent(prev, reloaded, cur manifest.Manifest) {
 		// diff see a path that is deleted on both sides, which is no
 		// change.
 		cur.Add(now)
+		deferred[p] = true
 	}
 	for p := range prev.Entries {
 		if _, still := reloaded.Entries[p]; !still {
 			delete(cur.Entries, p)
+			deferred[p] = true
 		}
 	}
+}
+
+// deferRenameTargets holds back the target of a rename whose source another
+// writer rewrote under the walk.
+//
+// rebaseConcurrent keeps such a source alive in the walked tree, so the re-diff
+// sees the create of the target with no delete to pair it with: the rename
+// becomes a copy now plus a source row a later scan reaps, and the peers pull
+// bytes they already hold. Dropping the target from the tree instead leaves the
+// pair to the next scan, which reads both halves against the state that won and
+// classifies them as the one rename they are.
+//
+// The target is dropped only when the store has no entry for it, so the diff
+// sees a path that is absent on both sides, which is no change. A target the
+// store does know is one another writer wrote, and rebaseConcurrent has already
+// put the stored state of it in the tree.
+func deferRenameTargets(changes []manifest.Change, reloaded, cur manifest.Manifest, deferred map[string]bool) {
+	for _, c := range changes {
+		if c.Type != manifest.Rename || !deferred[c.OldPath] || deferred[c.Path] {
+			continue
+		}
+		// A source the store now holds as a tombstone is gone for good:
+		// no later scan can pair it with anything, so the target is
+		// classified now rather than delayed for nothing.
+		if src, ok := reloaded.Entries[c.OldPath]; !ok || src.Deleted {
+			continue
+		}
+		if _, known := reloaded.Entries[c.Path]; known {
+			continue
+		}
+		delete(cur.Entries, c.Path)
+		deferred[c.Path] = true
+	}
+}
+
+// chunksExcept is the chunk index of every path this scan may write. A deferred
+// path keeps whatever chunk rows it has: they were written by whoever wrote the
+// entry, so they describe the content the entry names. Rows left from an older
+// scan of that path are the one stale case, and the server re-chunks from disk
+// whenever the index it finds does not describe the entry, so a peer is never
+// served a cut for content the folder no longer has.
+func chunksExcept(chunks map[string][]transfer.Chunk, deferred map[string]bool) map[string][]transfer.Chunk {
+	if len(deferred) == 0 {
+		return chunks
+	}
+	out := make(map[string][]transfer.Chunk, len(chunks))
+	for p, c := range chunks {
+		if deferred[p] {
+			continue
+		}
+		out[p] = c
+	}
+	return out
 }
 
 // storedSame reports whether two stored entries for one path are the same

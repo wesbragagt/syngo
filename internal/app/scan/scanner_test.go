@@ -17,6 +17,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/scan"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/transfer"
 )
 
 // root is the folder path every test scans.
@@ -962,5 +963,114 @@ func TestScan_RetryKeepsWhatAnotherWriterInstalled(t *testing.T) {
 	}
 	if got := e.stored(t); !equal(got, []string{"a", "a/installed.bin", "a/kept.bin", "b", "b/one.txt", "b/two.txt"}) {
 		t.Errorf("the store holds %v, want the installed file kept and the local change recorded", got)
+	}
+}
+
+// TestScan_RetryLeavesTheChunkIndexOfWhatAnotherWriterWrote is the first of the
+// two refinements the fix above needed. A scan that loses the write race defers
+// the paths another writer rewrote, so the entry of such a path keeps the
+// winner's version. The cut of that path the walk read describes the content
+// that lost, so writing it would leave the chunk rows of one version under the
+// entry of another: a peer asking for the file gets a cut whose hashes its
+// bytes do not match, the pull fails and the path goes to repair.
+func TestScan_RetryLeavesTheChunkIndexOfWhatAnotherWriterWrote(t *testing.T) {
+	e := newEnv(t)
+	e.write("note.txt", "the content the first scan recorded")
+	e.scan(t, scan.Options{})
+
+	// The walk reads this. It never reaches the store: the peer's version
+	// below wins the race for the row.
+	e.overwrite(t, "note.txt", "the content this walk reads, which loses")
+
+	peer := []byte("the content the peer installed")
+	winner := manifest.Entry{
+		Path: "note.txt", Kind: manifest.KindFile, Size: int64(len(peer)), Mode: 0o644,
+		Hash: e.hasher.SumBytes(peer), ModTime: time.Unix(500, 0),
+	}
+	winnerChunks := []transfer.Chunk{
+		{Index: 0, Offset: 0, Length: len(peer), Hash: winner.Hash},
+	}
+	var once sync.Once
+	e.hasher.before = func(int) {
+		once.Do(func() {
+			ctx := context.Background()
+			if err := e.store.UpsertEntries(ctx, e.folder.ID, []manifest.Entry{winner}); err != nil {
+				t.Errorf("install: %v", err)
+			}
+			if err := e.store.SetFileChunks(ctx, e.folder.ID, winner.Path, winnerChunks); err != nil {
+				t.Errorf("index the install: %v", err)
+			}
+		})
+	}
+
+	e.scan(t, scan.Options{})
+
+	stored, err := e.store.GetFile(context.Background(), e.folder.ID, "note.txt")
+	if err != nil {
+		t.Fatalf("get note.txt: %v", err)
+	}
+	if stored.Hash != winner.Hash {
+		t.Fatalf("the entry of note.txt is %v, want the version the other writer installed", stored.Hash)
+	}
+	got, err := e.store.FileChunks(context.Background(), e.folder.ID, "note.txt")
+	if err != nil {
+		t.Fatalf("chunks of note.txt: %v", err)
+	}
+	if len(got) != 1 || got[0].Hash != winner.Hash || int64(got[0].Length) != winner.Size {
+		t.Errorf("the chunk index of note.txt is %v, want the cut of the entry the store holds (%v)",
+			got, winnerChunks)
+	}
+}
+
+// TestScan_RetryDefersARenameWhoseSourceAnotherWriterWrote is the second
+// refinement. The walk sees a rename: the source gone, the target created with
+// its bytes. Another writer rewrites the source row while the walk reads, so
+// the source is not this scan's to classify and stays live in the tree, which
+// leaves the create of the target with no delete to pair with. Recording that
+// create alone makes the peers pull bytes they already hold and leaves a source
+// row for a later scan to reap. The target waits instead, and the next scan,
+// which sees both halves against the state that won, calls it one rename.
+func TestScan_RetryDefersARenameWhoseSourceAnotherWriterWrote(t *testing.T) {
+	e := newEnv(t)
+	e.write("src.bin", "the bytes that move from one path to the other")
+	e.scan(t, scan.Options{})
+
+	// The rename on disk.
+	e.remove(t, "src.bin")
+	e.write("dst.bin", "the bytes that move from one path to the other")
+
+	// While the walk reads the target, a concurrent scan rewrites the row
+	// of the source: same content, a new sequence, so this scan's write is
+	// refused and the source is one it may no longer classify.
+	var once sync.Once
+	e.hasher.before = func(int) {
+		once.Do(func() {
+			ctx := context.Background()
+			src, err := e.store.GetFile(ctx, e.folder.ID, "src.bin")
+			if err != nil {
+				t.Errorf("get src.bin: %v", err)
+				return
+			}
+			if err := e.store.UpsertEntries(ctx, e.folder.ID, []manifest.Entry{src}); err != nil {
+				t.Errorf("rewrite src.bin: %v", err)
+			}
+		})
+	}
+
+	racing := e.scan(t, scan.Options{})
+	for _, c := range racing.Changes {
+		if c.Type == manifest.Create && c.Path == "dst.bin" {
+			t.Errorf("the scan recorded %v, a copy of bytes the folder already holds at src.bin",
+				summary(racing))
+		}
+	}
+
+	e.hasher.before = nil
+	next := e.scan(t, scan.Options{})
+	if got := summary(next); !equal(got, []string{"rename:dst.bin<-src.bin"}) {
+		t.Errorf("the next scan classified %v, want the move as one rename", got)
+	}
+	if got := e.stored(t); !equal(got, []string{"dst.bin"}) {
+		t.Errorf("the store holds %v, want the source reaped by the rename", got)
 	}
 }
