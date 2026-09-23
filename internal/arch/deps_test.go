@@ -212,9 +212,48 @@ func TestCLIImportsAllowedPackagesOnly(t *testing.T) {
 			allowed := strings.HasPrefix(local, "internal/app/") ||
 				strings.HasPrefix(local, "internal/domain/") ||
 				local == "internal/compose" ||
-				local == "internal/cli"
+				local == "internal/cli" ||
+				local == "internal/tui"
 			if !allowed {
-				t.Errorf("%s imports %q; the CLI may only import app, domain, compose and itself", f.path, imp)
+				t.Errorf("%s imports %q; the CLI may only import app, domain, compose, the TUI and itself", f.path, imp)
+			}
+		}
+	}
+}
+
+// TestTUIImportsNothingOfTheApplication keeps the terminal interface a
+// presentation layer. It reaches the daemon only through the tui.Runner the
+// CLI implements for it, which means every screen is a view of a command
+// docs/CLI.md documents and there is no second copy of an application rule
+// inside it. The dependency runs cli -> tui and never the other way, so this
+// rule and the one above together forbid a cycle as well.
+func TestTUIImportsNothingOfTheApplication(t *testing.T) {
+	// The Bubble Tea set, and only it: docs/TUI.md states the three
+	// packages the interface is built from.
+	allowedThirdParty := []string{
+		"github.com/charmbracelet/bubbletea",
+		"github.com/charmbracelet/bubbles/",
+		"github.com/charmbracelet/lipgloss",
+	}
+	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "internal/tui") {
+		for _, imp := range f.imports {
+			if isThirdParty(imp) {
+				ok := false
+				for _, prefix := range allowedThirdParty {
+					if imp == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(imp, prefix) {
+						ok = true
+					}
+				}
+				if !ok {
+					t.Errorf("%s imports third-party %q; the TUI may only use bubbletea, bubbles and lipgloss", f.path, imp)
+				}
+				continue
+			}
+			if !isInternal(imp) {
+				continue
+			}
+			if local := localPath(imp); local != "internal/tui" {
+				t.Errorf("%s imports %q; the TUI is a presentation layer and may reach the daemon only through tui.Runner", f.path, imp)
 			}
 		}
 	}

@@ -11,6 +11,7 @@ internal/app/fakes  one in-memory implementation per port, for tests anywhere
 internal/adapters   one package per technology, each implementing ports
 internal/compose    the composition root: builds an App from a data directory
 internal/cli        cobra commands, one file per command
+internal/tui        the interactive terminal interface, one file per screen
 internal/arch       the test that enforces the table below
 internal/testutil   test-only helpers shared by test packages, never shipped
 internal/e2e        two daemons in one process, talking over loopback
@@ -22,7 +23,8 @@ internal/e2edocker  N daemons, one container each; opt-in, only _test.go files
 | `internal/domain/...` | stdlib, except `os`, `net`, `database/sql`, `syscall`, `os/exec` |
 | `internal/app/...` | `internal/domain/...`, `internal/app/...`, and the same stdlib subset |
 | `internal/adapters/X` | `internal/domain/...`, `internal/app/ports`, third-party packages |
-| `internal/cli` | `internal/app/...`, `internal/compose`, `internal/domain/...`, cobra |
+| `internal/cli` | `internal/app/...`, `internal/compose`, `internal/domain/...`, `internal/tui`, cobra |
+| `internal/tui` | itself, bubbletea, bubbles, lipgloss, and the same stdlib as any presentation code; nothing else of this module |
 | `internal/compose` | everything |
 | `cmd/syncthis` | `internal/cli` |
 | `internal/testutil/...` | `internal/domain/...`, `internal/adapters/...`; imported only by `_test.go` files |
@@ -54,6 +56,31 @@ build when a rule is broken.
 
 The application never constructs an adapter. `compose.Build` wires them and
 returns an `App`; every command asks the `App` for the service it needs.
+
+## The terminal interface
+
+`syncthis tui` is a subcommand of the one binary, not a second one: `make dist`
+builds `./cmd/syncthis` alone, the packaging, the container image and the Nix
+flake install that single file, and shell completion is generated from this
+command tree. `cmd/syncthis-bench` is the precedent for a second binary and it
+is a development tool that is not shipped.
+
+The interface is a presentation layer and the dependency table above is what
+makes that a rule rather than an intention. `internal/tui` may not import
+`internal/app`, `internal/domain` or `internal/compose`. It reaches the daemon
+through one interface it declares itself, `tui.Runner`, which runs a syncthis
+invocation and returns what it wrote to stdout and the code it exited with;
+`internal/cli` implements it by calling its own `ExecuteContext`. So every
+screen is a view of a `--json` document `docs/CLI.md` documents, every key is
+one command a user could have typed, and there is no operation the interface
+offers that the command line does not. `docs/TUI.md` lists the command behind
+each key. The dependency runs `cli -> tui` and never back, which is also what
+keeps the two out of an import cycle.
+
+The interface holds no synchronization state: what it shows is the last
+`status --json` answer and which screen has the keyboard. Killing it, losing
+an SSH session or detaching a tmux window therefore cannot touch the daemon or
+a transfer in flight, and a new process is in the same place the old one was.
 
 ## Recovering from network changes
 

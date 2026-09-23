@@ -98,6 +98,7 @@ func NewRootCmd(deps *Deps) *cobra.Command {
 		newSyncPlanCmd(deps),
 		newPauseCmd(deps),
 		newResumeCmd(deps),
+		newTUICmd(deps),
 	)
 	return root
 }
