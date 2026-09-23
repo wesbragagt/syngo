@@ -1,5 +1,10 @@
 # Syncthis plan: Docker multi-device end-to-end tests
 
+> **Historical.** This plan is built: the suite is `internal/e2edocker`, run by
+> `make e2e-docker` and `make e2e-docker-soak`. It records what was intended at
+> the time and is not a description of the code. The three known failures it
+> names in section 10 were fixed by [PLAN-3.md](PLAN-3.md).
+
 ## 1. Decisions
 
 | Decision | Choice | Why |

@@ -1,5 +1,10 @@
 # Syncthis plan 3: Causal versions for N-device convergence, and a journal that empties
 
+> **Historical.** This plan is built. It records what was intended at the time
+> and is not a description of the code. It plans the bump to protocol version
+> 2; two later versions followed, and the protocol is at 4. See
+> [PROTOCOL.md](PROTOCOL.md) and [STATE.md](STATE.md).
+
 Fixes KF-1, KF-2 and KF-3 of `docs/PLAN-E2E-DOCKER.md` section 10 at HEAD `e3724a9`.
 
 ## 1. Diagnosis in one paragraph each

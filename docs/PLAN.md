@@ -1,5 +1,11 @@
 # Syncthis implementation plan
 
+> **Historical.** This plan is built: milestones 1-9 shipped. It records what
+> was intended at the time and is not a description of the code. Where it
+> disagrees with [CLI.md](CLI.md), [ARCHITECTURE.md](ARCHITECTURE.md),
+> [PROTOCOL.md](PROTOCOL.md) or [STATE.md](STATE.md), those are right; the
+> protocol version it names is 1 and is now 4.
+
 Module: `github.com/wesbragagt/syncthis` (Go 1.26). Target: pure-Go CLI + daemon, fully testable on one Linux machine over loopback.
 
 ## 0. Package layout and dependency rules

@@ -141,5 +141,8 @@ address. The full walkthrough is in
   dependency rules a test enforces.
 - [docs/GLOSSARY.md](docs/GLOSSARY.md) — the domain language: every word the
   other documents and the code use, defined once.
+- [docs/BENCH.md](docs/BENCH.md) — the benchmark scenarios and what the runs
+  measured.
 - [docs/PLAN.md](docs/PLAN.md) — the implementation plan, milestone by
-  milestone.
+  milestone. It and PLAN-2, PLAN-3 and PLAN-E2E-DOCKER are historical: the work
+  is built, and the documents above describe what shipped.

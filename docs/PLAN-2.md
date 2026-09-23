@@ -1,5 +1,10 @@
 # Syncthis implementation plan, pass 2
 
+> **Historical.** All six items of this pass are built. It records what was
+> intended at the time and is not a description of the code. Its line that
+> `docs/PROTOCOL.md` stays at version 1 is no longer true: the protocol is at
+> version 4. See [PROTOCOL.md](PROTOCOL.md) and [CLI.md](CLI.md).
+
 Module `github.com/wesbragagt/syncthis`, Go 1.26. Baseline: `main` at `ecefb9d`, milestones 1–9 of `docs/PLAN.md` done. Every item below is one commit series that leaves `make lint && make test` green on its own; the order is the dependency order. The rules of `docs/PLAN.md` section 0 hold: `internal/domain` and `internal/app` import no `os`, `net`, `os/exec`, `database/sql`, `syscall`; adapters import only domain, `app/ports` and third-party code; `internal/cli` imports app, domain, compose and cobra; `internal/compose` wires everything.
 
 Out of scope for this pass: benchmarks, hardware tests, TUI, per-folder sync interval (see item 3 for why), a wire protocol change (none of the items needs one; `docs/PROTOCOL.md` stays at version 1).
