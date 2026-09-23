@@ -35,6 +35,9 @@ const (
 	// screenDashboard shows devices, folders, the queue, the paths and the
 	// current error.
 	screenDashboard
+	// screenConflicts reviews the paths both sides changed and restores
+	// one of the two versions.
+	screenConflicts
 )
 
 // Options configure a TUI run.
@@ -85,6 +88,8 @@ type Model struct {
 
 	// setup is the guided walk, which takes over when there is no identity.
 	setup setupModel
+	// conflicts is the review and restore screen.
+	conflicts conflictsModel
 }
 
 // New builds the root model. It does not talk to the daemon: Init does, so a
@@ -99,14 +104,15 @@ func New(opts Options) Model {
 		pathPoll = DefaultPathPoll
 	}
 	return Model{
-		client:   opts.Client,
-		poll:     poll,
-		pathPoll: pathPoll,
-		screen:   screenLoading,
-		previous: screenDashboard,
-		width:    80,
-		height:   24,
-		setup:    newSetup(opts.Client),
+		client:    opts.Client,
+		poll:      poll,
+		pathPoll:  pathPoll,
+		screen:    screenLoading,
+		previous:  screenDashboard,
+		width:     80,
+		height:    24,
+		setup:     newSetup(opts.Client),
+		conflicts: newConflicts(opts.Client),
 	}
 }
 
@@ -191,8 +197,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // routeToScreen passes a message to the screen that owns it.
 func (m Model) routeToScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	if m.screen == screenSetup {
+	switch m.screen {
+	case screenSetup:
 		m.setup, cmd = m.setup.update(msg)
+	case screenConflicts:
+		m.conflicts, cmd = m.conflicts.update(msg)
 	}
 	return m, cmd
 }
@@ -255,15 +264,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.routeToScreen(msg)
 	}
 
-	switch msg.String() {
-	case "q":
+	if msg.String() == "q" {
 		m.quitting = true
 		return m, tea.Quit
+	}
+
+	if m.screen == screenConflicts {
+		next, cmd, back := m.conflicts.key(msg)
+		m.conflicts = next
+		if back {
+			m.screen = screenDashboard
+			return m, fetchStatus(m.client)
+		}
+		return m, cmd
+	}
+
+	switch msg.String() {
 	case "r":
 		return m, fetchStatus(m.client)
 	case "d":
 		m.screen = screenDashboard
 		return m, nil
+	case "c":
+		m.screen = screenConflicts
+		return m, m.conflicts.enter()
 	}
 	if m.screen == screenDashboard {
 		next, cmd, handled := m.dashboardKey(msg)
@@ -288,6 +312,8 @@ func (m Model) View() string {
 		body = m.setup.view(m.width)
 	case screenDashboard:
 		body = m.dashboardView()
+	case screenConflicts:
+		body = m.conflicts.view(m.width)
 	}
 	return body + "\n" + m.footer()
 }
@@ -312,10 +338,12 @@ func (m Model) keyHelp() string {
 	switch m.screen {
 	case screenSetup:
 		return m.setup.help()
+	case screenConflicts:
+		return m.conflicts.help()
 	case screenFatal, screenNoDaemon:
 		return "r refresh · q quit"
 	default:
-		return "↑↓ folder · p pause · u resume · s rescan · r refresh · q quit"
+		return "↑↓ folder · p pause · u resume · s rescan · c conflicts · r refresh · q quit"
 	}
 }
 

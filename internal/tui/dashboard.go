@@ -67,6 +67,8 @@ func (m Model) dashboardView() string {
 	b.WriteString("\n")
 	b.WriteString(m.queueView())
 	b.WriteString("\n")
+	b.WriteString(m.conflictsLine())
+	b.WriteString("\n")
 	b.WriteString(m.errorsView())
 	return b.String()
 }
@@ -212,6 +214,18 @@ func progressBar(done, total, width int) string {
 		filled = inner
 	}
 	return "[" + strings.Repeat("=", filled) + strings.Repeat(" ", inner-filled) + "]"
+}
+
+// conflictsLine counts the paths both sides changed and nobody has decided
+// about, and points at the screen that settles them.
+func (m Model) conflictsLine() string {
+	n := m.status.Conflicts.Unresolved
+	head := styleHeader.Render("CONFLICTS") + "\n"
+	if n == 0 {
+		return head + styleOK.Render("none") + "\n"
+	}
+	return head + styleWarn.Render(sprintf("%d unresolved", n)) +
+		styleDim.Render("  press c to review them") + "\n"
 }
 
 // errorsView is the one place a failure shows up, whichever part of the device
