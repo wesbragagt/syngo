@@ -221,11 +221,29 @@ Goal: ship a reliable multi-device Tailscale-first system.
       the liveness check correctly said that pid was alive, so the data
       directory refused every further start. See the pid-reuse task below. The
       soak must be run again to completion once that is fixed. Re-run
-      2026-09-23 with the pid fix in place and it got much further, 1,719
-      rounds over 2h17m against 924 over 1h12m, with no pid failure. It then
-      failed differently: after the harness killed daemon a, a held two files
-      c never received (`a/f-120186.bin`, `a/f-360791.bin`) and the cluster did
-      not converge while settling. Under diagnosis; see the task below.
+      2026-09-23 after that fix, which held: it reached 1,719 rounds and 2h17m
+      before FAILING again, this time with c holding two files, a/f-120186.bin
+      and a/f-360791.bin, that a and b had deleted. The cause was a scanner
+      bug, not the harness; see the scan-retry task below. The soak must be run
+      again to completion.
+- [x] Fix the scan that deletes what the puller installed under it. A scan
+      reads the whole tree and only then writes, so another writer can get to
+      the store first; the store refuses the write as stale and the scan
+      re-diffs the tree it already walked against the reloaded manifest. That
+      re-diff trusted a tree older than the write that beat it: a file the
+      puller had just installed was in the reloaded manifest and not in the
+      walked tree, so the scan classified it as a deletion and handed the
+      tombstone to every peer. Found by the soak above: device a was SIGKILLed,
+      restarted, rescanned the two files its killed daemon had never recorded
+      and served them; b and c pulled them; a scan on c that had started before
+      the pull lost the race, re-diffed, and told a and b to delete both. Fixed
+      2026-09-23: on a stale retry the scan takes the stored state of every
+      path the other writer changed into the tree it walked, so those paths
+      fall out of the re-diff. A scan may classify only what it read against
+      what it diffed against; a path written under it is stale in either
+      direction, and the next scan diffs it against the state that won.
+      `TestScan_RetryKeepsWhatAnotherWriterInstalled` reproduces it
+      deterministically and fails against the old re-diff.
 - [x] Fix the stale pid file that stops a killed daemon restarting. A daemon
       killed with SIGKILL cannot run its cleanup, so `daemon.pid` survived it;
       `acquirePIDFile` then read that pid and the liveness check reported it

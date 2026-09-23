@@ -227,6 +227,10 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 		if loadErr != nil {
 			return loadErr
 		}
+		// The paths the other writer touched are not this scan's to
+		// classify, so the tree it walked takes their stored state
+		// before the re-diff.
+		rebaseConcurrent(old, reloaded, cur)
 		// The versions the write raises are the ones of the manifest it
 		// diffed against, so the reloaded manifest replaces the stale
 		// one for both the diff and the vectors.
@@ -234,6 +238,43 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 		base = old.Sequence
 		result.Changes = manifest.Diff(old, cur)
 	}
+}
+
+// rebaseConcurrent takes the entries another writer changed while this scan
+// was reading the tree into cur, the tree the scan walked, so the re-diff
+// leaves those paths alone.
+//
+// prev is the manifest the walk was diffed against and reloaded is what the
+// store holds now. A path the two disagree on was written after the walk read
+// it, which makes the walk's view of that path the older one: classifying it
+// would turn a file the puller had just installed into a deletion this device
+// then hands to every peer, and a file the puller had just renamed away into a
+// creation. Deferring the path costs nothing, because the walk's view of it is
+// stale in either direction and the next scan diffs it against the state that
+// won.
+func rebaseConcurrent(prev, reloaded, cur manifest.Manifest) {
+	for p, now := range reloaded.Entries {
+		if before, had := prev.Entries[p]; had && storedSame(before, now) {
+			continue
+		}
+		// A tombstone is carried over as well: cur holding it makes the
+		// diff see a path that is deleted on both sides, which is no
+		// change.
+		cur.Add(now)
+	}
+	for p := range prev.Entries {
+		if _, still := reloaded.Entries[p]; !still {
+			delete(cur.Entries, p)
+		}
+	}
+}
+
+// storedSame reports whether two stored entries for one path are the same
+// write. Every row the store writes takes a new sequence number, so the
+// sequence alone answers it; the version and the tombstone flag are compared
+// as well so a store that ever rewrites a row in place cannot hide a change.
+func storedSame(a, b manifest.Entry) bool {
+	return a.Sequence == b.Sequence && a.Deleted == b.Deleted && a.Version.Equals(b.Version)
 }
 
 // writeOf turns classified changes into the write the store applies. old is

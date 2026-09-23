@@ -913,3 +913,54 @@ func TestScan_HonoursAndRaisesTheCounterFloor(t *testing.T) {
 		t.Fatalf("floor = %d, want the deletion to have raised it to 10", floor)
 	}
 }
+
+// TestScan_RetryKeepsWhatAnotherWriterInstalled is the case an eight-hour soak
+// found. A scan reads the tree, and while it reads, the puller installs a file
+// from a peer. The install moves the folder sequence on, so the scan's write is
+// refused as stale and the scan re-diffs the tree it walked against the
+// reloaded manifest. The tree it walked is older than the install and knows
+// nothing of the new file, so a re-diff that trusts it turns the install into a
+// deletion, which the device then hands to every peer: two files that were
+// never deleted disappear from the other devices.
+//
+// A scan may only classify the paths it actually read against the state it
+// actually diffed. What another writer changed under it is not its to
+// classify.
+func TestScan_RetryKeepsWhatAnotherWriterInstalled(t *testing.T) {
+	e := newEnv(t)
+	e.write("a/kept.bin", "from the peer, long ago")
+	e.write("b/one.txt", "one")
+	e.scan(t, scan.Options{})
+
+	// The local change this scan is about, in the subtree it scans.
+	e.write("b/two.txt", "two")
+
+	// While the scan walks b/, the puller installs a file under a/, which
+	// the walk neither sees nor is asked to look at.
+	installed := manifest.Entry{
+		Path: "a/installed.bin", Kind: manifest.KindFile, Size: 4, Mode: 0o644,
+		Hash: e.hasher.SumBytes([]byte("peer")), ModTime: time.Unix(100, 0),
+	}
+	var once sync.Once
+	e.hasher.before = func(int) {
+		once.Do(func() {
+			e.write("a/installed.bin", "peer")
+			if err := e.store.UpsertEntries(context.Background(), e.folder.ID,
+				[]manifest.Entry{installed}); err != nil {
+				t.Errorf("install: %v", err)
+			}
+		})
+	}
+
+	res := e.scan(t, scan.Options{Paths: []string{"b"}})
+
+	for _, c := range res.Changes {
+		if c.Type == manifest.Delete || c.Type == manifest.Rename {
+			t.Errorf("the scan classified %s:%s, a path another writer installed under it",
+				c.Type, c.Path)
+		}
+	}
+	if got := e.stored(t); !equal(got, []string{"a", "a/installed.bin", "a/kept.bin", "b", "b/one.txt", "b/two.txt"}) {
+		t.Errorf("the store holds %v, want the installed file kept and the local change recorded", got)
+	}
+}
