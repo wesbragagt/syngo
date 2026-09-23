@@ -12,7 +12,7 @@ import (
 )
 
 // setupStep is where the guided walk has got to. The order is the order of
-// docs/CLI.md's "Quick start": an identity, a folder, a daemon, a peer, an
+// docs/INSTALL.md's "Run and verify": an identity, a folder, a daemon, a peer, an
 // authorization, and then waiting for the two devices to converge.
 type setupStep int
 
