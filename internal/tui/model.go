@@ -43,6 +43,9 @@ type Options struct {
 	Client Client
 	// Poll is the refresh interval; zero means DefaultPoll.
 	Poll time.Duration
+	// PathPoll is how often `network path` is asked; zero means
+	// DefaultPathPoll.
+	PathPoll time.Duration
 }
 
 // Model is the root Bubble Tea model. It owns no synchronization state: every
@@ -50,8 +53,9 @@ type Options struct {
 // the keyboard, so a TUI that is killed and started again is in the same place
 // as one that never stopped.
 type Model struct {
-	client Client
-	poll   time.Duration
+	client   Client
+	poll     time.Duration
+	pathPoll time.Duration
 
 	screen screen
 	// previous is the screen 'esc' goes back to.
@@ -62,6 +66,13 @@ type Model struct {
 	// status is the last answer, and statusAt when it arrived.
 	status   Status
 	statusAt time.Time
+	// paths is the last `network path` answer, and pathErr why there is
+	// none. A device with no Tailscale client answers exit 11, which is a
+	// supported way to run and not a failure.
+	paths   []NetPath
+	pathErr error
+	// folder is the row the folder table's cursor is on.
+	folder int
 	// fatal is the failure screenFatal shows.
 	fatal error
 	// notice is the last action's result, shown in the footer of every
@@ -83,9 +94,14 @@ func New(opts Options) Model {
 	if poll <= 0 {
 		poll = DefaultPoll
 	}
+	pathPoll := opts.PathPoll
+	if pathPoll <= 0 {
+		pathPoll = DefaultPathPoll
+	}
 	return Model{
 		client:   opts.Client,
 		poll:     poll,
+		pathPoll: pathPoll,
 		screen:   screenLoading,
 		previous: screenDashboard,
 		width:    80,
@@ -112,7 +128,8 @@ type (
 
 // Init starts the first fetch and the poll.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchStatus(m.client), tick(m.poll))
+	return tea.Batch(fetchStatus(m.client), tick(m.poll),
+		fetchPaths(m.client), pathTick(m.pathPoll))
 }
 
 // tick schedules the next refresh.
@@ -148,6 +165,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case statusMsg:
 		return m.applyStatus(msg)
+
+	case pathTickMsg:
+		if m.quitting {
+			return m, nil
+		}
+		return m, tea.Batch(fetchPaths(m.client), pathTick(m.pathPoll))
+
+	case pathsMsg:
+		m.paths, m.pathErr = msg.paths, msg.err
+		return m, nil
 
 	case noticeMsg:
 		m.notice = msg.text
@@ -238,6 +265,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenDashboard
 		return m, nil
 	}
+	if m.screen == screenDashboard {
+		next, cmd, handled := m.dashboardKey(msg)
+		if handled {
+			return next, cmd
+		}
+	}
 	return m, nil
 }
 
@@ -282,7 +315,7 @@ func (m Model) keyHelp() string {
 	case screenFatal, screenNoDaemon:
 		return "r refresh · q quit"
 	default:
-		return "d dashboard · r refresh · q quit"
+		return "↑↓ folder · p pause · u resume · s rescan · r refresh · q quit"
 	}
 }
 

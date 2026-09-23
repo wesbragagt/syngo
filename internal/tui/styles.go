@@ -7,12 +7,14 @@ import "github.com/charmbracelet/lipgloss"
 // user's own theme, and a fixed hex colour is the thing that stops being
 // readable there.
 var (
-	styleTitle = lipgloss.NewStyle().Bold(true)
-	styleDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleOK    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleWarn  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	styleErr   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	styleCmd   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	styleTitle  = lipgloss.NewStyle().Bold(true)
+	styleHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+	styleSel    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleOK     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleWarn   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	styleErr    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleCmd    = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 )
 
 // stateStyle colours a folder or peer state word. Anything unrecognized is
@@ -25,6 +27,18 @@ func stateStyle(state string) lipgloss.Style {
 		return styleWarn
 	case "error", "unreachable":
 		return styleErr
+	default:
+		return styleDim
+	}
+}
+
+// pathStyle colours a network path kind: direct, relay or unknown.
+func pathStyle(kind string) lipgloss.Style {
+	switch kind {
+	case "direct":
+		return styleOK
+	case "relay":
+		return styleWarn
 	default:
 		return styleDim
 	}
