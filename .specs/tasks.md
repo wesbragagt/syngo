@@ -258,6 +258,14 @@ Goal: ship a reliable multi-device Tailscale-first system.
       only the create of the target: the result is a copy plus a stale source
       row until the next scan reaps it, instead of a rename. No data loss.
       Found by the verification of the scan-retry fix, 2026-09-23.
+- [ ] Decide whether `transfer.ValidateChunks` should check content, not only
+      geometry. It validates index, offset, length and total coverage against
+      the entry size, so a stale chunk index over content of the same size
+      passes and `Server.Chunks` serves it. The peer's own per-chunk hash check
+      rejects the bytes, so this costs a failed pull and a repair rather than
+      corruption, and it is pre-existing behaviour rather than anything the
+      scan-retry work introduced. Found while closing the chunk-index loose
+      end, 2026-09-23.
 - [x] Fix the stale pid file that stops a killed daemon restarting. A daemon
       killed with SIGKILL cannot run its cleanup, so `daemon.pid` survived it;
       `acquirePIDFile` then read that pid and the liveness check reported it
