@@ -63,6 +63,11 @@ type CmdError struct {
 	Command string
 	Code    int
 	Message string
+	// Stdout is what the command printed. A failing command prints the
+	// failure document and nothing else, but a few of them print a result
+	// and then exit non-zero to classify it; `peer test` against a peer
+	// that has not been told about this device is one.
+	Stdout []byte
 }
 
 // Error implements the error interface.
@@ -111,7 +116,10 @@ func (c Client) call(ctx context.Context, out any, args ...string) error {
 		return fmt.Errorf("%s: %w", c.Command(args...), err)
 	}
 	if code != ExitOK {
-		return &CmdError{Command: c.Command(args...), Code: code, Message: errorMessage(stdout, code)}
+		return &CmdError{
+			Command: c.Command(args...), Code: code,
+			Message: errorMessage(stdout, code), Stdout: stdout,
+		}
 	}
 	if out == nil {
 		return nil
@@ -203,6 +211,14 @@ func (c Client) PeerAdd(ctx context.Context, host, deviceID string) (PeerAdded, 
 // PeerTest runs the handshake against an address and reports the identity it
 // presented: `syncthis peer test HOST[:PORT]`. It is what the pairing screen
 // shows before it asks whether to trust the device.
+//
+// A peer that has not been told about this device yet refuses the handshake
+// with `rejected:unknown_device` and the command exits 7. That is not a
+// mistake, it is where every first pairing starts, and the pairing screen says
+// so rather than treating it as a failure. In JSON mode the command prints the
+// failure document alone, so there is no identity to show in that case; what
+// the screen offers instead is `peer add`, which stores the device and reports
+// the identity it presented.
 func (c Client) PeerTest(ctx context.Context, target string) (PeerTested, error) {
 	var out PeerTested
 	err := c.call(ctx, &out, "peer", "test", target)

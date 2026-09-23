@@ -62,8 +62,11 @@ type setupModel struct {
 	peerName string
 	peerAddr string
 	// tested is what `peer test` reported about the address, which is what
-	// stepPeerConfirm shows.
-	tested PeerTested
+	// stepPeerConfirm shows. testRefused is set instead when the peer
+	// refused the handshake because it has not been told about this device
+	// yet, which is where every first pairing starts.
+	tested      PeerTested
+	testRefused error
 
 	// status is the last report, which stepDaemon and stepConverge wait on.
 	status Status
@@ -211,12 +214,22 @@ func (s setupModel) update(msg tea.Msg) (setupModel, tea.Cmd) {
 
 	case setupPeerTestMsg:
 		s.working = false
-		if s.err = msg.err; msg.err != nil {
+		s.tested, s.testRefused, s.err = msg.result, nil, nil
+		switch {
+		case msg.err == nil:
+			s.focus(stepPeerConfirm)
+		case ExitCode(msg.err) == ExitPeerUnreachable:
+			// The device answered and would not have us, or did not
+			// answer at all. Both are worth showing rather than
+			// swallowing, and the first is the ordinary case: the
+			// other device has not run its own pairing yet.
+			s.testRefused = msg.err
+			s.tested = PeerTested{Address: s.value(stepPeerHost)}
+			s.focus(stepPeerConfirm)
+		default:
+			s.err = msg.err
 			s.focus(stepPeerHost)
-			return s, nil
 		}
-		s.tested = msg.result
-		s.focus(stepPeerConfirm)
 		return s, nil
 
 	case setupPeerAddMsg:
@@ -418,6 +431,9 @@ func (s setupModel) commandFor(step setupStep) string {
 	case stepPeerHost:
 		return s.client.Command("peer", "test", orPlaceholder(s.value(stepPeerHost), "HOST[:PORT]"))
 	case stepPeerConfirm:
+		if s.tested.DeviceID == "" {
+			return s.client.Command("peer", "add", s.value(stepPeerHost))
+		}
 		return s.client.Command("peer", "add", s.value(stepPeerHost), "--device-id", s.tested.DeviceID)
 	case stepConverge, stepDone:
 		return s.client.Command("status")
@@ -490,6 +506,9 @@ func (s setupModel) view(width int) string {
 // confirmView shows the identity the address presented, which is the decision
 // `peer add` asks about on a terminal.
 func (s setupModel) confirmView() string {
+	if s.testRefused != nil {
+		return s.refusedView()
+	}
 	var b strings.Builder
 	b.WriteString("This device answered at " + s.tested.Address + ":\n\n")
 	b.WriteString("  name:      " + s.tested.Name + "\n")
@@ -508,12 +527,31 @@ func (s setupModel) confirmView() string {
 	return b.String()
 }
 
+// refusedView is the other device refusing the handshake. On a first pairing
+// that is the expected answer: it has not been told about this device yet, so
+// it will not talk to it, and there is no identity to show because the command
+// stops before one is reported. Pairing is still the right next step; it is
+// finished by running the same walk on the other device.
+func (s setupModel) refusedView() string {
+	var b strings.Builder
+	b.WriteString(styleWarn.Render("that device will not talk to this one yet") + "\n\n")
+	b.WriteString("  address: " + s.tested.Address + "\n")
+	b.WriteString("  " + styleDim.Render(s.testRefused.Error()) + "\n\n")
+	b.WriteString("This is where a first pairing starts: the other device has not been\n")
+	b.WriteString("told about this one, so it refuses the connection. Adding it here is\n")
+	b.WriteString("half of the pairing; running the same setup there finishes it.\n\n")
+	b.WriteString("Add it anyway? " + styleTitle.Render("y") + " to pair, " +
+		styleTitle.Render("n") + " to type another address.\n")
+	return b.String()
+}
+
 // convergeView waits for the two daemons to connect.
 func (s setupModel) convergeView() string {
 	var b strings.Builder
 	b.WriteString(styleWarn.Render("pairing "+s.peerName+" ("+short(s.peerID)+")") + "\n\n")
 	b.WriteString("This device now trusts " + s.peerAddr + " and shares folder " +
-		styleTitle.Render(s.folderID) + " with it.\n\n")
+		styleTitle.Render(s.folderID) + " with it.\n")
+	b.WriteString(styleDim.Render("  device id: "+s.peerID) + "\n\n")
 	b.WriteString("Run the same setup on the other device, pointing it back here, and\n")
 	b.WriteString("give folder " + styleTitle.Render(s.folderID) + " the same id there. Pairing is done when both\n")
 	b.WriteString("sides have added the other.\n\n")

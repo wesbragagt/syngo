@@ -246,10 +246,13 @@ func (m Model) errorsView() string {
 			lines = append(lines, "peer "+p.Name+": "+*p.Error)
 		}
 	}
-	if m.pathErr != nil && ExitCode(m.pathErr) != ExitTailnetGone {
-		// Exit 11 is a device with no Tailscale client, which is a
-		// supported way to run this program and not a failure. Every
-		// other reason the paths could not be read is one.
+	switch ExitCode(m.pathErr) {
+	case -1, ExitTailnetGone, ExitNotInitialized:
+		// No failure at all; a device with no Tailscale client, which
+		// is a supported way to run this program; or a reading taken
+		// before the device had an identity, which the guided walk has
+		// since dealt with. None of the three is something to report.
+	default:
 		lines = append(lines, "network path: "+m.pathErr.Error())
 	}
 

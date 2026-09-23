@@ -280,7 +280,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.screen == screenSetup {
 		if m.setup.done {
 			m.screen = screenDashboard
-			return m, fetchStatus(m.client)
+			// The paths were last read before this device had an
+			// identity, so they are asked for again rather than
+			// waited for at the next thirty-second tick.
+			return m, tea.Batch(fetchStatus(m.client), fetchPaths(m.client))
 		}
 		return m.routeToScreen(msg)
 	}
