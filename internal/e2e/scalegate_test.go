@@ -13,7 +13,7 @@ import (
 )
 
 // The scale tests measure what the task list calls the scale and resource
-// claims: a 100,000-file folder, idle memory, a 10 GiB transfer, a thousand
+// claims: a 5,000-file folder, idle memory, a 10 GiB transfer, a thousand
 // interruption cycles and a bandwidth limit held to within 5%. Each one runs
 // for minutes and needs disk the rest of the suite does not, so they are
 // opt-in exactly as internal/e2edocker is: without SYNCTHIS_SCALE=1 they skip

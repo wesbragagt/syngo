@@ -54,10 +54,11 @@ e2e-docker-soak: e2e-docker-image
 	  go test ./internal/e2edocker/ -count=1 -run TestSoak -timeout $$(( $(MINUTES) + 30 ))m -v
 
 # The scale suite measures the claims that take minutes and disk rather than
-# seconds: a 100,000-file reconcile, the idle memory of a daemon, a 10 GiB
-# transfer, 1,000 kill-and-restart cycles, a bandwidth limit held to within
-# 5%, and the Phase 5 benchmarks over a 10 GiB file and a 100,000-file status. It lives in internal/e2e and is opt-in the same way the container suite
-# is: `make test` compiles it and every test skips.
+# seconds: a 5,000-file reconcile, the idle memory of a daemon, a 10 GiB
+# transfer, a vault-sized mirror that restarts, 1,000 kill-and-restart cycles,
+# a bandwidth limit held to within 5%, and the Phase 5 benchmarks over a 10 GiB
+# file and a 5,000-file status. It lives in internal/e2e and is opt-in the same
+# way the container suite is: `make test` compiles it and every test skips.
 #
 # SCALE_DIR is where the fixtures, folder roots and staged files go. It must
 # be on a filesystem with room for about three times SCALE_TRANSFER_GIB, which
@@ -72,9 +73,13 @@ SCALE_DIR          ?= .scale
 SCALE_CYCLES       ?= 1000
 SCALE_TRANSFER_GIB ?= 10
 SCALE_RATE_SECONDS ?= 120
-SCALE_FILES_EACH   ?= 500
+SCALE_FILES_EACH   ?= 25
 SCALE_IDLE_SECONDS ?= 300
 SCALE_BIGFILE_GIB  ?= 10
+# The vault-sized mirror: its total size in MiB and how many note-sized files
+# it holds.
+SCALE_MIRROR_MIB   ?= 2048
+SCALE_MIRROR_NOTES ?= 4000
 # The chunk size evaluation: the averages it sweeps, in KiB, and the size of
 # the file it moves at each one, in MiB.
 SCALE_CHUNKEVAL_KIB ?= 1024,256,64,16
@@ -91,6 +96,8 @@ scale:
 	SYNCTHIS_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
 	SYNCTHIS_SCALE_IDLE_SECONDS=$(SCALE_IDLE_SECONDS) \
 	SYNCTHIS_SCALE_BIGFILE_GIB=$(SCALE_BIGFILE_GIB) \
+	SYNCTHIS_SCALE_MIRROR_MIB=$(SCALE_MIRROR_MIB) \
+	SYNCTHIS_SCALE_MIRROR_NOTES=$(SCALE_MIRROR_NOTES) \
 	SYNCTHIS_SCALE_CHUNKEVAL_KIB=$(SCALE_CHUNKEVAL_KIB) \
 	SYNCTHIS_SCALE_CHUNKEVAL_MIB=$(SCALE_CHUNKEVAL_MIB) \
 	SYNCTHIS_SCALE_CHUNKEVAL_OFFSET_KIB=$(SCALE_CHUNKEVAL_OFFSET_KIB) \

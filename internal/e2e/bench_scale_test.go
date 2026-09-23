@@ -285,7 +285,7 @@ func TestScale_BenchBigFileRename(t *testing.T) {
 
 const (
 	// benchStatusTarget is the Phase 5 claim: status answers in under two
-	// seconds over a 100,000-file folder that has just changed.
+	// seconds over a 5,000-file folder that has just changed.
 	benchStatusTarget = 2 * time.Second
 	// benchStatusCalls is how many times status is run once the folder has
 	// settled. One call measures whatever the machine was doing at that
@@ -293,12 +293,13 @@ const (
 	benchStatusCalls = 10
 	// benchStatusChangedDirs is the incremental change: this many
 	// directories of the tree are rewritten, which at the default shape is
-	// 1,000 of the 100,000 files.
+	// 50 of the 5,000 files, the same 1% of the tree the measurement used
+	// at the old 100,000-file shape.
 	benchStatusChangedDirs = 2
 )
 
 // TestScale_BenchStatusLatency measures how long `syncthis status` takes over
-// a 100,000-file folder right after an incremental change, which is the
+// a 5,000-file folder right after an incremental change, which is the
 // moment it is slowest: the daemon is scanning what changed while the command
 // asks it what it holds.
 //

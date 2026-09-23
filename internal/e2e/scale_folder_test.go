@@ -16,15 +16,18 @@ import (
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
 )
 
-// The shape of the scale fixture: 200 directories of 500 files, so the
-// default is the 100,000 files the task list names. SYNCTHIS_SCALE_FILES_EACH
-// changes how many files each directory holds, which is how a machine with
-// less time runs the same test over a smaller tree and reports the number it
-// really ran.
+// The shape of the scale fixture: 200 directories of 25 files, so the default
+// is the 5,000 files the task list names. 5,000 is the vault-scale target of
+// adr-006: the folder this program is being built to carry is a notes vault
+// of a few hundred to a few thousand markdown files plus attachments, and
+// 5,000 is comfortably larger than it with headroom left over.
+// SYNCTHIS_SCALE_FILES_EACH changes how many files each directory holds,
+// which is how a machine with more time runs the same test over a larger tree
+// and reports the number it really ran.
 const (
 	scaleTreeDirs          = 200
 	scaleTreeFilesEachEnv  = "SYNCTHIS_SCALE_FILES_EACH"
-	scaleTreeFilesEachFull = 500
+	scaleTreeFilesEachFull = 25
 )
 
 // The mutation the reconcile scan has to classify: a tenth of the tree
@@ -180,7 +183,7 @@ func scanFolder(t *testing.T, app *compose.App, o scan.Options) scan.Result {
 	return result
 }
 
-// assertStoredTree is the invariant the 100,000-file test is about: the store
+// assertStoredTree is the invariant the vault-scale test is about: the store
 // holds one live row per file of the tree, with the hash of the bytes that
 // were written, one row per directory, and nothing else.
 func assertStoredTree(t *testing.T, app *compose.App, tree *scaleTree) {
@@ -260,10 +263,10 @@ func scaleFileContentOf(tree *scaleTree, path string) []byte {
 	return data
 }
 
-// TestScale_HundredThousandFilesReconcile is the Phase 1 claim: a folder of
-// 100,000 files is scanned, mutated and reconciled, and after each step the
-// database holds exactly the tree that is on disk, hash by hash.
-func TestScale_HundredThousandFilesReconcile(t *testing.T) {
+// TestScale_VaultFolderReconciles is the Phase 1 claim: a folder of 5,000
+// files is scanned, mutated and reconciled, and after each step the database
+// holds exactly the tree that is on disk, hash by hash.
+func TestScale_VaultFolderReconciles(t *testing.T) {
 	requireScale(t)
 	filesEach := scaleEnvInt(t, scaleTreeFilesEachEnv, scaleTreeFilesEachFull)
 	dir := scaleScratch(t)
@@ -348,7 +351,7 @@ const idleMemoryLimit = 100 << 20
 const scaleIdleSecondsEnv = "SYNCTHIS_SCALE_IDLE_SECONDS"
 
 // TestScale_IdleMemoryUnderTheLimit starts a real daemon process over a
-// 100,000-file folder, waits until it has scanned everything and gone idle,
+// 5,000-file folder, waits until it has scanned everything and gone idle,
 // and measures its resident memory from /proc. A platform that cannot report
 // it skips: passing on an unmeasurable claim would be worse than not running.
 func TestScale_IdleMemoryUnderTheLimit(t *testing.T) {
@@ -361,7 +364,12 @@ func TestScale_IdleMemoryUnderTheLimit(t *testing.T) {
 	root := filepath.Join(dir, "root")
 	tree := buildScaleTree(t, root, scaleTreeDirs, filesEach)
 
-	dataDir := filepath.Join(dir, "data")
+	// The data directory holds the control socket, and a unix socket path
+	// is limited to about 100 characters: a data directory inside the
+	// scratch directory, which is itself deep inside a checkout, makes the
+	// daemon fail to bind. The rest of the scale group keeps its data
+	// directories in a short path for the same reason.
+	dataDir := filepath.Join(scaleShortDir(t), "data")
 	if code, out := runBinary(t, dataDir, "init", "--name", "idle", "--json"); code != 0 {
 		t.Fatalf("init exit = %d, want 0 (%s)", code, out)
 	}
