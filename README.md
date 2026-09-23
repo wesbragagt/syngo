@@ -143,6 +143,6 @@ address. The full walkthrough is in
   other documents and the code use, defined once.
 - [docs/BENCH.md](docs/BENCH.md) — the benchmark scenarios and what the runs
   measured.
-- [docs/PLAN.md](docs/PLAN.md) — the implementation plan, milestone by
-  milestone. It and PLAN-2, PLAN-3 and PLAN-E2E-DOCKER are historical: the work
-  is built, and the documents above describe what shipped.
+- [docs/history/](docs/history/) — the implementation plans, milestone by
+  milestone. They are a record of intent, not reference: the work is built, and
+  the documents above describe what shipped.

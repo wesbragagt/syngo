@@ -1,5 +1,5 @@
 // Package arch_test enforces the dependency direction described in
-// docs/PLAN.md section 0 by parsing the import lists of every package.
+// docs/history/PLAN.md section 0 by parsing the import lists of every package.
 package arch_test
 
 import (
@@ -274,7 +274,7 @@ func TestCmdImportsOnlyCLI(t *testing.T) {
 
 // TestBenchCmdImportsOnlyItsRunner keeps cmd/syncthis-bench as thin as
 // cmd/syncthis: it parses flags and calls internal/bench/runner, nothing
-// else internal, and no third-party package (see docs/PLAN.md section 0's
+// else internal, and no third-party package (see docs/history/PLAN.md section 0's
 // closed dependency list).
 func TestBenchCmdImportsOnlyItsRunner(t *testing.T) {
 	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syncthis-bench") {
