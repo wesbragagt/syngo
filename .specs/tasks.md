@@ -258,6 +258,15 @@ Goal: ship a reliable multi-device Tailscale-first system.
       only the create of the target: the result is a copy plus a stale source
       row until the next scan reaps it, instead of a rename. No data loss.
       Found by the verification of the scan-retry fix, 2026-09-23.
+- [ ] Fix the intermittent failure of `TestReload_PeerAddressChangeKeepsTheNewConnection`
+      and `TestReload_KeepsTheLoopOfAnUnchangedFolder` (internal/app/daemon).
+      Under `-race` the two fail together about one run in three; each passes
+      alone five times out of five, so the interaction between them is what
+      breaks, not either one. Reproduced on main with no branch in play:
+      `go test ./internal/app/daemon/... -run
+      'TestReload_PeerAddressChangeKeepsTheNewConnection|TestReload_KeepsTheLoopOfAnUnchangedFolder'
+      -race -count=3`. Pre-existing, found 2026-09-23 while verifying the scan
+      retry work.
 - [ ] Decide whether `transfer.ValidateChunks` should check content, not only
       geometry. It validates index, offset, length and total coverage against
       the entry size, so a stale chunk index over content of the same size
