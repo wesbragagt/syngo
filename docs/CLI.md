@@ -714,8 +714,10 @@ than this device admits and nothing is buffered waiting for the limit.
 
 1. `daemon run` binds `<data-dir>/control.sock`. A socket left behind by a dead
    daemon is replaced; one a live daemon still answers means exit 6.
-2. It writes `<data-dir>/daemon.pid`. A pid file naming a live process means
-   exit 6; a stale one is overwritten.
+2. It takes an advisory exclusive lock on `<data-dir>/daemon.pid` and writes
+   its pid into it, holding the lock for the whole run. A lock another daemon
+   holds means exit 6; a pid file left behind by a dead daemon holds no lock
+   and is reclaimed, whatever pid it names.
 3. It binds the peer port, starts one loop per folder and one per known peer,
    and closes the readiness channel the banner waits on.
 4. On SIGINT or SIGTERM it stops the loops, closes the control socket and the

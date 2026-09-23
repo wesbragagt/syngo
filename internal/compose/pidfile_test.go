@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"testing"
 )
 
@@ -40,15 +41,48 @@ func TestAcquirePIDFile_WritesAndReleases(t *testing.T) {
 	}
 }
 
-func TestAcquirePIDFile_RefusesALiveOwner(t *testing.T) {
+func TestAcquirePIDFile_RefusesASecondHolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "daemon.pid")
-	// The parent process of the test runner is alive and is not us.
-	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getppid())), 0o600); err != nil {
+
+	release, err := acquirePIDFile(path, os.Getpid())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer release()
+
+	if _, err := acquirePIDFile(path, os.Getpid()); !errors.Is(err, ErrDaemonRunning) {
+		t.Fatalf("second acquire = %v, want ErrDaemonRunning", err)
+	}
+}
+
+// TestAcquirePIDFile_ReclaimsAReusedPID is the regression test for a daemon
+// killed with SIGKILL, whose pid file survives it and whose pid is then handed
+// to an unrelated process. Inside a container pids are small and recycled
+// fast, so this is what a restart finds, and the daemon used to refuse to
+// start for good. The parent of the test runner stands in for the unrelated
+// process: it is alive, it is not a daemon, and it holds no lock.
+func TestAcquirePIDFile_ReclaimsAReusedPID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.pid")
+	reused := os.Getppid()
+	if !processAlive(reused) {
+		t.Fatalf("the parent of the test runner (pid %d) is not alive", reused)
+	}
+	if err := os.WriteFile(path, []byte(strconv.Itoa(reused)+"\n"), 0o600); err != nil {
 		t.Fatalf("write pid file: %v", err)
 	}
 
-	if _, err := acquirePIDFile(path, os.Getpid()); !errors.Is(err, ErrDaemonRunning) {
-		t.Fatalf("acquire = %v, want ErrDaemonRunning", err)
+	release, err := acquirePIDFile(path, os.Getpid())
+	if err != nil {
+		t.Fatalf("acquire over a pid file naming a reused pid: %v", err)
+	}
+	defer release()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pid file: %v", err)
+	}
+	if got := string(data); got != strconv.Itoa(os.Getpid())+"\n" {
+		t.Fatalf("pid file = %q, want our pid", got)
 	}
 }
 
@@ -78,11 +112,13 @@ func TestAcquirePIDFile_IgnoresGarbage(t *testing.T) {
 	release()
 }
 
-func TestProcessAlive(t *testing.T) {
-	if !processAlive(os.Getpid()) {
-		t.Fatalf("processAlive(self) = false")
+// processAlive reports whether a process with that pid exists. It is only a
+// test helper now: the daemon no longer decides anything from pid liveness.
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
 	}
-	if processAlive(deadPID(t)) {
-		t.Fatalf("processAlive(dead) = true")
-	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, os.ErrPermission)
 }

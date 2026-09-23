@@ -16,12 +16,23 @@ identity.key     ed25519 private key, PKCS#8 PEM, mode 0600
 identity.crt     self-signed certificate; its public key is the device ID
 state.db         SQLite database, WAL mode
 control.sock     unix socket, mode 0600, only while the daemon runs
-daemon.pid       pid of the running daemon
+daemon.pid       pid of the running daemon, locked while it runs
 ```
 
 The control socket is chmodded to 0600 as soon as it is bound: every command
 the daemon answers is one its owner could run themselves, so no other user of
 the machine may speak to it.
+
+`daemon.pid` is claimed with an advisory exclusive lock (`flock`) that the
+daemon holds open for its whole run, and the number written in it is what the
+daemon reports so you can signal it. The lock, not the number, is what says the
+directory is taken: a second daemon is refused because the lock is held, and
+the operating system drops the lock when the process dies however it died. So a
+pid file left behind by a daemon killed with SIGKILL, by an OOM kill or by a
+power loss never blocks the next start, not even once that pid has been handed
+to an unrelated process, which is the normal case inside a container where pids
+are small and recycled fast. The number in the file is a hint and nothing
+decides anything from whether that pid is alive.
 
 `max_file_size` in `config.json` is the largest file this device accepts from a
 peer, one tebibyte unless it says otherwise. A manifest announcing a bigger one

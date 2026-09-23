@@ -256,6 +256,33 @@ func TestDaemonRun_StalePIDFileAndSocketAreReplaced(t *testing.T) {
 	waitForDaemon(t, e)
 }
 
+// TestDaemonRun_RestartsAfterAHardKillWhosePIDWasReused reproduces what an
+// 8-hour soak hit after 924 restart rounds: a daemon killed with SIGKILL
+// cannot clean up, so it leaves its pid file and its control socket behind,
+// and inside a container its small pid is soon handed to an unrelated process.
+// The restart must still claim the directory. The parent of the test runner
+// stands in for the process that inherited the pid: alive, and not a daemon.
+func TestDaemonRun_RestartsAfterAHardKillWhosePIDWasReused(t *testing.T) {
+	e := newEnv(t)
+	setupFolder(t, e)
+
+	reused := strconv.Itoa(os.Getppid())
+	if err := os.WriteFile(compose.PIDFilePath(e.dataDir), []byte(reused+"\n"), 0o600); err != nil {
+		t.Fatalf("write pid file naming a reused pid: %v", err)
+	}
+	ln, err := net.Listen("unix", compose.ControlSocketPath(e.dataDir))
+	if err != nil {
+		t.Fatalf("bind stale socket: %v", err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close stale listener: %v", err)
+	}
+
+	startDaemon(t, e)
+	waitForDaemon(t, e)
+}
+
 func TestDaemonRun_OrphanedUnixSocketIsReplaced(t *testing.T) {
 	e := newEnv(t)
 	setupFolder(t, e)
