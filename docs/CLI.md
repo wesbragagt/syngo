@@ -1110,13 +1110,25 @@ reached. `action` is one of
 `reason` is one of `in-sync`, `missing-locally`, `remote-newer`, `local-newer`,
 `both-modified`, `delete-vs-modify`, `delete-policy-never`,
 `symlink-policy-skip`, `remote-deleted`, `kind-changed`, `replace-vs-modify`,
-`mode-changed`, `mode-baseline-unknown`, `parent-conflict` or `invalid-path`.
+`mode-changed`, `mode-baseline-unknown`, `parent-conflict`,
+`unverified-counter-floor` or `invalid-path`.
 
 `remote-newer` means the peer's version was made on top of the one this device
 holds, and `local-newer` the other way round; neither reads a clock. Two
 versions where neither was made on top of the other are `both-modified`, or
 `delete-vs-modify` and `replace-vs-modify` when one side deleted the path or
 replaced it by another kind.
+
+`unverified-counter-floor` is the one conflict that has nothing to do with two
+users editing the same file. It appears only after a database was restored from
+a backup and a file was edited before the daemon reached a peer: the version
+counter that edit was given came from the backup, so the peer's version of the
+path looks like a descendant of the edit when the two were written
+independently. Both are kept rather than believing the counters, so the edit is
+never thrown away. The peer's version takes the path and the edit is beside it
+under a conflict name; resolve it like any other conflict. Reaching a peer
+before editing anything after a restore avoids it altogether. See
+[STATE.md](STATE.md), "The restore window".
 
 `parent-conflict` is a path whose parent is a file here and a directory on the
 peer, with the two versions of that parent in a `replace-vs-modify` conflict.
@@ -1162,6 +1174,7 @@ $ syncthis conflict list --json
 | `both-modified` | both sides changed the file; both versions are on disk |
 | `delete-vs-modify` | the peer deleted a file this device changed; the file is kept |
 | `replace-vs-modify` | the peer turned a file this device changed into a directory or a symlink |
+| `unverified-counter-floor` | this device's database was restored from a backup and the file was edited before any peer was reached; the edit is kept beside the peer's version |
 
 `local_hash` is the version this device had, `remote_hash` the one the peer
 had; `remote_hash` is empty when the peer deleted the path. `conflict_path` is

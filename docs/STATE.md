@@ -97,7 +97,7 @@ holds it open.
 
 ### Migrations
 
-The schema is at version 9. `Open` reads `schema_version`, applies every
+The schema is at version 11. `Open` reads `schema_version`, applies every
 migration above it in one transaction and records the new version:
 
 | Version | Migration | Adds |
@@ -111,6 +111,8 @@ migration above it in one transaction and records the new version:
 | 7 | `007_device_counters.sql` | `device_counters`, the per-device counter floor |
 | 8 | `008_folder_devices.sql` | `folder_devices`, the devices each folder is served to |
 | 9 | `009_chunks.sql` | `file_chunks`, the chunk index; `transfer_chunks.start_offset` and `.byte_length` |
+| 10 | `010_merge_bases.sql` | `merge_bases`, the content a three-way merge merges against |
+| 11 | `011_provisional.sql` | `files.provisional`, the mark on a version written from an unconfirmed counter floor |
 
 A database at an older version is migrated in place, keeping its rows. A
 database at a version the binary does not know is refused rather than opened,
@@ -196,8 +198,15 @@ because the row a chmod writes carries the peer's hash. The row a chmod leaves
 holds the merge of the two vectors, not the peer's alone: no content moved, so
 neither side's history is dropped.
 
-Unlike `synced_mode`, which is local bookkeeping, `version` is sent to peers as
-the `version` field of a manifest entry: it is what lets the other side tell a
+`provisional` marks a version handed out from a counter floor no peer had
+confirmed yet, which is what every version written between a restore from a
+backup and the first contact looks like. It is local bookkeeping, never sent to
+a peer: only the device that handed the counter out knows whether its floor was
+confirmed, and only that device has to act on it. See "The restore window"
+below.
+
+Unlike `synced_mode` and `provisional`, which are local bookkeeping, `version`
+is sent to peers as the `version` field of a manifest entry: it is what lets the other side tell a
 version made on top of its own from one that diverged from it. See
 [PROTOCOL.md](PROTOCOL.md).
 
@@ -215,6 +224,11 @@ version of the path and be overwritten. The first manifest received after the
 restore lifts the floor above every counter the peer holds, so the next version
 this device writes dominates instead. See "Backup and restore" below.
 
+What the floor cannot do is describe itself before that first manifest arrives.
+A version written in the meantime is marked `provisional` on the entry, and the
+sync plan keeps it rather than letting a peer's version replace it. See "The
+restore window".
+
 The floor is recorded after the write it describes. A crash in between leaves
 it below what the entries carry, which loses nothing: the next version is
 raised from the entry as well as from the floor, and the entry is the higher of
@@ -229,7 +243,7 @@ copy holding the other version, empty when there is none. `local_hash` and
 is on disk is how `conflict resolve` finds the version the user asked to keep,
 whichever of the two files holds it. `remote_hash` is empty when the peer
 deleted the path. `reason` is the sync plan reason: `both-modified`,
-`delete-vs-modify` or `replace-vs-modify`.
+`delete-vs-modify`, `replace-vs-modify` or `unverified-counter-floor`.
 
 The id is derived from what diverged, the folder, the path, the two hashes and
 the peer, not from when it was noticed, so a divergence the sync plan reports
@@ -490,10 +504,57 @@ with the peers raises the counter floor above every counter of this device they
 hold, which is what keeps an edit made after the restore from being dominated
 by an older version of the same path.
 
-One window is left: an edit made after the restore and before the first contact
-with a peer, on a path that peer also changed. That edit carries a counter the
-peer already knows and is a conflict rather than a dominant version, so the two
-versions are both kept, one under a conflict name. Nothing is lost either way;
-the order of the two is what cannot be recovered. A device that never receives
-a manifest at all, because every folder it holds is send-only, raises its floor
-only from its own scans, so the rescan above is what lifts it after a restore.
+### The restore window
+
+Editing before that contact is still safe, but it costs a conflict. The floor
+cannot be known until a peer says how far past it the world has gone, so a
+version written before that is handed out from whatever the backup recorded. It
+may carry a counter a peer already holds for this device, and the peer's
+version of the same path then looks like a descendant of the edit when the two
+were in fact written independently. Following the vectors would replace the
+edit without a word.
+
+Such a version is marked `provisional` in `files`, and the sync plan refuses to
+let a peer's version replace, delete or displace it. Both are kept: the peer's
+version takes the path, the edit goes to a conflict name beside it, and
+`syncthis conflict list` reports the divergence with the reason
+`unverified-counter-floor`. The copy is an ordinary file from then on, so it
+travels to the peers like any other. Resolve it with `conflict resolve`, the
+same as any other conflict.
+
+Three properties make this narrow enough to be worth paying for:
+
+1. The question is asked per process run, not per database. A restored database
+   cannot be told from one that was not, so every start treats the floor as
+   unconfirmed until a peer sends a manifest. On a device that was never
+   restored the first contact clears it and nothing was ever marked that a peer
+   could disagree with.
+2. Only a change that hands out a counter is marked. A permission change keeps
+   the vector it found and is not affected.
+3. The mark only acts where the peer holds a *higher* counter for the device
+   that wrote the local version than that version carries. A counter of this
+   device can only have come from this device, so a peer holding one this
+   database does not have means the database lost it. The ordinary case, where
+   the peer took this device's version and built its own on top, leaves the two
+   counters equal and still resolves cleanly, whether the local version was
+   marked or not. An ordinary edit made while the daemon was down is marked too
+   and still wins outright, because it dominates.
+
+The mark is dropped as soon as it has no work left to do: when a peer is found
+holding the same content, which accepts the counter the version carries; when a
+conflict settles the path; and when a later scan, running after the floor was
+confirmed, writes a new version of the path.
+
+What this does not promise is a device with several peers. The floor is
+confirmed by the first manifest from any of them, and a second peer may hold a
+counter of this device that the first did not. Contact with that peer raises
+the floor further, as it always did, but a version written between the two
+contacts is no longer marked. The guarantee is against the peers this device
+has heard from, and the procedure above, which waits for `status` to show the
+peers connected before anything is edited, is what covers the rest.
+
+A device that never receives a manifest at all, because every folder it holds
+is send-only, raises its floor only from its own scans, so the rescan above is
+what lifts it after a restore; everything it writes stays marked, which costs
+it nothing, because nothing it holds is ever compared against a peer's version
+here.
