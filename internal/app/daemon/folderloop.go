@@ -291,7 +291,14 @@ func (l *folderLoop) scan(ctx context.Context, paths []string) bool {
 	// A scan that succeeded after a failure means the root is usable
 	// again, so the watch goes back on without waiting for the next tick.
 	attached := l.ensureWatch(ctx)
-	l.observe(paths, result.Sequence, watchedBefore && !attached && l.watching)
+	// A scan that lost a write race deferred the paths another writer had
+	// changed under it, leaving them to a later scan. The watermark claims
+	// the opposite, that this scan covered everything since the last one,
+	// so a scan that deferred anything does not get to take it: the claim
+	// would be false and the next tick would skip the walk the deferred
+	// paths are waiting for.
+	covered := watchedBefore && !attached && l.watching && result.Deferred == 0
+	l.observe(paths, result.Sequence, covered)
 	log.Debug("scan finished", "changes", len(result.Changes), "paths", paths,
 		"watermark", l.mark.seq, "watermark_valid", l.mark.valid)
 

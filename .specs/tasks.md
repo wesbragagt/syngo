@@ -273,6 +273,20 @@ Goal: ship a reliable multi-device Tailscale-first system.
       holds as a tombstone is left alone: no later scan could pair it, so the
       target is classified at once rather than delayed for nothing.
       `TestScan_RetryDefersARenameWhoseSourceAnotherWriterWrote` guards it.
+- [x] Stop a scan that deferred paths taking the journal watermark. The
+      watermark claims a scan covered everything the watcher reported since the
+      last one, so `watermarkHolds` lets every later tick skip the walk. A scan
+      that lost a write race deferred paths it did not classify, which makes
+      the claim false: the deferred path, the source of a deferred rename
+      included, could stay unrecorded until a fresh filesystem event, a watch
+      drop, a restart or an explicit rescan, while it is still announced to the
+      peers as live. A writer that changes rows without touching disk generates
+      no event at all. Found by the verification of the loose-end fixes,
+      2026-09-23. Fixed the same day: the scan reports `Result.Deferred` and
+      the folder loop leaves `covered` false when it is non-zero, so only a
+      scan that deferred something loses the watermark.
+      `TestWatermark_AScanThatDeferredPathsDoesNotTakeTheWatermark` guards it,
+      and `TestWatermark_TickDoesNotWalkAFolderTheWatcherCovers` still holds.
 - [ ] Fix the intermittent failure of `TestReload_PeerAddressChangeKeepsTheNewConnection`
       and `TestReload_KeepsTheLoopOfAnUnchangedFolder` (internal/app/daemon).
       Under `-race` the two fail together about one run in three; each passes
@@ -282,14 +296,11 @@ Goal: ship a reliable multi-device Tailscale-first system.
       'TestReload_PeerAddressChangeKeepsTheNewConnection|TestReload_KeepsTheLoopOfAnUnchangedFolder'
       -race -count=3`. Pre-existing, found 2026-09-23 while verifying the scan
       retry work.
-- [ ] Decide whether `transfer.ValidateChunks` should check content, not only
-      geometry. It validates index, offset, length and total coverage against
-      the entry size, so a stale chunk index over content of the same size
-      passes and `Server.Chunks` serves it. The peer's own per-chunk hash check
-      rejects the bytes, so this costs a failed pull and a repair rather than
-      corruption, and it is pre-existing behaviour rather than anything the
-      scan-retry work introduced. Found while closing the chunk-index loose
-      end, 2026-09-23.
+- [ ] `transfer.ValidateChunks` checks the geometry of a chunk list against the
+      entry size but not its hashes, so a stale index whose cut happens to
+      cover the right number of bytes is served to a peer and only caught by
+      the receiver's per-chunk hash check, which costs a failed pull and a
+      repair. Noticed while closing the chunk-index loose end, 2026-09-23.
 - [x] Fix the stale pid file that stops a killed daemon restarting. A daemon
       killed with SIGKILL cannot run its cleanup, so `daemon.pid` survived it;
       `acquirePIDFile` then read that pid and the liveness check reported it

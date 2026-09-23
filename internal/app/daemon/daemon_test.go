@@ -50,6 +50,16 @@ type recordingScanner struct {
 	partialErr error
 	// sequence is the folder sequence every scan reports as its result.
 	sequence uint64
+	// deferred is how many paths every scan reports it left to a later
+	// scan, which is what a scan that lost a write race reports.
+	deferred int
+}
+
+// reportDeferred makes every scan report n paths it did not classify.
+func (s *recordingScanner) reportDeferred(n int) {
+	s.mu.Lock()
+	s.deferred = n
+	s.mu.Unlock()
 }
 
 // reportSequence makes every scan report seq as the sequence it wrote.
@@ -70,6 +80,7 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 	s.calls = append(s.calls, scanCall{ID: f.ID, Paths: o.Paths})
 	release := s.release
 	sequence := s.sequence
+	deferred := s.deferred
 	scanErr := s.err
 	if scanErr == nil && len(o.Paths) > 0 {
 		scanErr = s.partialErr
@@ -90,7 +101,7 @@ func (s *recordingScanner) Scan(ctx context.Context, f folder.Folder, o scan.Opt
 	if scanErr != nil {
 		return scan.Result{}, scanErr
 	}
-	return scan.Result{FolderID: f.ID, Sequence: sequence}, nil
+	return scan.Result{FolderID: f.ID, Sequence: sequence, Deferred: deferred}, nil
 }
 
 // failWith makes every scan fail with err.

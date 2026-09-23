@@ -39,6 +39,11 @@ type Result struct {
 	// Ignored counts the entries skipped by a policy or an ignore pattern. A
 	// skipped directory counts once, not once per entry beneath it.
 	Ignored int
+	// Deferred counts the paths another writer changed while this scan was
+	// reading the tree. The scan classified none of them, so it did not
+	// cover the folder: a caller that was about to claim it had, such as
+	// the watermark of the folder loop, must not.
+	Deferred int
 	// Skipped counts the entries the scan could not read. Their stored
 	// version, if any, is left untouched.
 	Skipped int

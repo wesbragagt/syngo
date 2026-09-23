@@ -122,3 +122,37 @@ func TestWatermark_ADatabaseThatWentBackwardsIsScannedInFull(t *testing.T) {
 		t.Fatalf("scan after the restore = %+v, want a full scan", call)
 	}
 }
+
+// TestWatermark_AScanThatDeferredPathsDoesNotTakeTheWatermark closes the gap
+// between the scan retry and the watermark. A scan that loses a write race
+// defers the paths another writer changed under it and leaves them to a later
+// scan. The watermark says the opposite, that this scan covered everything the
+// watcher reported since the last one, so taking it would let every following
+// tick skip the walk the deferred paths are waiting for: the path stays
+// unrecorded until a fresh filesystem event, a watch drop or a restart. A
+// writer that changes rows without touching disk, such as the merge path or
+// another process on the same database, generates no such event at all.
+func TestWatermark_AScanThatDeferredPathsDoesNotTakeTheWatermark(t *testing.T) {
+	h, events := startDaemonWithEvents(t, daemon.Config{RescanInterval: 20 * time.Millisecond}, nil)
+	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+	if !events.Wait("scan.skipped", 1, 3*time.Second) {
+		t.Fatal("no tick was skipped, so the watermark was never taken")
+	}
+
+	// The next scan loses a write race and defers a path.
+	h.scanner.reportDeferred(1)
+	if err := h.daemon.Rescan(h.ctx, "docs"); err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+	waitFor(t, "the deferring scan", func() bool { return len(h.scanner.snapshot()) >= 2 })
+	after := len(h.scanner.snapshot())
+
+	// The tick has to walk: the deferred path is not in the store and
+	// nothing else is going to report it.
+	waitFor(t, "a walk on the tick after a scan deferred a path", func() bool {
+		return len(h.scanner.snapshot()) > after
+	})
+	if call := h.scanner.snapshot()[after]; !call.full() {
+		t.Fatalf("scan after the deferral = %+v, want a full scan", call)
+	}
+}

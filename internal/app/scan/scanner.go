@@ -210,6 +210,9 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 		write.Chunks = chunksExcept(chunks, deferred)
 		err := s.store.ApplyScan(ctx, f.ID, write)
 		if err == nil {
+			// What this scan left to a later one, so a caller
+			// cannot report the folder as fully covered.
+			result.Deferred = len(deferred)
 			// The store hands out one sequence number per written
 			// row, in order, starting at the base.
 			result.Sequence = base + uint64(len(write.Upserts)+len(write.Deleted))
