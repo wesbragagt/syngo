@@ -38,6 +38,8 @@ const (
 	// screenConflicts reviews the paths both sides changed and restores
 	// one of the two versions.
 	screenConflicts
+	// screenEvents is the searchable log.
+	screenEvents
 )
 
 // Options configure a TUI run.
@@ -49,6 +51,10 @@ type Options struct {
 	// PathPoll is how often `network path` is asked; zero means
 	// DefaultPathPoll.
 	PathPoll time.Duration
+	// LogFile is a file the daemon's log is being written to, which the
+	// log screen tails. Empty leaves that screen showing only the changes
+	// this process saw for itself.
+	LogFile string
 }
 
 // Model is the root Bubble Tea model. It owns no synchronization state: every
@@ -90,6 +96,8 @@ type Model struct {
 	setup setupModel
 	// conflicts is the review and restore screen.
 	conflicts conflictsModel
+	// events is the searchable log.
+	events eventsModel
 }
 
 // New builds the root model. It does not talk to the daemon: Init does, so a
@@ -113,6 +121,7 @@ func New(opts Options) Model {
 		height:    24,
 		setup:     newSetup(opts.Client),
 		conflicts: newConflicts(opts.Client),
+		events:    newEvents(opts.LogFile),
 	}
 }
 
@@ -158,6 +167,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.events.resize(msg.Width, msg.Height)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -167,7 +177,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quitting {
 			return m, nil
 		}
-		return m, tea.Batch(fetchStatus(m.client), tick(m.poll))
+		return m, tea.Batch(fetchStatus(m.client), tick(m.poll),
+			tailLog(m.events.logFile, m.events.offset))
 
 	case statusMsg:
 		return m.applyStatus(msg)
@@ -181,6 +192,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pathsMsg:
 		m.paths, m.pathErr = msg.paths, msg.err
 		return m, nil
+
+	case logLinesMsg:
+		// The log is filled whichever screen is showing, so opening it
+		// shows what happened rather than what happens next.
+		var cmd tea.Cmd
+		m.events, cmd = m.events.update(msg)
+		return m, cmd
 
 	case noticeMsg:
 		m.notice = msg.text
@@ -202,6 +220,8 @@ func (m Model) routeToScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setup, cmd = m.setup.update(msg)
 	case screenConflicts:
 		m.conflicts, cmd = m.conflicts.update(msg)
+	case screenEvents:
+		m.events, cmd = m.events.update(msg)
 	}
 	return m, cmd
 }
@@ -228,6 +248,7 @@ func (m Model) applyStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	m.fatal = nil
 	m.status = msg.status
 	m.statusAt = time.Now()
+	m.events.observe(msg.status)
 
 	if m.screen == screenSetup {
 		// The walk stays in charge once the identity exists: adding the
@@ -269,6 +290,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	if m.screen == screenEvents {
+		if m.events.wantsBack(msg) {
+			m.screen = screenDashboard
+			return m, nil
+		}
+		return m.routeToScreen(msg)
+	}
+
 	if m.screen == screenConflicts {
 		next, cmd, back := m.conflicts.key(msg)
 		m.conflicts = next
@@ -288,6 +317,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		m.screen = screenConflicts
 		return m, m.conflicts.enter()
+	case "l":
+		m.screen = screenEvents
+		return m, m.events.enter()
 	}
 	if m.screen == screenDashboard {
 		next, cmd, handled := m.dashboardKey(msg)
@@ -314,6 +346,8 @@ func (m Model) View() string {
 		body = m.dashboardView()
 	case screenConflicts:
 		body = m.conflicts.view(m.width)
+	case screenEvents:
+		body = m.events.view(m.width)
 	}
 	return body + "\n" + m.footer()
 }
@@ -340,10 +374,12 @@ func (m Model) keyHelp() string {
 		return m.setup.help()
 	case screenConflicts:
 		return m.conflicts.help()
+	case screenEvents:
+		return m.events.help()
 	case screenFatal, screenNoDaemon:
 		return "r refresh · q quit"
 	default:
-		return "↑↓ folder · p pause · u resume · s rescan · c conflicts · r refresh · q quit"
+		return "↑↓ folder · p pause · u resume · s rescan · c conflicts · l logs · r refresh · q quit"
 	}
 }
 

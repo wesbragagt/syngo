@@ -55,7 +55,10 @@ func (nopReader) Read([]byte) (int, error) { return 0, io.EOF }
 // precedent for a second binary and it is a development tool that is not
 // shipped, which the TUI is not.
 func newTUICmd(deps *Deps) *cobra.Command {
-	var poll time.Duration
+	var (
+		poll    time.Duration
+		logFile string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "tui",
@@ -75,11 +78,13 @@ func newTUICmd(deps *Deps) *cobra.Command {
 				Runner:  cliRunner{stderr: deps.Stderr},
 				DataDir: deps.Global.DataDir,
 			}
-			opts := tui.Options{Client: client, Poll: poll}
+			opts := tui.Options{Client: client, Poll: poll, LogFile: logFile}
 			return tui.Run(cmd.Context(), opts, deps.Stdin, deps.Stdout)
 		},
 	}
 	cmd.Flags().DurationVar(&poll, "poll", tui.DefaultPoll,
 		"how often the live views ask the daemon what changed")
+	cmd.Flags().StringVar(&logFile, "log-file", "",
+		"a file `daemon run` is writing its log to, for the searchable log view")
 	return cmd
 }
