@@ -1315,6 +1315,23 @@ $ syncthis conflict export 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a /tmp/review
 /tmp/review/6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a.json
 ```
 
+### `syncthis tui`
+
+Opens the interactive terminal interface: live device, folder, queue, path and
+error views, a guided walk from an empty data directory to a paired folder, a
+conflict review screen and a searchable log. It is documented on its own page,
+[TUI.md](TUI.md), which lists the command behind every key. Nothing the
+interface can do is missing from this page: it runs these commands and nothing
+else.
+
+`--json` is a usage error here (exit 2): there is no JSON form of an
+interactive interface.
+
+```console
+$ syncthis tui
+$ syncthis tui --poll 5s --log-file ~/.local/share/syncthis/daemon.log
+```
+
 ### `syncthis completion bash|zsh|fish|powershell`
 
 Writes a completion script to stdout. It is a shell script, not JSON, whatever

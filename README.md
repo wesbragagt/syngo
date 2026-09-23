@@ -105,6 +105,10 @@ address. The full walkthrough is in
   Tailscale client knows, and `peer add nas` takes a MagicDNS host name.
 - `sync-plan` prints what a sync would do without doing it.
 - Every command speaks `--json`, and every failure has its own exit code.
+- `syncthis tui` is the same thing with a screen: live folder, device, queue
+  and path views, a guided walk from nothing to a paired folder, a conflict
+  review screen and a searchable log. It runs the commands above and nothing
+  else, and [docs/TUI.md](docs/TUI.md) says which key runs which.
 
 ## Documentation
 
@@ -112,6 +116,8 @@ address. The full walkthrough is in
   on NixOS, home-manager, Linux, macOS, a NAS and in a container.
 - [docs/CLI.md](docs/CLI.md) — every command, its flags, its JSON shape, the
   exit codes, the daemon lifecycle and a pairing walkthrough over Tailscale.
+- [docs/TUI.md](docs/TUI.md) — the interactive interface, `syncthis tui`, and
+  the command behind every key it answers to.
 - [docs/STATE.md](docs/STATE.md) — the data directory, the database schema and
   the transfer journal.
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) — the wire protocol between two daemons.
