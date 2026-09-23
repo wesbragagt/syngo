@@ -32,9 +32,27 @@ import (
 // and the local version is the one that gives up the path. A path the peer
 // deleted or turned into a directory has no content to fetch.
 func needsRemoteContent(item syncplan.Item) bool {
-	return item.Action == syncplan.ActionConflict && item.Reason == syncplan.ReasonBothModified &&
-		item.Local != nil && item.Remote != nil && item.Remote.Kind == manifest.KindFile &&
-		!conflict.KeepsPath(item.Local.Hash, item.Remote.Hash)
+	if item.Action != syncplan.ActionConflict || item.Local == nil || item.Remote == nil ||
+		item.Remote.Kind != manifest.KindFile || item.Remote.Deleted {
+		return false
+	}
+	switch item.Reason {
+	case syncplan.ReasonBothModified:
+		return !conflict.KeepsPath(item.Local.Hash, item.Remote.Hash)
+	case syncplan.ReasonUnverifiedFloor:
+		// Only this device can see this conflict: its own counter came
+		// from a floor it had not confirmed, and the peer, whose
+		// version dominates by the vectors alone, plans the path as
+		// nothing to do. So the usual split, where each side keeps the
+		// version the hashes assign to it, cannot be used: this device
+		// is the only one that can act, and it always gives the path up
+		// to the peer's version and keeps its own beside it. The copy
+		// is an ordinary file from then on, so the peer pulls it next
+		// cycle and both trees end up holding both versions.
+		return true
+	default:
+		return false
+	}
 }
 
 // keepBoth moves the local version aside and installs the peer's version in

@@ -54,4 +54,17 @@ type Entry struct {
 	// agreed on. It is local bookkeeping, never sent to a peer: a local mode
 	// that differs from it is a local change, which the peer must not undo.
 	SyncedMode uint32
+	// Provisional reports that Version was handed out from a counter floor
+	// this device had not yet confirmed against any peer, which is what
+	// every version written between a restore from a backup and the first
+	// contact looks like. Such a counter may be one a peer already holds
+	// for this device, so a peer version that appears to descend from it
+	// may in fact have been written independently. A provisional entry the
+	// peer's version dominates is therefore kept as a conflict instead of
+	// being overwritten; see syncplan.
+	//
+	// It is local bookkeeping, never sent to a peer: only the device that
+	// handed the counter out knows whether its floor was confirmed, and
+	// only that device has to act on it.
+	Provisional bool
 }

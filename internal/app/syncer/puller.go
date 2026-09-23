@@ -13,6 +13,7 @@ import (
 
 	"github.com/wesbragagt/syncthis/internal/app/mergebase"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
@@ -83,6 +84,11 @@ type Puller struct {
 	// every conflict keep both versions, as it did before the setting
 	// existed.
 	bases *mergebase.Recorder
+	// trust is where the first manifest of a peer is recorded as having
+	// confirmed this device's counter floor. A nil trust is never written
+	// and reads as confirmed, which is what a puller nobody wired one into
+	// holds.
+	trust *counterfloor.Trust
 	log   *slog.Logger
 
 	// resumed remembers the transfers whose partial file this process has
@@ -161,6 +167,11 @@ func NewPuller(store PullStore, fsys ports.FileSystem, hasher ports.Hasher, cloc
 // puller the history it merges against. A nil recorder, which is what a device
 // with the setting off holds, leaves every conflict keeping both versions.
 func (p *Puller) SetMergeBases(r *mergebase.Recorder) { p.bases = r }
+
+// SetCounterFloorTrust hands the puller the record the scanner reads: the
+// first manifest a peer sends is what confirms this device's counter floor,
+// and the puller is where that manifest arrives.
+func (p *Puller) SetCounterFloorTrust(t *counterfloor.Trust) { p.trust = t }
 
 // SyncFolder brings one folder in line with what the peer has: it asks for the
 // peer's manifest, plans against the local one and applies the plan. Only the
@@ -264,6 +275,11 @@ func (p *Puller) SyncFolder(ctx context.Context, conn ports.PeerConn, f folder.F
 // wrote, so after a restore from a backup the first contact lifts the floor
 // back above what the peers have, and the next local change dominates their
 // version instead of being dominated by it.
+// It is also what confirms the floor: until a peer has been heard from, a
+// restored database's floor may be anywhere below the truth, and the scanner
+// marks the versions it writes provisional. A manifest that names no counter
+// of this device confirms it just as well, because a peer that holds none of
+// this device's counters holds nothing that could dominate them.
 func (p *Puller) adoptCounters(ctx context.Context, remote manifest.Manifest) error {
 	self := p.self()
 	if self == "" {
@@ -274,11 +290,15 @@ func (p *Puller) adoptCounters(ctx context.Context, remote manifest.Manifest) er
 		highest = max(highest, e.Version.Counter(self))
 	}
 	if highest == 0 {
+		p.trust.Verify()
 		return nil
 	}
 	if err := p.store.RaiseCounterFloor(ctx, self, highest); err != nil {
 		return fmt.Errorf("adopt counters of %s: %w", self.Short(), err)
 	}
+	// Only after the floor is stored: a crash in between leaves the floor
+	// as it was and the next start doubts it again.
+	p.trust.Verify()
 	return nil
 }
 
@@ -527,8 +547,15 @@ func (p *Puller) recordAgreement(ctx context.Context, id folder.ID, item syncpla
 	// Both sides hold the same content, so the path's history is the merge
 	// of the two vectors: whichever of them a third device holds, it is
 	// then dominated and takes nothing over.
-	if merged := item.Local.Version.Merge(item.Remote.Version); !merged.Equals(item.Local.Version) {
-		if err := p.store.SetVersion(ctx, id, item.Path, merged); err != nil {
+	//
+	// A version written from a counter floor no peer had confirmed stops
+	// being in doubt here: a peer has been found holding the same content,
+	// so the counter it carries is one the peer accepts. The mark is
+	// dropped even when the merge changes nothing, which is the case when
+	// the peer took the version from this device unchanged.
+	merged := item.Local.Version.Merge(item.Remote.Version)
+	if !merged.Equals(item.Local.Version) || item.Local.Provisional {
+		if err := p.store.SetVersion(ctx, id, item.Path, merged, false); err != nil {
 			return err
 		}
 	}

@@ -403,7 +403,7 @@ func TestVersion_RoundTripsAndIsBumpedByDeletions(t *testing.T) {
 	// SetVersion replaces the vector without giving the row a new sequence:
 	// the content is unchanged, only its history is now better known.
 	merged := stored.Bump("CCC")
-	if err := store.SetVersion(ctx, "docs", "a.txt", merged); err != nil {
+	if err := store.SetVersion(ctx, "docs", "a.txt", merged, false); err != nil {
 		t.Fatalf("SetVersion error: %v", err)
 	}
 	after, err := store.GetFile(ctx, "docs", "a.txt")
@@ -414,7 +414,7 @@ func TestVersion_RoundTripsAndIsBumpedByDeletions(t *testing.T) {
 		t.Fatalf("after SetVersion = %q at sequence %d, want %q at %d",
 			after.Version, after.Sequence, merged, got.Sequence)
 	}
-	if err := store.SetVersion(ctx, "docs", "missing.txt", merged); !errors.Is(err, ports.ErrNotFound) {
+	if err := store.SetVersion(ctx, "docs", "missing.txt", merged, false); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("SetVersion on unknown path = %v, want ErrNotFound", err)
 	}
 

@@ -36,6 +36,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/syncer"
 	"github.com/wesbragagt/syncthis/internal/app/transfers"
 	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 )
 
@@ -125,6 +126,11 @@ type App struct {
 	// nil unless the text_merge setting is on, which is what leaves every
 	// conflict keeping both versions.
 	MergeBases *mergebase.Recorder
+	// CounterFloorTrust says whether a peer has confirmed this device's
+	// version counter floor since the process started. It is nil until the
+	// data directory has been initialized, like everything else that needs
+	// an identity.
+	CounterFloorTrust *counterfloor.Trust
 }
 
 // Build opens the data directory and wires the application. It does not create
@@ -275,6 +281,15 @@ func assemble(ctx context.Context, dir string, identity *identityfile.Identity, 
 				ChunkPipeline: cfg.ChunkPipeline,
 			}, logger)
 		app.Puller.SetMergeBases(app.MergeBases)
+		// The scanner and the puller share one record of whether a peer
+		// has confirmed this device's counter floor: the puller sets it
+		// on the first manifest it receives, and the scanner marks
+		// every version it writes before that as provisional. It starts
+		// unverified on every process start, because a database
+		// restored from a backup cannot be told from one that was not.
+		app.CounterFloorTrust = counterfloor.New()
+		app.Scan.SetCounterFloorTrust(app.CounterFloorTrust)
+		app.Puller.SetCounterFloorTrust(app.CounterFloorTrust)
 		// The Hello is built per connection because the folder list
 		// changes while the process runs, and per peer because it
 		// names only the folders that peer is authorized for.

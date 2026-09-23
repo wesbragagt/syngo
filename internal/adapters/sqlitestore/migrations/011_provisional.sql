@@ -1,0 +1,12 @@
+-- Whether the version vector of the entry was handed out from a counter floor
+-- no peer had confirmed yet, which is what every version written between a
+-- restore from a backup and the first contact looks like. Such a counter may
+-- be one a peer already holds for this device, so a peer version that appears
+-- to descend from it may in fact have been written independently: the sync
+-- plan keeps both instead of letting the peer's version replace it.
+--
+-- Rows written before this column existed default to 0. They are not
+-- provisional in any sense that can still be acted on: the window they might
+-- have been written in closed when the daemon that wrote them last reached a
+-- peer, and nothing records whether it did.
+ALTER TABLE files ADD COLUMN provisional INTEGER NOT NULL DEFAULT 0;

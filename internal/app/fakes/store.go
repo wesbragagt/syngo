@@ -224,12 +224,13 @@ func (s *Store) UpsertEntriesIf(_ context.Context, id folder.ID, entries []manif
 
 // MarkDeleted turns the given paths into tombstones.
 func (s *Store) MarkDeleted(_ context.Context, id folder.ID, paths []string, by device.ID, now time.Time) error {
-	return s.markDeleted(id, paths, by, now, 0)
+	return s.markDeleted(id, paths, by, now, 0, false)
 }
 
 // markDeleted turns paths into tombstones, raising the counter of by above
 // floor the way a scan write does.
-func (s *Store) markDeleted(id folder.ID, paths []string, by device.ID, now time.Time, floor uint64) error {
+func (s *Store) markDeleted(id folder.ID, paths []string, by device.ID, now time.Time, floor uint64,
+	provisional bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range paths {
@@ -247,13 +248,15 @@ func (s *Store) markDeleted(id folder.ID, paths []string, by device.ID, now time
 		// A deletion is a content change: the tombstone carries the
 		// vector of the version it replaces, raised by one.
 		e.Version = e.Version.Bump(by).Raise(by, floor+1)
+		e.Provisional = provisional
 		s.files[id][p] = e
 	}
 	return nil
 }
 
 // SetVersion replaces the version vector of one entry.
-func (s *Store) SetVersion(_ context.Context, id folder.ID, p string, v manifest.Version) error {
+func (s *Store) SetVersion(_ context.Context, id folder.ID, p string, v manifest.Version,
+	provisional bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.files[id][p]
@@ -261,6 +264,7 @@ func (s *Store) SetVersion(_ context.Context, id folder.ID, p string, v manifest
 		return fmt.Errorf("file %q in folder %q: %w", p, id, ports.ErrNotFound)
 	}
 	e.Version = v
+	e.Provisional = provisional
 	s.files[id][p] = e
 	return nil
 }
@@ -342,7 +346,7 @@ func (s *Store) ApplyScan(ctx context.Context, id folder.ID, w ports.ScanWrite) 
 	if err := s.UpsertEntries(ctx, id, w.Upserts); err != nil {
 		return err
 	}
-	if err := s.markDeleted(id, w.Deleted, w.By, w.At, w.CounterFloor); err != nil {
+	if err := s.markDeleted(id, w.Deleted, w.By, w.At, w.CounterFloor, w.Provisional); err != nil {
 		return err
 	}
 	if err := s.AppendChanges(ctx, id, w.Changes, w.At); err != nil {

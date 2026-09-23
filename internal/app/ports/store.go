@@ -62,6 +62,13 @@ type ScanWrite struct {
 	// It is what the tombstones of the write are raised to, so a deletion
 	// made after a restore dominates the version it deletes everywhere.
 	CounterFloor uint64
+	// Provisional marks the tombstones of the write as written from a
+	// counter floor no peer had confirmed yet, which is what every version
+	// written between a restore from a backup and the first contact looks
+	// like. The upserts carry the same mark on the entry itself, because a
+	// change that only moved permission bits hands out no counter and is
+	// not provisional. See manifest.Entry.Provisional.
+	Provisional bool
 	// Chunks is how the scan cut each file it read, by path. A path that
 	// is in Upserts but not here kept the chunks the index already has,
 	// which is what an unchanged file does. The chunk index is part of the
@@ -142,7 +149,13 @@ type FileStore interface {
 	// SetVersion replaces the version vector of one entry without giving it
 	// a new sequence number: the content did not change, only what is known
 	// about which versions it descends from.
-	SetVersion(ctx context.Context, id folder.ID, path string, v manifest.Version) error
+	//
+	// provisional replaces manifest.Entry.Provisional as well. The only
+	// caller is the agreement a sync cycle records when both sides already
+	// hold the same content, which is exactly the moment a version written
+	// from an unconfirmed counter floor stops being in doubt: a peer has
+	// been seen holding it.
+	SetVersion(ctx context.Context, id folder.ID, path string, v manifest.Version, provisional bool) error
 	// SetSyncedMode records the permission bits last known to match the peer.
 	SetSyncedMode(ctx context.Context, id folder.ID, path string, mode uint32) error
 	FolderStats(ctx context.Context, id folder.ID) (FolderStats, error)

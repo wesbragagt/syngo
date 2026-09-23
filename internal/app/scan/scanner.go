@@ -13,6 +13,7 @@ import (
 	"github.com/wesbragagt/syncthis/internal/app/mergebase"
 	"github.com/wesbragagt/syncthis/internal/app/ports"
 	"github.com/wesbragagt/syncthis/internal/domain/chunker"
+	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
 	"github.com/wesbragagt/syncthis/internal/domain/device"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
@@ -41,6 +42,10 @@ type Scanner struct {
 	// It is nil unless the text merge setting is on, and then nothing is
 	// kept and nothing is written.
 	bases *mergebase.Recorder
+	// trust says whether the counter floor the versions of this scan are
+	// raised from has been confirmed against a peer. A nil trust reads as
+	// confirmed, which is what a scanner nobody wired one into holds.
+	trust *counterfloor.Trust
 	log   *slog.Logger
 }
 
@@ -48,6 +53,12 @@ type Scanner struct {
 // which is what the three-way merge later merges against. A nil recorder, the
 // state of a device with the setting off, keeps nothing.
 func (s *Scanner) SetMergeBases(r *mergebase.Recorder) { s.bases = r }
+
+// SetCounterFloorTrust hands the scanner the record of whether a peer has
+// confirmed this device's counter floor. Versions written while it has not are
+// marked provisional on the entry, so a peer version that appears to descend
+// from one of them is kept as a conflict rather than replacing it.
+func (s *Scanner) SetCounterFloorTrust(t *counterfloor.Trust) { s.trust = t }
 
 // New returns a scanner. chunkSize is the average chunk size this device cuts
 // with; zero takes the default. log may be nil.
@@ -231,6 +242,10 @@ func (s *Scanner) persist(ctx context.Context, f folder.Folder, old, cur manifes
 func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, now time.Time,
 	floor uint64) ports.ScanWrite {
 	by := s.self()
+	// Nothing has confirmed the floor these versions are raised from, so
+	// the counters they carry may be ones the peers already hold for this
+	// device. The entries say so; the sync plan does the rest.
+	provisional := !s.trust.Verified()
 
 	w := ports.ScanWrite{
 		BaseSequence: base,
@@ -239,13 +254,24 @@ func (s *Scanner) writeOf(result *Result, old manifest.Manifest, base uint64, no
 		At:           now,
 		LastError:    result.Warning(),
 		CounterFloor: floor,
+		Provisional:  provisional,
 	}
 	for _, c := range result.Changes {
 		switch c.Type {
 		case manifest.Create, manifest.Modify, manifest.Rename:
 			e := *c.New
 			e.ModifiedBy = by
+			prev := old.Entries[c.Path]
 			e.Version = versionOf(c, old, by, floor)
+			// Only a change that hands out a new counter can have
+			// been given one the peers already hold. A change that
+			// leaves the vector alone, which is what a
+			// permission-only change does, keeps whatever the
+			// entry already carried.
+			e.Provisional = prev.Provisional
+			if !e.Version.Equals(prev.Version) {
+				e.Provisional = provisional
+			}
 			w.Upserts = append(w.Upserts, e)
 			if c.Type == manifest.Rename {
 				w.Deleted = append(w.Deleted, c.OldPath)

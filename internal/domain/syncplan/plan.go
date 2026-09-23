@@ -81,6 +81,12 @@ const (
 	ReasonModeUnknown       = "mode-baseline-unknown"
 	ReasonInvalidPath       = "invalid-path"
 	ReasonParentConflict    = "parent-conflict"
+	// ReasonUnverifiedFloor is a local version the peer's version appears
+	// to descend from, written from a counter floor this device had not
+	// confirmed against any peer. The descent cannot be believed, so the
+	// two versions are kept as a conflict rather than one replacing the
+	// other.
+	ReasonUnverifiedFloor = "unverified-counter-floor"
 )
 
 // Item is one decision in a plan, describing what to do with Path.
@@ -223,6 +229,9 @@ func remoteFile(item Item, local, remote *manifest.Entry) Item {
 	}
 	switch local.Version.Compare(remote.Version) {
 	case manifest.Before:
+		if lostWrite(local, remote) {
+			return with(item, ActionConflict, ReasonUnverifiedFloor)
+		}
 		return with(item, ActionPull, ReasonRemoteNewer)
 	case manifest.After:
 		return with(item, ActionNone, ReasonLocalNewer)
@@ -273,9 +282,46 @@ func kindChanged(item Item, local, remote *manifest.Entry) Item {
 		return with(item, ActionNone, ReasonLocalNewer)
 	case manifest.Concurrent:
 		return with(item, ActionConflict, ReasonReplaceVsModify)
+	case manifest.Before:
+		if lostWrite(local, remote) {
+			// The replacement only looks newer than the local file
+			// because the local counter came from an unconfirmed
+			// floor. The file is kept beside the new kind instead.
+			// The reason stays ReasonReplaceVsModify because Plan
+			// keys the blocking of the path's children on it.
+			return with(item, ActionConflict, ReasonReplaceVsModify)
+		}
+		return with(item, ActionReplace, ReasonKindChanged)
 	default:
 		return with(item, ActionReplace, ReasonKindChanged)
 	}
+}
+
+// lostWrite reports that the peer's version can only appear to descend from
+// the local one because this device's database is missing a write it once
+// made. It is the restore-window case, and the two conditions are both needed
+// to name it without naming anything else:
+//
+//  1. The local version is provisional: its counter was handed out from a
+//     counter floor no peer had confirmed, which is what every version written
+//     between a restore from a backup and the first contact looks like. A
+//     stale entry the restore brought back but nobody has edited since is not
+//     provisional, and following the peer for it loses nothing.
+//  2. The peer holds a higher counter for the device that wrote the local
+//     version than that version carries. A counter of this device can only
+//     have come from this device, so a peer holding one this database does not
+//     have means the database lost it. The ordinary case, where the peer took
+//     this device's version and built its own on top, leaves the two counters
+//     equal and is not this.
+//
+// Both together say: the local file holds an edit made in the window, and the
+// peer's version was not made on top of that edit, whatever the vectors say.
+// The two are concurrent in fact and are kept as a conflict.
+func lostWrite(local, remote *manifest.Entry) bool {
+	if !local.Provisional || local.ModifiedBy == "" {
+		return false
+	}
+	return remote.Version.Counter(local.ModifiedBy) > local.Version.Counter(local.ModifiedBy)
 }
 
 // perm returns the permission bits of a stored mode.
@@ -298,6 +344,12 @@ func remoteDeleted(item Item, local, remote *manifest.Entry, f folder.Folder) It
 	}
 	switch local.Version.Compare(remote.Version) {
 	case manifest.Before:
+		if lostWrite(local, remote) {
+			// The deletion only looks newer than the local file
+			// because the local counter came from an unconfirmed
+			// floor. The file is kept rather than removed.
+			return with(item, ActionConflict, ReasonUnverifiedFloor)
+		}
 		return with(item, ActionDelete, ReasonRemoteDeleted)
 	case manifest.After:
 		return with(item, ActionNone, ReasonLocalNewer)
