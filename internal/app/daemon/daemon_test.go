@@ -1072,7 +1072,12 @@ func TestReload_WatchesTheNewPathOfAMovedFolder(t *testing.T) {
 // what it does not have to: a restart costs a full rescan of the folder.
 func TestReload_KeepsTheLoopOfAnUnchangedFolder(t *testing.T) {
 	h := startDaemon(t, daemon.Config{RescanInterval: time.Hour}, testFolder("docs", false))
+	// Both of what the reload must leave alone have to be in place before
+	// it runs: the watch is attached in a goroutine of its own, so a
+	// finished startup scan does not mean Watch has been called yet, and a
+	// reload judged against zero watches proves nothing.
 	waitFor(t, "startup scan", func() bool { return len(h.scanner.snapshot()) == 1 })
+	waitFor(t, "the startup watch", func() bool { return len(h.watcher.Roots()) == 1 })
 
 	// The same folder with another label: nothing the loop reads at start.
 	relabelled := testFolder("docs", false)
@@ -1122,6 +1127,15 @@ func TestReload_PeerAddressChangeKeepsTheNewConnection(t *testing.T) {
 			}
 		}
 		return false
+	})
+	// The dial is recorded before the connection is handed back, so the
+	// new loop still reports "connecting" for the moment between the dial
+	// and its first ping. What this test is about starts once that ping
+	// has reported the peer connected; a state wiped instead of reported
+	// never gets here, because the next ping is an hour away.
+	waitFor(t, "the new loop to report the peer connected", func() bool {
+		report, err := h.daemon.Status(h.ctx)
+		return err == nil && len(report.Peers) == 1 && report.Peers[0].Connected
 	})
 	// The state the new loop reported must survive the old loop stopping.
 	deadline := time.Now().Add(200 * time.Millisecond)

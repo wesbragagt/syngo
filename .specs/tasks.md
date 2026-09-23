@@ -293,15 +293,21 @@ Goal: ship a reliable multi-device Tailscale-first system.
       scan that deferred something loses the watermark.
       `TestWatermark_AScanThatDeferredPathsDoesNotTakeTheWatermark` guards it,
       and `TestWatermark_TickDoesNotWalkAFolderTheWatcherCovers` still holds.
-- [ ] Fix the intermittent failure of `TestReload_PeerAddressChangeKeepsTheNewConnection`
+- [x] Fix the intermittent failure of `TestReload_PeerAddressChangeKeepsTheNewConnection`
       and `TestReload_KeepsTheLoopOfAnUnchangedFolder` (internal/app/daemon).
-      Under `-race` the two fail together about one run in three; each passes
-      alone five times out of five, so the interaction between them is what
-      breaks, not either one. Reproduced on main with no branch in play:
-      `go test ./internal/app/daemon/... -run
-      'TestReload_PeerAddressChangeKeepsTheNewConnection|TestReload_KeepsTheLoopOfAnUnchangedFolder'
-      -race -count=3`. Pre-existing, found 2026-09-23 while verifying the scan
-      retry work.
+      Neither is an interaction: run alone under `-race -count=30` each still
+      fails, so the two only looked linked because the same run held both.
+      Both waited on a condition that does not imply what they then assert.
+      The peer test waited on the dial being recorded, which happens before
+      the connection is handed back and so before the new loop's first ping
+      reports the peer connected; it now waits for that report, which is also
+      what a wiped state would fail to produce, since the next ping is an hour
+      away. The folder test waited on the startup scan, but the watch is
+      attached in a goroutine of its own, so `Roots()` could still be empty;
+      it now waits for the watch too. The reload path itself is not racy: it
+      stops every stale loop before it starts any new one, and
+      `forgetPeerState` already refuses to drop a state another loop owns.
+      20 of 20 clean runs of the reproducing command afterwards.
 - [ ] `transfer.ValidateChunks` checks the geometry of a chunk list against the
       entry size but not its hashes, so a stale index whose cut happens to
       cover the right number of bytes is served to a peer and only caught by
