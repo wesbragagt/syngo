@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syncthis/internal/domain/conflict"
 	"github.com/wesbragagt/syncthis/internal/domain/folder"
 	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
 )
 
 // TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost covers the counter
@@ -72,6 +74,105 @@ func TestRestore_AnEditAfterAnOldDatabaseIsRestoredIsNotLost(t *testing.T) {
 	writeFile(t, b, "shared.txt", []byte("the version written after the restore"))
 	waitFileContent(t, a, "shared.txt", "the version written after the restore")
 	waitTreeEqual(t, b, a)
+}
+
+// TestRestore_AnEditMadeBeforeTheFirstContactIsNotLost covers the window the
+// counter floor alone cannot close. The floor is learned from a peer on first
+// contact, so between putting an old database back and reaching anyone, b
+// hands out counters from whatever the backup recorded. An edit made in that
+// window gets a counter a already holds for b, so a's version of the path
+// appears to descend from the edit when in fact the two were written
+// independently. Following a would throw the edit away without a word.
+//
+// Both versions are kept instead: the edit ends up under a conflict name, on
+// both devices, and `conflict list` names it. An extra conflict the user
+// resolves by hand beats an automatic resolution that loses data.
+func TestRestore_AnEditMadeBeforeTheFirstContactIsNotLost(t *testing.T) {
+	a := startNode(t, "a", folder.ModeSendReceive)
+	b := startNode(t, "b", folder.ModeSendReceive)
+	writeFile(t, b, "shared.txt", []byte("the first version, written on b"))
+	pair(t, a, b)
+	waitTreeEqual(t, a, b)
+
+	// The backup, taken with the daemon stopped as STATE.md documents. It
+	// records b's counter of shared.txt at 1.
+	b.Stop()
+	backup := filepath.Join(t.TempDir(), "state.db")
+	copyFile(t, filepath.Join(b.DataDir, compose.DatabaseFile), backup)
+	b.Restart()
+
+	// Two more versions travel to a, so a holds counters of b the backup
+	// knows nothing about.
+	const peerVersion = "the third version, written on b"
+	writeFile(t, b, "shared.txt", []byte("the second version, written on b"))
+	waitFileContent(t, a, "shared.txt", "the second version, written on b")
+	writeFile(t, b, "shared.txt", []byte(peerVersion))
+	waitFileContent(t, a, "shared.txt", peerVersion)
+	// The content being on a's disk is not the same as a having recorded
+	// it: a daemon stopped between installing a file and writing its row
+	// records the file as its own local creation at its next start, which
+	// would give a a vector it never had and take the test off the case it
+	// is about. Waiting for the transfer to be gone is waiting for the row.
+	waitConverged(t, b, a)
+
+	// a goes away, so nothing can confirm b's floor while the window is
+	// open. It comes back further down still holding the third version.
+	a.Stop()
+
+	// The restore, and the edit made before b has spoken to anyone. Both
+	// happen with b stopped, so the scan b runs at its next start is the
+	// one that records the edit, and it records it before any peer could
+	// have been reached: there is no window left for a sync cycle to slip
+	// into and make the test depend on which ran first.
+	const editAfterRestore = "the edit made in the window"
+	b.Stop()
+	copyFile(t, backup, filepath.Join(b.DataDir, compose.DatabaseFile))
+	writeFile(t, b, "shared.txt", []byte(editAfterRestore))
+	b.Restart()
+	waitFor(t, "b to record the edit made before its first contact", convergeTimeout, func() bool {
+		m, err := b.App.Store.LoadManifest(controlCtx(t), folderID)
+		if err != nil {
+			return false
+		}
+		e := m.Entries["shared.txt"]
+		return e.Provisional && e.Version.Counter(b.ID) > 1
+	})
+
+	a.Restart()
+	waitFor(t, "b to connect to a again", convergeTimeout, func() bool {
+		peers := b.Status().Peers
+		return len(peers) == 1 && peers[0].Connected
+	})
+	waitConverged(t, a, b)
+
+	// Neither version is gone, on either device.
+	for _, n := range []*node{a, b} {
+		files := contentsOf(t, n)
+		if !holds(files, editAfterRestore) {
+			t.Fatalf("%s holds %v, want the edit made before the first contact", n.name, files)
+		}
+		if !holds(files, peerVersion) {
+			t.Fatalf("%s holds %v, want the version a kept as well", n.name, files)
+		}
+		if files["shared.txt"] != peerVersion {
+			t.Fatalf("shared.txt on %s = %q, want the peer's version at the path",
+				n.name, files["shared.txt"])
+		}
+		if copies := copiesIn(files); len(copies) != 1 {
+			t.Fatalf("%s has conflict copies %v, want exactly one holding the edit",
+				n.name, copies)
+		}
+	}
+
+	// b is the only device that can see the divergence, so b is where the
+	// user is told about it.
+	rows := conflictsOf(t, b)
+	if len(rows) != 1 || rows[0].Reason != syncplan.ReasonUnverifiedFloor {
+		t.Fatalf("b reports %+v, want one %q conflict", rows, syncplan.ReasonUnverifiedFloor)
+	}
+	if rows[0].Path != "shared.txt" || !conflict.IsCopy(rows[0].ConflictPath) {
+		t.Fatalf("conflict row = %+v, want shared.txt with the edit at a conflict name", rows[0])
+	}
 }
 
 // copyFile copies a file, replacing the destination.
