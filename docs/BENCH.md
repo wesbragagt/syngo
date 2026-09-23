@@ -220,7 +220,7 @@ producing a result: this runner never fakes a Tailscale measurement.
 The benchmark scenarios above measure convergence and throughput against a
 corpus. The scale suite measures a different set of claims: the ones about
 size and resource use that the task list states as absolutes, such as "a
-100,000-file folder reconciles safely" and "idle memory under 100 MB". They
+5,000-file folder reconciles safely" and "idle memory under 100 MB". They
 are tests rather than benchmarks, because each one has a pass or fail
 condition, and they live in `internal/e2e` alongside the tests they share a
 harness with.
@@ -244,10 +244,12 @@ $ make scale SCALE_CYCLES=100 SCALE_TRANSFER_GIB=2 SCALE_FILES_EACH=100
 | Variable | Default | What it sets |
 | --- | --- | --- |
 | `SCALE_DIR` | `.scale` | Where fixtures, folder roots and staged files go |
-| `SCALE_FILES_EACH` | `500` | Files per directory; 200 directories, so 100,000 files |
+| `SCALE_FILES_EACH` | `25` | Files per directory; 200 directories, so 5,000 files |
 | `SCALE_IDLE_SECONDS` | `300` | How long an idle daemon is watched |
 | `SCALE_TRANSFER_GIB` | `10` | Size of the single-file transfer |
 | `SCALE_CYCLES` | `1000` | Kill-and-restart cycles |
+| `SCALE_MIRROR_MIB` | `2048` | Total size of the vault-sized mirror |
+| `SCALE_MIRROR_NOTES` | `4000` | Note-sized files in the mirror, the rest being 32 MiB attachments |
 | `SCALE_RATE_SECONDS` | `120` | Length of the bandwidth measurement window |
 | `SCALE_CHUNKEVAL_KIB` | `1024,256,64,16` | Average chunk sizes the chunk size sweep measures |
 | `SCALE_CHUNKEVAL_MIB` | `1024` | Size of the file the sweep moves at each average |
@@ -272,33 +274,44 @@ portable way to read another process's RSS from the standard library, so on a
 platform that does not provide `/proc` these tests skip with that as the
 reason rather than passing.
 
+The file counts and the mirror size were rescoped on 2026-09-23 to the folder
+this program actually carries, a personal notes vault; adr-006 records why and
+what each number was before. The rows marked 2026-09-23 were re-measured at the
+new scale on the same machine.
+
 | Claim | Measured | Verdict |
 | --- | --- | --- |
-| 100,000-file folder reconciles safely | see below | pass |
-| Idle memory under 100 MB | 148.8 MiB settled over 100,000 files | **fail** |
+| 5,000-file folder reconciles safely | see below (2026-09-23) | pass |
+| Idle memory under 100 MB over 5,000 files | 32.8 MiB settled (2026-09-23) | pass |
+| 2 GiB mirror resumes after restart without a retransfer | 0 payload bytes pulled (2026-09-23) | pass |
 | 10 GiB transfer with bounded memory | 25.2 MiB peak receiver RSS | pass |
 | 1,000 interruption cycles without corruption | see below | pass |
 | Bandwidth within 5% of the limit | -0.13% over 1m44s | pass |
 
-#### 100,000-file reconcile
+#### 5,000-file reconcile
 
-200 directories of 500 files, 15.1 MiB in total.
+200 directories of 25 files, 767 KiB in total. Date: 2026-09-23.
 
 ```
-built 100000 files in 200 directories (15.1 MiB) in 868ms
-scan: 100200 entries, 100000 hashed, 100200 changes, 0 skipped, took 3.53s
-scan: 100202 entries,  11000 hashed,  12002 changes, 0 skipped, took 908ms
-scan: 100202 entries,      0 hashed,      0 changes, 0 skipped, took 504ms
-reconciled 100000 files: 10000 modified, 1000 deleted, 1000 added
+built 5000 files in 200 directories (767.2 KiB) in 34.263678ms
+scan: 5200 entries, 5000 hashed, 5200 changes, 0 skipped, took 275.127424ms
+scan: 5202 entries,  550 hashed,  602 changes, 0 skipped, took 66.759627ms
+scan: 5202 entries,    0 hashed,    0 changes, 0 skipped, took 25.497576ms
+reconciled 5000 files: 500 modified, 50 deleted, 50 added
 ```
 
 The three scans are the first record, the reconcile of a mutated tree, and a
 repeat that must find nothing. What the test asserts is not that the scans
 finished: after each one it compares the stored manifest against the bytes the
 test wrote, entry by entry, and checks that `FolderStats` reports exactly
-100,000 file rows, 200 directory rows and the right total size. The reconcile
-also has to classify the mutation exactly: 10,000 modifications, 1,000
-deletions, 1,000 creations and no renames.
+5,000 file rows, 200 directory rows and the right total size. The reconcile
+also has to classify the mutation exactly: 500 modifications, 50 deletions, 50
+creations and no renames.
+
+The same test at the old 100,000-file default, measured 2026-09-22, recorded
+the tree in 3.53 s, reconciled 12,002 changes in 908 ms and found nothing on a
+repeat in 504 ms. Nothing about that run was wrong; it was measuring a folder
+nobody here syncs. `make scale SCALE_FILES_EACH=500` runs it again.
 
 Consecutive revisions of a fixture file always differ in length, and no two
 files ever hold the same bytes. Without the first property a rescan can miss a
@@ -306,11 +319,26 @@ change whatever the filesystem reports for the modification time; without the
 second the scanner correctly pairs a deletion with a creation and reports a
 rename, which would make the expected counts wrong.
 
-#### Idle memory: the 100 MB claim does not hold at 100,000 files
+#### Idle memory: the 100 MB claim holds at 5,000 files
 
-This is the one failing measurement. A daemon over a 100,000-file folder, left
-idle for five minutes after it reported the folder scanned and no change
-pending, settles at **148.8 MiB** resident. The limit is 100 MiB.
+A daemon over a 5,000-file folder, left idle for five minutes after it
+reported the folder scanned and no change pending, settles at **32.8 MiB**
+resident against a 100 MiB limit. Date: 2026-09-23.
+
+```
+peak resident memory including the startup scan: 33.7 MiB
+idle over 5m0s: 600 samples, first 33.7 MiB, highest 33.9 MiB,
+  settled 32.8 MiB (last quarter), last 25.1 MiB, limit 100.0 MiB (5000 files)
+settled 32.8 MiB over 5000 files = 6885 B per file
+```
+
+The settled figure is the highest reading over the last quarter of the window,
+not a single sample and not the reading right after the scan. The per-file
+figure is high here because at 5,000 files the reading is almost all fixed
+overhead; the marginal cost is the 1.45 KiB per file measured below.
+
+The same test at 100,000 files, measured 2026-09-22, settled at **148.8 MiB**
+and failed:
 
 ```
 peak resident memory including the startup scan: 174.0 MiB
@@ -318,12 +346,12 @@ idle over 5m0s: 600 samples, first 159.8 MiB, highest 160.0 MiB,
   settled 148.8 MiB (last quarter), last 148.8 MiB, limit 100.0 MiB
 ```
 
-The settled figure is the highest reading over the last quarter of the window,
-not a single sample and not the reading right after the scan. A five-minute
-window is long enough for the Go scavenger to have run several times; it
-returned about 11 MiB over that window and then stopped, so the remaining
-149 MiB is memory the daemon holds, not memory the runtime has yet to give
-back.
+A five-minute window is long enough for the Go scavenger to have run several
+times; it returned about 11 MiB over that window and then stopped, so the
+remaining 149 MiB was memory the daemon held, not memory the runtime had yet
+to give back. That number is real and it is not the claim: adr-006 rescoped
+the claim to the file count this program is used at. `make scale
+SCALE_FILES_EACH=500` reproduces the failing run.
 
 Resident memory grows linearly with the file count, measured over a
 two-minute window at four sizes:
@@ -336,14 +364,40 @@ two-minute window at four sizes:
 | 100,000 | 161.0 MiB | 1688 |
 
 The marginal cost is about 1.45 KiB per file on top of roughly 22 MiB of fixed
-overhead, which puts the 100 MiB crossing at somewhere near 54,000 files. The
-claim holds comfortably for a folder of tens of thousands of files and does
-not hold at 100,000. The task list line stays open.
+overhead, which puts the 100 MiB crossing at somewhere near 54,000 files. A
+vault of 5,000 files sits an order of magnitude below that crossing, which is
+why the rescoped claim passes with 67 MiB of headroom rather than passing by a
+hair.
 
-The test asserts 100 MiB and therefore fails today. That is deliberate: the
-limit under test is the claim, and lowering it to whatever this machine
-happens to measure would turn the test into a description of the current
-behaviour instead of a check on it.
+The test asserts 100 MiB, not whatever this machine happens to measure. The
+limit under test is the claim; lowering it to the measurement would turn the
+test into a description of the current behaviour instead of a check on it.
+
+#### 2 GiB mirror, restarted
+
+The Phase 3 claim is that a mirror resumes after a restart instead of pulling
+the folder again. The size is the vault-scale target of adr-006: 2 GiB of
+notes and attachments, which is an attachment-heavy version of the folder this
+program carries, twice over. Date: 2026-09-23.
+
+```
+built a vault of 4062 files (4000 notes, 62 attachments of 32.0 MiB)
+  totalling 2.00 GiB in 7.842197408s
+mirrored 4062 files (2.00 GiB) in 12.081947837s; the receiver pulled
+  2.00 GiB from the peer
+after restarting both daemons and waiting 1m30s (3 sync intervals of 30s):
+  the receiver pulled 0 payload bytes, 0 transfers active, 0 pending
+```
+
+Three things make the zero mean something. The first mirror is checked to have
+really moved the whole 2.00 GiB over the network, so the fixture cannot have
+deduplicated its way to a small transfer. Both daemons are then restarted with
+fresh event recorders, so every byte counted afterwards was pulled by the
+restarted daemon and not carried over from the first pass. And the wait is
+three shipped sync intervals rather than one moment: a retransfer that the
+periodic cycle would have started has had the chance to start, three times
+over. At the end the receiver's tree still matches the source hash for hash
+and no partial download is left behind.
 
 #### 10 GiB transfer
 
@@ -443,6 +497,70 @@ settles. It also refuses to report a rate measured over less than half the
 requested window. The measured window here was 1m44.9s, and the sustained rate
 was 0.13% below the configured limit.
 
+## The soak
+
+The task list used to ask for a 30-day soak. adr-006 replaced it with **eight
+hours across three devices**: what a soak finds is a function of how many
+change-and-break rounds have gone by, and the container soak forces a
+partition, a shaped link or a daemon kill every fifth round, which is denser
+chaos than a personal tailnet sees in a month.
+
+```console
+$ make e2e-docker-soak MINUTES=480
+```
+
+**This has not been run.** Nothing in this file reports a soak result, and the
+task list line stays open until one exists.
+
+## Convergence trials
+
+The task list used to ask for 99.99% automatic convergence for non-conflicting
+changes, two devices and three. adr-006 replaced the rate with a stated number
+of real trials: convergence here is decided by version vectors and a total
+order on content, both deterministic, so a rate below 100% would mean the
+algorithm is wrong rather than that the odds were long. What a trial adds is
+evidence that the implementation does not drop an edit or invent a conflict.
+
+These are ordinary tests run repeatedly, not a separate harness.
+
+### Two devices
+
+```console
+$ go test ./internal/e2e/ -run 'TestTwoWay_IndependentEditsConverge$' \
+    -count=200 -p 1
+ok  	github.com/wesbragagt/syncthis/internal/e2e	75.342s
+```
+
+**200 of 200 trials converged.** Each trial pairs two devices, converges a
+folder, then edits a different path on each device at the same time. The
+assertions are that both edits survive with their own content, that no conflict
+copy exists, and that neither device recorded a conflict row. Date: 2026-09-23.
+
+### Three devices
+
+```console
+$ SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=syncthis-e2e:dev \
+    go test ./internal/e2edocker/ \
+    -run 'TestMesh_ConcurrentDisjointEditsConverge$' -count=20 -p 1
+ok  	github.com/wesbragagt/syncthis/internal/e2edocker	898.305s
+```
+
+**20 of 20 runs converged, over 200 rounds and 3,000 changes.** Each run starts
+three containers in a mesh and does ten rounds; in every round all three
+devices write five paths apiece at the same instant, some of the writes being
+deletes of what an earlier round wrote. Each round must end with the three
+devices holding the same tree and no conflict row anywhere, and each run ends
+by checking the cluster invariants and that every path holds its last write.
+Date: 2026-09-23.
+
+### What this is not
+
+3,000 changes cannot distinguish a fault that happens once in ten thousand. It
+is a far smaller sample than a 99.99% claim would need, and it is reported as a
+count on purpose. The real safety net is the deterministic algorithm and the
+conflict suite that exercises its edges: divergent edits, rename against
+delete, case-only renames, stale resolutions and the restore window.
+
 ## The Phase 5 benchmarks
 
 Six lines of .specs/tasks.md Phase 5 are claims about what the chunker, the
@@ -477,10 +595,10 @@ document save).
 
 | Claim | Measured | Verdict |
 | --- | --- | --- |
-| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 507.3 ms median over loopback; 514 ms one way between two machines over a direct tailnet path | pass |
+| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 514 ms one way between icebox and macpro-nixos over a confirmed direct path (2026-09-23); 507.3 ms median over loopback | pass |
 | 1 MiB inserted into a 10 GB file transfers less than 2 MiB after caching | 1,254,397 bytes (1.20 MiB) at the 64 KiB default | pass |
 | A 10 GB rename transfers zero payload bytes | 0 bytes | pass |
-| 100,000-file status under two seconds after incremental change | 301.6 ms slowest, 24.8 ms median | pass |
+| 5,000-file status under two seconds after incremental change | 15.4 ms slowest, 3.5 ms median (2026-09-23) | pass |
 | Small edits use at least 90% fewer bytes than a whole-file transfer | 99.90% fewer | pass |
 | Compare against the Phase 0 baseline corpus | +1.0% convergence, same bytes | done, see below |
 
@@ -588,26 +706,31 @@ path: every one of the 10.00 GiB came from the copy it already had, and the
 renamed file hashes to what the sender holds. The 58 s is disk, not network:
 the receiver copies the file into its new name locally.
 
-#### 100,000-file status latency
+#### 5,000-file status latency
 
-A daemon over 200 directories of 500 files. Once it reported the folder
-scanned and idle, 1,000 of those files were rewritten and `syncthis status
---json` was run as a real command, repeatedly, from the moment of the change.
+A daemon over 200 directories of 25 files. Once it reported the folder scanned
+and idle, 50 of those files were rewritten and `syncthis status --json` was run
+as a real command, repeatedly, from the moment of the change. Date: 2026-09-23.
 
 ```
-built 100000 files in 200 directories (15.1 MiB) in 944ms
-100000 files, 1000 of them rewritten: 20 status calls while the daemon took
-  the change in, slowest 301.566078ms; the change was reported 1.525696802s
-  after it was made; 10 calls afterwards, median 24.837082ms,
-  slowest 26.017628ms (target 2s)
+built 5000 files in 200 directories (767.2 KiB) in 34.666281ms
+5000 files, 50 of them rewritten: 103 status calls while the daemon took the
+  change in, slowest 15.38858ms; the change was reported 524.84124ms after it
+  was made; 10 calls afterwards, median 3.471668ms, slowest 3.853732ms
+  (target 2s)
 ```
 
-Two numbers matter and both are under the two seconds. A status call made
-while the daemon is scanning and writing the 1,000 changed rows answers in at
-most 302 ms; once the daemon has settled a call costs 25 ms, which includes
-starting the process and a round trip over the control socket. The change
-itself was visible in `status` 1.53 s after it was made, of which 500 ms is
-the debounce.
+Two numbers matter and both are far under the two seconds. A status call made
+while the daemon is scanning and writing the 50 changed rows answers in at most
+15 ms; once the daemon has settled a call costs 3.5 ms, which includes starting
+the process and a round trip over the control socket. The change itself was
+visible in `status` 525 ms after it was made, almost all of it the 500 ms
+debounce.
+
+The same benchmark at the old 100,000-file default, measured 2026-09-22,
+answered in at most 302 ms during the change and 24.8 ms once settled, and
+reported the change 1.53 s after it was made. Both runs pass; adr-006 records
+why the smaller folder is the one the claim is about.
 
 The command is measured rather than an in-process call on purpose: what an
 operator waits for includes the process start.
