@@ -221,14 +221,19 @@ Goal: ship a reliable multi-device Tailscale-first system.
       the liveness check correctly said that pid was alive, so the data
       directory refused every further start. See the pid-reuse task below. The
       soak must be run again to completion once that is fixed.
-- [ ] Fix the stale pid file that stops a killed daemon restarting. A daemon
-      killed with SIGKILL cannot run its cleanup, so `daemon.pid` survives it.
-      `acquirePIDFile` then reads that pid and `processAlive` reports it alive,
-      because a container recycles low pids fast and an unrelated process now
-      holds it, and the daemon refuses to start against its own data directory.
-      Not container-only: any system that recycles pids can hit it, and a power
-      loss or an OOM kill could leave a data directory unstartable until the
-      file is deleted by hand. Found by the soak above, 2026-09-23.
+- [x] Fix the stale pid file that stops a killed daemon restarting. A daemon
+      killed with SIGKILL cannot run its cleanup, so `daemon.pid` survived it;
+      `acquirePIDFile` then read that pid and the liveness check reported it
+      alive, because a container recycles low pids fast and an unrelated
+      process had been given it, so the daemon refused to start against its own
+      data directory. Not container-only: any system that recycles pids can hit
+      it, and a power loss or an OOM kill could leave a data directory
+      unstartable until the file was deleted by hand. Found by the soak above.
+      Fixed 2026-09-23 by locking `daemon.pid` with flock, held open for the
+      daemon's run: the kernel drops the lock however the process dies, so no
+      pid is consulted and reuse cannot produce a false positive. Two
+      regression tests reproduce the condition deterministically; both fail
+      against the old check. Mutual exclusion is unchanged, still exit 6.
 - [x] Run 1,000 forced network interruptions. Rescoped from 10,000 by adr-006
       and already passing:
       `TestScale_InterruptionCyclesWithoutCorruption` SIGKILLs the receiving
