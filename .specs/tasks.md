@@ -192,9 +192,9 @@ Always tracked, never deferred.
       - spec and ADRs reconciled 2026-09-22: Windows dropped (adr-002), competitor benchmarking dropped (adr-003), chunk size changed to 64 KiB (adr-004), Nix flake primary (adr-005)
 - [x] Add an ADR when a decision is rejected, replaced, or measured.
       - ADRs 002-005 added 2026-09-22: Windows support (002), competitor benchmarking (003), chunk size (004), Nix packaging (005)
-- [ ] Record benchmark results in the corpus after every phase.
-- [ ] Review the architecture boundaries after each phase.
-- [ ] Keep the CLI, TUI, and JSON surface area in sync.
+- [x] Record benchmark results in the corpus after every phase. Current through Phase 5 as of 2026-09-22: bench/results/v1/ holds pre/post runs for the chunking and pipeline work; docs/BENCH.md carries every dated measurement. Re-check after the next phase closes.
+- [x] Review the architecture boundaries after each phase. Current as of 2026-09-22: `go test ./internal/arch/...` holds 8 checks, including the TUI import boundary added this phase, all passing. Re-check after the next phase closes.
+- [x] Keep the CLI, TUI, and JSON surface area in sync. Current as of 2026-09-22: docs/TUI.md maps every TUI key to its `syncthis` command; docs/CLI.md documents every --json shape the TUI decodes. Re-check whenever either surface changes.
 
 ---
 
