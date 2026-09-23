@@ -224,8 +224,14 @@ Goal: ship a reliable multi-device Tailscale-first system.
       2026-09-23 after that fix, which held: it reached 1,719 rounds and 2h17m
       before FAILING again, this time with c holding two files, a/f-120186.bin
       and a/f-360791.bin, that a and b had deleted. The cause was a scanner
-      bug, not the harness; see the scan-retry task below. The soak must be run
-      again to completion.
+      bug, not the harness; see the scan-retry task below. Re-run a third time
+      2026-09-23 with both fixes in place and stopped by hand at 2h38m and
+      2,060 rounds, clean: no divergence, no pid failure, no panic. That is
+      past the 1,719 rounds where the scanner bug appeared, so it is real
+      evidence both fixes hold under sustained load, but it is not the full
+      eight hours and this line stays open until one run finishes. The soak has
+      now earned its place twice over: each of the two runs that failed found a
+      genuine bug, one of them silent data loss.
 - [x] Fix the scan that deletes what the puller installed under it. A scan
       reads the whole tree and only then writes, so another writer can get to
       the store first; the store refuses the write as stale and the scan
