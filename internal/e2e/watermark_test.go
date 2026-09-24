@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // watermarkFiles is how many files the measured folder holds. It is large

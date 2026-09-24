@@ -1,15 +1,15 @@
 .PHONY: build release test e2e scale lint fmt hooks e2e-docker-image e2e-docker e2e-docker-soak e2e-docker-clean
 
 # Build stamp. Both are compiled into the binary and reported by
-# `syncthis version`; a build outside a git checkout falls back to the module
+# `syngo version`; a build outside a git checkout falls back to the module
 # version the go tool records.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null)
-LDFLAGS := $(if $(VERSION),-X github.com/wesbragagt/syncthis/internal/cli.Version=$(VERSION)) \
-           $(if $(COMMIT),-X github.com/wesbragagt/syncthis/internal/cli.Commit=$(COMMIT))
+LDFLAGS := $(if $(VERSION),-X github.com/wesbragagt/syngo/internal/cli.Version=$(VERSION)) \
+           $(if $(COMMIT),-X github.com/wesbragagt/syngo/internal/cli.Commit=$(COMMIT))
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o bin/syncthis ./cmd/syncthis
+	go build -ldflags "$(LDFLAGS)" -o bin/syngo ./cmd/syngo
 
 # A binary that runs on a machine other than the one that built it. A
 # dynamically linked build made on NixOS names its interpreter by an absolute
@@ -19,12 +19,12 @@ build:
 # two-machine benchmark scenarios build the binary they copy to the peer with
 # exactly these flags. GOOS and GOARCH may be overridden to cross-compile.
 release:
-	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/syncthis ./cmd/syncthis
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/syngo ./cmd/syngo
 
 # The end-to-end tests run last and on their own: two daemons over loopback
 # compete with the rest of the tree for the machine, and a sync cycle that does
 # not get the CPU it needs looks like a test that hangs. Set
-# SYNCTHIS_E2E_TIMEOUT_SCALE to a whole number to give them more room still.
+# SYNGO_E2E_TIMEOUT_SCALE to a whole number to give them more room still.
 test:
 	go test $$(go list ./... | grep -v '/internal/e2e$$')
 	go test -p 1 -count=1 ./internal/e2e/
@@ -38,7 +38,7 @@ e2e:
 # address and its own kernel view of the filesystem, so a test can kill a
 # daemon, partition a pair or slow a link. It is opt-in: `make test` compiles
 # it and skips it.
-E2E_IMAGE ?= syncthis-e2e:dev
+E2E_IMAGE ?= syngo-e2e:dev
 MINUTES   ?= 30
 
 e2e-docker-image:
@@ -46,11 +46,11 @@ e2e-docker-image:
 	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(E2E_IMAGE) .
 
 e2e-docker: e2e-docker-image
-	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) \
+	SYNGO_E2E_DOCKER=1 SYNGO_E2E_IMAGE=$(E2E_IMAGE) \
 	  go test ./internal/e2edocker/ -count=1 -p 1 -timeout 90m -skip TestSoak -v
 
 e2e-docker-soak: e2e-docker-image
-	SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=$(E2E_IMAGE) SYNCTHIS_E2E_SOAK_MINUTES=$(MINUTES) \
+	SYNGO_E2E_DOCKER=1 SYNGO_E2E_IMAGE=$(E2E_IMAGE) SYNGO_E2E_SOAK_MINUTES=$(MINUTES) \
 	  go test ./internal/e2edocker/ -count=1 -run TestSoak -timeout $$(( $(MINUTES) + 30 ))m -v
 
 # The scale suite measures the claims that take minutes and disk rather than
@@ -88,25 +88,25 @@ SCALE_CHUNKEVAL_OFFSET_KIB ?= 64
 
 scale:
 	@mkdir -p $(SCALE_DIR)
-	SYNCTHIS_SCALE=1 \
-	SYNCTHIS_SCALE_DIR=$(abspath $(SCALE_DIR)) \
-	SYNCTHIS_SCALE_CYCLES=$(SCALE_CYCLES) \
-	SYNCTHIS_SCALE_TRANSFER_GIB=$(SCALE_TRANSFER_GIB) \
-	SYNCTHIS_SCALE_RATE_SECONDS=$(SCALE_RATE_SECONDS) \
-	SYNCTHIS_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
-	SYNCTHIS_SCALE_IDLE_SECONDS=$(SCALE_IDLE_SECONDS) \
-	SYNCTHIS_SCALE_BIGFILE_GIB=$(SCALE_BIGFILE_GIB) \
-	SYNCTHIS_SCALE_MIRROR_MIB=$(SCALE_MIRROR_MIB) \
-	SYNCTHIS_SCALE_MIRROR_NOTES=$(SCALE_MIRROR_NOTES) \
-	SYNCTHIS_SCALE_CHUNKEVAL_KIB=$(SCALE_CHUNKEVAL_KIB) \
-	SYNCTHIS_SCALE_CHUNKEVAL_MIB=$(SCALE_CHUNKEVAL_MIB) \
-	SYNCTHIS_SCALE_CHUNKEVAL_OFFSET_KIB=$(SCALE_CHUNKEVAL_OFFSET_KIB) \
+	SYNGO_SCALE=1 \
+	SYNGO_SCALE_DIR=$(abspath $(SCALE_DIR)) \
+	SYNGO_SCALE_CYCLES=$(SCALE_CYCLES) \
+	SYNGO_SCALE_TRANSFER_GIB=$(SCALE_TRANSFER_GIB) \
+	SYNGO_SCALE_RATE_SECONDS=$(SCALE_RATE_SECONDS) \
+	SYNGO_SCALE_FILES_EACH=$(SCALE_FILES_EACH) \
+	SYNGO_SCALE_IDLE_SECONDS=$(SCALE_IDLE_SECONDS) \
+	SYNGO_SCALE_BIGFILE_GIB=$(SCALE_BIGFILE_GIB) \
+	SYNGO_SCALE_MIRROR_MIB=$(SCALE_MIRROR_MIB) \
+	SYNGO_SCALE_MIRROR_NOTES=$(SCALE_MIRROR_NOTES) \
+	SYNGO_SCALE_CHUNKEVAL_KIB=$(SCALE_CHUNKEVAL_KIB) \
+	SYNGO_SCALE_CHUNKEVAL_MIB=$(SCALE_CHUNKEVAL_MIB) \
+	SYNGO_SCALE_CHUNKEVAL_OFFSET_KIB=$(SCALE_CHUNKEVAL_OFFSET_KIB) \
 	  go test ./internal/e2e/ -run 'TestScale_' -count=1 -p 1 -v -timeout 180m
 
 # Containers and networks of a run killed before its cleanups ran.
 e2e-docker-clean:
-	-docker ps -aq --filter label=syncthis.e2e | xargs -r docker rm -f
-	-docker network ls -q --filter label=syncthis.e2e | xargs -r docker network rm
+	-docker ps -aq --filter label=syngo.e2e | xargs -r docker rm -f
+	-docker network ls -q --filter label=syngo.e2e | xargs -r docker network rm
 
 fmt:
 	gofmt -l -w .
@@ -129,7 +129,7 @@ hooks:
 # made on NixOS names its interpreter by an absolute /nix/store path, so a copy
 # of it cannot start on any other machine. -trimpath keeps the build machine's
 # paths out of the binary, and the version and commit stamp are the same ones
-# `syncthis version` reports.
+# `syngo version` reports.
 #
 # linux/arm is GOARM=7, the instruction set of the NAS and single-board boxes
 # that are not arm64.
@@ -149,13 +149,13 @@ dist: dist-clean
 	@mkdir -p $(DIST_DIR)/build
 	@for t in $(DIST_TARGETS); do \
 	  os=$${t%%:*}; rest=$${t#*:}; arch=$${rest%%:*}; arm=$${rest##*:}; \
-	  name=syncthis_$(DIST_VERSION)_$$os-$$arch$${arm:+v$$arm}; \
+	  name=syngo_$(DIST_VERSION)_$$os-$$arch$${arm:+v$$arm}; \
 	  echo "building $$name"; \
 	  mkdir -p $(DIST_DIR)/build/$$name; \
 	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$arm \
 	    go build -trimpath -ldflags "$(LDFLAGS)" \
-	      -o $(DIST_DIR)/build/$$name/syncthis ./cmd/syncthis || exit 1; \
-	  tar -czf $(DIST_DIR)/$$name.tar.gz -C $(DIST_DIR)/build/$$name syncthis || exit 1; \
+	      -o $(DIST_DIR)/build/$$name/syngo ./cmd/syngo || exit 1; \
+	  tar -czf $(DIST_DIR)/$$name.tar.gz -C $(DIST_DIR)/build/$$name syngo || exit 1; \
 	done
 	@go run _scripts/dist.go sums $(DIST_DIR)
 	@rm -rf $(DIST_DIR)/build
@@ -172,13 +172,13 @@ dist-verify:
 	@host_os=$$(go env GOOS); host_arch=$$(go env GOARCH); \
 	for t in $(DIST_TARGETS); do \
 	  os=$${t%%:*}; rest=$${t#*:}; arch=$${rest%%:*}; arm=$${rest##*:}; \
-	  name=syncthis_$(DIST_VERSION)_$$os-$$arch$${arm:+v$$arm}; \
+	  name=syngo_$(DIST_VERSION)_$$os-$$arch$${arm:+v$$arm}; \
 	  dir=$(DIST_DIR)/verify/$$name; mkdir -p $$dir; \
 	  tar -xzf $(DIST_DIR)/$$name.tar.gz -C $$dir || exit 1; \
 	  echo "extract ok  $$name"; \
-	  go run _scripts/dist.go static $$dir/syncthis $$os $$arch || exit 1; \
+	  go run _scripts/dist.go static $$dir/syngo $$os $$arch || exit 1; \
 	  if [ "$$os" = "$$host_os" ] && [ "$$arch" = "$$host_arch" ]; then \
-	    got=$$($$dir/syncthis version) || exit 1; \
+	    got=$$($$dir/syngo version) || exit 1; \
 	    case "$$got" in \
 	      *"$(DIST_VERSION)"*) echo "version ok  $$name: $$got";; \
 	      *) echo "version bad $$name: $$got, want $(DIST_VERSION)"; exit 1;; \
@@ -193,7 +193,7 @@ dist-clean:
 
 # The release image, one daemon per container. It is not the end-to-end image:
 # see the comment at the top of packaging/container/Dockerfile.
-IMAGE ?= syncthis:$(DIST_VERSION)
+IMAGE ?= syngo:$(DIST_VERSION)
 
 .PHONY: container
 

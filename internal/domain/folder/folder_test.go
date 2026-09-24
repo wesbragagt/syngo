@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 func valid() folder.Folder {

@@ -3,9 +3,9 @@ package syncplan_test
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
 )
 
 // provisional marks an entry as written by dev from a counter floor no peer

@@ -1,4 +1,4 @@
-# Syncthis on-disk state
+# Syngo on-disk state
 
 Everything a device remembers lives in two places: the data directory, which is
 private to the device, and one state directory inside every synchronized
@@ -6,8 +6,8 @@ folder. Deleting either is safe, and costs a full rescan or a full download.
 
 ## Data directory
 
-Resolved from `--data-dir`, else `$SYNCTHIS_DATA_DIR`, else
-`$XDG_DATA_HOME/syncthis`, else `~/.local/share/syncthis`.
+Resolved from `--data-dir`, else `$SYNGO_DATA_DIR`, else
+`$XDG_DATA_HOME/syngo`, else `~/.local/share/syngo`.
 
 ```
 config.json      device name, listen address, chunk size, size cap, intervals
@@ -53,21 +53,21 @@ anything in `state.db` beyond the folder and device configuration. A bundle is
 therefore not a backup of a device: restoring one into a fresh data directory
 gives a device with its own identity and an empty database, which then
 synchronizes the folders from its peers. See
-[CLI.md](CLI.md#syncthis-config-export---output-file).
+[CLI.md](CLI.md#syngo-config-export---output-file).
 
 ## Folder state directory
 
 ```
-<folder>/.syncthis/tmp/<transfer id>-<random>.part
+<folder>/.syngo/tmp/<transfer id>-<random>.part
 ```
 
 Partial downloads live inside the folder so the finished file is renamed onto
 its target without crossing a filesystem boundary, which is what makes the
-install atomic. The scanner always ignores `.syncthis`, whatever the ignore
-rules say. `syncthis repair` removes partial files no unfinished transfer
+install atomic. The scanner always ignores `.syngo`, whatever the ignore
+rules say. `syngo repair` removes partial files no unfinished transfer
 claims.
 
-`<folder>/.syncthisignore` is read from the folder root and belongs to this
+`<folder>/.syngoignore` is read from the folder root and belongs to this
 device alone. It is never scanned, never sent to a peer, and never accepted
 from one: a peer that names it in its manifest has its manifest refused.
 
@@ -88,7 +88,7 @@ directory whose name holds a `?` or a `#` still gets its own database with the
 pragmas applied.
 
 Because the database is in WAL mode with a five second busy timeout, a command
-such as `syncthis sync-plan` or `syncthis status` reads it while the daemon
+such as `syngo sync-plan` or `syngo status` reads it while the daemon
 holds it open.
 
 ### Tables
@@ -250,7 +250,7 @@ the two.
 ### conflicts
 
 A row is one path two devices changed independently, written by the puller and
-read by `syncthis conflict list`. `rel_path` is the path, `conflict_path` the
+read by `syngo conflict list`. `rel_path` is the path, `conflict_path` the
 copy holding the other version, empty when there is none. `local_hash` and
 `remote_hash` say which content each side had, and matching them against what
 is on disk is how `conflict resolve` finds the version the user asked to keep,
@@ -367,7 +367,7 @@ deduplication is in effect.
 
 A path a peer announces whose content this device already holds under another
 name is not downloaded. The puller copies the local file into a partial file of
-`.syncthis/tmp` and installs that, so a renamed or copied file costs zero
+`.syngo/tmp` and installs that, so a renamed or copied file costs zero
 payload bytes on the wire whatever its size. This is local behaviour only: the
 sender is asked for nothing and the protocol does not change.
 
@@ -448,7 +448,7 @@ cases:
 5. The stored folder sequence is below the watermark. A sequence only ever
    rises, so one that fell is a different database than the one the watermark
    was taken from, which is what a restore under a running daemon looks like.
-6. The operator asks, with `syncthis rescan`. A queued rescan is always a full
+6. The operator asks, with `syngo rescan`. A queued rescan is always a full
    scan.
 
 A sequence that rose above the watermark is not a fallback: it is this device's
@@ -499,19 +499,19 @@ There is no `daemon stop` subcommand: the daemon shuts down cleanly on SIGINT
 or SIGTERM, so stop its service, or signal the pid in `daemon.pid`.
 
 ```console
-$ systemctl --user stop syncthis        # or: kill $(cat ~/.local/share/syncthis/daemon.pid)
-$ cp -a ~/.local/share/syncthis ~/backups/syncthis-2026-09-22
+$ systemctl --user stop syngo        # or: kill $(cat ~/.local/share/syngo/daemon.pid)
+$ cp -a ~/.local/share/syngo ~/backups/syngo-2026-09-22
 ```
 
 To restore, put the directory back with the daemon stopped, start the daemon
 and let it reach its peers before editing anything in the synced folders:
 
 ```console
-$ systemctl --user stop syncthis
-$ rm -rf ~/.local/share/syncthis && cp -a ~/backups/syncthis-2026-09-22 ~/.local/share/syncthis
-$ syncthis daemon run &
-$ syncthis rescan
-$ syncthis status          # wait until the peers are connected
+$ systemctl --user stop syngo
+$ rm -rf ~/.local/share/syngo && cp -a ~/backups/syngo-2026-09-22 ~/.local/share/syngo
+$ syngo daemon run &
+$ syngo rescan
+$ syngo status          # wait until the peers are connected
 ```
 
 The rescan re-reads the folders, so a file that changed while the device was
@@ -533,7 +533,7 @@ edit without a word.
 Such a version is marked `provisional` in `files`, and the sync plan refuses to
 let a peer's version replace, delete or displace it. Both are kept: the peer's
 version takes the path, the edit goes to a conflict name beside it, and
-`syncthis conflict list` reports the divergence with the reason
+`syngo conflict list` reports the divergence with the reason
 `unverified-counter-floor`. The copy is an ordinary file from then on, so it
 travels to the peers like any other. Resolve it with `conflict resolve`, the
 same as any other conflict.

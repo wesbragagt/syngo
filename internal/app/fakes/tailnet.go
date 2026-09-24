@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // Tailnet is an in-memory ports.TailnetDiscovery. It answers from a fixed

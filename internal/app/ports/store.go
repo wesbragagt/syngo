@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // Store errors. Implementations wrap these so callers can use errors.Is.

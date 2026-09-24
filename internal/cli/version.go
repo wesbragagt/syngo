@@ -51,14 +51,14 @@ type versionInfo struct {
 func newVersionCmd(deps *Deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the syncthis version",
+		Short: "Print the syngo version",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			info := versionInfo{Version: Version, Commit: Commit, Go: runtime.Version()}
 			if deps.Global.JSON {
 				return deps.printer().PrintJSON(info)
 			}
-			_, err := fmt.Fprintf(deps.Stdout, "syncthis %s (%s, %s)\n", info.Version, info.Commit, info.Go)
+			_, err := fmt.Fprintf(deps.Stdout, "syngo %s (%s, %s)\n", info.Version, info.Commit, info.Go)
 			return err
 		},
 	}

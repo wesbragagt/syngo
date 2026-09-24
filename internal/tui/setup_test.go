@@ -150,7 +150,7 @@ func TestSetup_WalksFromNothingToAPairedFolder(t *testing.T) {
 		"folder grant docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA",
 	} {
 		if !runner.called(want) {
-			t.Errorf("the walk never ran `syncthis %s`; it ran %v", want, runner.calls)
+			t.Errorf("the walk never ran `syngo %s`; it ran %v", want, runner.calls)
 		}
 	}
 
@@ -168,11 +168,11 @@ func TestSetup_ShowsTheCommandOfEveryStep(t *testing.T) {
 	m, _ = drive(t, m, fetchStatus(m.client)())
 
 	for step, want := range map[setupStep]string{
-		stepName:        "syncthis --data-dir /tmp/data init",
-		stepFolderPath:  "syncthis --data-dir /tmp/data folder add",
-		stepDaemon:      "syncthis --data-dir /tmp/data daemon run",
-		stepPeerHost:    "syncthis --data-dir /tmp/data peer test",
-		stepPeerConfirm: "syncthis --data-dir /tmp/data peer add",
+		stepName:        "syngo --data-dir /tmp/data init",
+		stepFolderPath:  "syngo --data-dir /tmp/data folder add",
+		stepDaemon:      "syngo --data-dir /tmp/data daemon run",
+		stepPeerHost:    "syngo --data-dir /tmp/data peer test",
+		stepPeerConfirm: "syngo --data-dir /tmp/data peer add",
 	} {
 		m.setup.focus(step)
 		if got := m.View(); !strings.Contains(got, want) {

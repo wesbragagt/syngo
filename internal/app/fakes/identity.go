@@ -1,6 +1,6 @@
 package fakes
 
-import "github.com/wesbragagt/syncthis/internal/domain/device"
+import "github.com/wesbragagt/syngo/internal/domain/device"
 
 // Identity is a fixed ports.Identity.
 type Identity struct {

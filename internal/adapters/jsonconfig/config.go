@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // FileName is the name of the config file inside the data directory.

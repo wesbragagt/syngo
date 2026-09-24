@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/folders"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/ignore"
+	"github.com/wesbragagt/syngo/internal/app/folders"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/ignore"
 )
 
 // folderView is the JSON shape of one configured folder.
@@ -364,7 +364,7 @@ func newFolderRemoveCmd(deps *Deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := deps.confirm(fmt.Sprintf("remove folder %s (%s) from syncthis", f.ID, f.Path)); err != nil {
+			if err := deps.confirm(fmt.Sprintf("remove folder %s (%s) from syngo", f.ID, f.Path)); err != nil {
 				return err
 			}
 			if err := app.Folders.Remove(cmd.Context(), id); err != nil {

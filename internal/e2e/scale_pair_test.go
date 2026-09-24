@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // The scale transfer tests drive two real daemon processes rather than two

@@ -14,7 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 var _ ports.Watcher = Watcher{}
@@ -26,7 +26,7 @@ var ErrRootMissing = errors.New("watch root is not a directory")
 
 // reservedDir is the per-folder state directory; it holds partial downloads
 // and is never part of a manifest, so it is not worth watching.
-const reservedDir = ".syncthis"
+const reservedDir = ".syngo"
 
 // Watcher reports filesystem changes through inotify.
 type Watcher struct {

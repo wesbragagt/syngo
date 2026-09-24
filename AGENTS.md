@@ -1,4 +1,4 @@
-# Syncthing
+# Syngo
 
 ## IMPORTANT RULES
 

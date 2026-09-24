@@ -6,7 +6,7 @@ package unixctl
 import (
 	"encoding/json"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // maxRequestBytes bounds how much of a request line is read.

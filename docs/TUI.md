@@ -1,12 +1,12 @@
-# Syncthis terminal interface
+# Syngo terminal interface
 
 ```console
-$ syncthis tui
+$ syngo tui
 ```
 
-`syncthis tui` is the interactive interface. It is a subcommand of the one
-binary rather than a second one, because syncthis ships as a single file: `make
-dist` builds `./cmd/syncthis` alone, the packaging, the container image and the
+`syngo tui` is the interactive interface. It is a subcommand of the one
+binary rather than a second one, because syngo ships as a single file: `make
+dist` builds `./cmd/syngo` alone, the packaging, the container image and the
 Nix flake install that file, and shell completion is generated from this command
 tree.
 
@@ -24,13 +24,13 @@ command.
 
 The interface holds no synchronization state and contains no logic of its own.
 Every screen is a view of a `--json` document [CLI.md](CLI.md) documents, and
-every key runs one syncthis command. The table below is the whole of it: for
+every key runs one syngo command. The table below is the whole of it: for
 each thing the interface can do, the command that does the same without it.
 
 `internal/arch/deps_test.go` keeps this true rather than merely intended.
 `internal/tui` may not import `internal/app`, `internal/domain` or
 `internal/compose`; it reaches the daemon through one interface it declares
-itself, `tui.Runner`, which runs a syncthis invocation and hands back its
+itself, `tui.Runner`, which runs a syngo invocation and hands back its
 stdout and its exit code. There is no path from a key press to the daemon that
 is not a command.
 
@@ -39,9 +39,9 @@ is not a command.
 | Key | What it does | Command |
 |---|---|---|
 | `q`, `ctrl+c` | leave | nothing runs |
-| `r` | refresh now | [`syncthis status --json`](CLI.md#syncthis-status---json) |
-| `d` | the dashboard | [`syncthis status`](CLI.md#syncthis-status---json) |
-| `c` | the conflict screen | [`syncthis conflict list`](CLI.md#syncthis-conflict-list-folder---all) |
+| `r` | refresh now | [`syngo status --json`](CLI.md#syngo-status---json) |
+| `d` | the dashboard | [`syngo status`](CLI.md#syngo-status---json) |
+| `c` | the conflict screen | [`syngo conflict list`](CLI.md#syngo-conflict-list-folder---all) |
 | `l` | the log screen | see [Logs](#logs) |
 
 The live views refresh on their own every `--poll`. Losing the terminal,
@@ -59,30 +59,30 @@ that is currently wrong.
 | Section | Where every number comes from |
 |---|---|
 | the daemon line | `status.daemon` and `status.daemon.listener` |
-| `DEVICES` | `status.peers[]`, with the path from [`network path --json`](CLI.md#syncthis-network-path) when it is fresher than `status.peers[].path` |
+| `DEVICES` | `status.peers[]`, with the path from [`network path --json`](CLI.md#syngo-network-path) when it is fresher than `status.peers[].path` |
 | `FOLDERS` | `status.folders[]` |
-| `QUEUE` | `status.transfers`, the same objects [`transfer list`](CLI.md#syncthis-transfer-list---state-s) prints |
+| `QUEUE` | `status.transfers`, the same objects [`transfer list`](CLI.md#syngo-transfer-list---state-s) prints |
 | `CONFLICTS` | `status.conflicts.unresolved` |
 | `ERRORS` | `status.daemon.listener.error`, `status.folders[].error`, `status.peers[].error` |
 
 A path is never inferred. A peer neither source can describe is `unknown` with
 the reason, which is what both commands already say. A device with no Tailscale
 client answers exit 11 to `network path`; that is a supported way to run
-syncthis and it is not shown as an error.
+syngo and it is not shown as an error.
 
 | Key | What it does | Command |
 |---|---|---|
 | `↑` `↓` `k` `j` | move the folder cursor | nothing runs |
-| `p` | pause the selected folder | [`syncthis pause FOLDER`](CLI.md#syncthis-pause-folder-and-syncthis-resume-folder) |
-| `u` | resume it | [`syncthis resume FOLDER`](CLI.md#syncthis-pause-folder-and-syncthis-resume-folder) |
-| `s` | rescan it | [`syncthis rescan FOLDER`](CLI.md#syncthis-rescan-id) |
+| `p` | pause the selected folder | [`syngo pause FOLDER`](CLI.md#syngo-pause-folder-and-syngo-resume-folder) |
+| `u` | resume it | [`syngo resume FOLDER`](CLI.md#syngo-pause-folder-and-syngo-resume-folder) |
+| `s` | rescan it | [`syngo rescan FOLDER`](CLI.md#syngo-rescan-id) |
 
 ### No daemon
 
 An initialized device with nothing running gets its own screen rather than a
 dashboard of nulls, because everything the dashboard shows comes from the
 daemon. It names the command that starts one:
-[`syncthis daemon run`](CLI.md#syncthis-daemon-run). The screen leaves by
+[`syngo daemon run`](CLI.md#syngo-daemon-run). The screen leaves by
 itself as soon as a daemon answers.
 
 ### Guided setup
@@ -94,15 +94,15 @@ commands filled in for you; each step shows the command it is about to run.
 
 | Step | What it asks | Command |
 |---|---|---|
-| 1 | the device name | [`syncthis init --name NAME --listen HOST:PORT`](CLI.md#syncthis-init---name-name---listen-hostport) |
+| 1 | the device name | [`syngo init --name NAME --listen HOST:PORT`](CLI.md#syngo-init---name-name---listen-hostport) |
 | 2 | the address peers connect to | the same invocation |
-| 3 | the directory to synchronize | [`syncthis folder add PATH --id ID`](CLI.md#syncthis-folder-add-path---id-id) |
+| 3 | the directory to synchronize | [`syngo folder add PATH --id ID`](CLI.md#syngo-folder-add-path---id-id) |
 | 4 | the folder id, proposed from the directory name | the same invocation |
-| 5 | waits for a daemon | [`syncthis daemon run`](CLI.md#syncthis-daemon-run), which you start yourself |
-| 6 | the address of the other device | [`syncthis peer test HOST[:PORT]`](CLI.md#syncthis-peer-test-idhostport) |
-| 7 | shows the identity that answered, and asks whether to trust it | [`syncthis peer add HOST[:PORT] --device-id ID --yes`](CLI.md#syncthis-peer-add-hostport) |
-| 8 | shares the folder with it, with no question | [`syncthis folder grant ID DEVICE-ID`](CLI.md#syncthis-folder-grant-id-device-id) |
-| 9 | waits until the peer is connected | [`syncthis status`](CLI.md#syncthis-status---json) |
+| 5 | waits for a daemon | [`syngo daemon run`](CLI.md#syngo-daemon-run), which you start yourself |
+| 6 | the address of the other device | [`syngo peer test HOST[:PORT]`](CLI.md#syngo-peer-test-idhostport) |
+| 7 | shows the identity that answered, and asks whether to trust it | [`syngo peer add HOST[:PORT] --device-id ID --yes`](CLI.md#syngo-peer-add-hostport) |
+| 8 | shares the folder with it, with no question | [`syngo folder grant ID DEVICE-ID`](CLI.md#syngo-folder-grant-id-device-id) |
+| 9 | waits until the peer is connected | [`syngo status`](CLI.md#syngo-status---json) |
 
 Three things about the walk are decisions, not conveniences:
 
@@ -116,7 +116,7 @@ Three things about the walk are decisions, not conveniences:
   already been answered on screen; `--json` implies `--no-input`, so without it
   the command would exit 9.
 - **It grants the folder.** Trusting a device and sharing a folder with it are
-  two decisions in syncthis, and a folder added without a grant is served to
+  two decisions in syngo, and a folder added without a grant is served to
   nobody. Leaving step 8 out would produce a setup that looks paired and moves
   nothing.
 
@@ -127,12 +127,12 @@ id on both. Pairing is done when both sides have added the other.
 
 | Key | What it does | Command |
 |---|---|---|
-| on entry, `R` | list the paths both sides changed | [`syncthis conflict list --json`](CLI.md#syncthis-conflict-list-folder---all) |
+| on entry, `R` | list the paths both sides changed | [`syngo conflict list --json`](CLI.md#syngo-conflict-list-folder---all) |
 | `↑` `↓` `k` `j` | move the cursor | nothing runs |
-| `enter` | open one, with both versions as they are on disk now | [`syncthis conflict show ID`](CLI.md#syncthis-conflict-show-id) |
-| `1` | keep the version this device had | [`syncthis conflict resolve ID --keep local --yes`](CLI.md#syncthis-conflict-resolve-id---keep-localremoteboth) |
-| `2` | keep the version the peer had | `syncthis conflict resolve ID --keep remote --yes` |
-| `3` | keep both, touching no file | `syncthis conflict resolve ID --keep both --yes` |
+| `enter` | open one, with both versions as they are on disk now | [`syngo conflict show ID`](CLI.md#syngo-conflict-show-id) |
+| `1` | keep the version this device had | [`syngo conflict resolve ID --keep local --yes`](CLI.md#syngo-conflict-resolve-id---keep-localremoteboth) |
+| `2` | keep the version the peer had | `syngo conflict resolve ID --keep remote --yes` |
+| `3` | keep both, touching no file | `syngo conflict resolve ID --keep both --yes` |
 | `esc` | back | nothing runs |
 
 Those three words are the only resolutions there are and the screen invents no
@@ -158,15 +158,15 @@ things.
 
 | Source | What it is | Reproduce it with |
 |---|---|---|
-| `seen` | what this process saw: every difference between one `status --json` and the next, as folder states, peer states, transfer progress, listener rebinds, conflicts and errors | `while :; do syncthis status --json; sleep 1; done` and compare successive documents |
+| `seen` | what this process saw: every difference between one `status --json` and the next, as folder states, peer states, transfer progress, listener rebinds, conflicts and errors | `while :; do syngo status --json; sleep 1; done` and compare successive documents |
 | the daemon's own levels (`info`, `warn`, `error`) | the daemon's structured log, tailed from `--log-file` | `tail -f FILE`, or `jq` over it |
 
 The second source needs setting up, because a daemon writes its log to its own
 stderr and no other process can read that:
 
 ```console
-$ syncthis daemon run --log-format json 2>> ~/.local/share/syncthis/daemon.log &
-$ syncthis tui --log-file ~/.local/share/syncthis/daemon.log
+$ syngo daemon run --log-format json 2>> ~/.local/share/syngo/daemon.log &
+$ syngo tui --log-file ~/.local/share/syngo/daemon.log
 ```
 
 A line in `--log-format json` is shown with its fields in a stable order; a line

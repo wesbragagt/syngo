@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 var _ ports.ControlServer = (*Server)(nil)

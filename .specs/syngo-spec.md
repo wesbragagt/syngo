@@ -1,5 +1,5 @@
 ---
-title: Syncthis Specification
+title: Syngo Specification
 date: 2026-09-20
 status: active
 moved: 2026-09-21
@@ -10,7 +10,7 @@ tags:
   - go
   - distributed-systems
   - research
-  - syncthis
+  - syngo
   - project
 ---
 
@@ -160,7 +160,7 @@ Main cost: higher baseline memory use and less compile-time protection for compl
 
 ### Practical recommendation
 
-Use Rust for the sync core if the goal is a durable Syncthing successor. Use Go for Syncthis because fast delivery, simple operations, and a LAN-first product are the current priorities. Another practical split is a Rust client core with a Go control plane, but this adds deployment and protocol complexity.
+Use Rust for the sync core if the goal is a durable Syncthing successor. Use Go for Syngo because fast delivery, simple operations, and a LAN-first product are the current priorities. Another practical split is a Rust client core with a Go control plane, but this adds deployment and protocol complexity.
 
 ## Proposed architecture for a better Syncthing-like system
 
@@ -208,7 +208,7 @@ Add NAT traversal, relay support, content-defined chunking, multi-device version
 ## Benchmark plan
 
 
-The Phase 0 baseline measures Syncthis alone: establish repeatable convergence,
+The Phase 0 baseline measures Syngo alone: establish repeatable convergence,
 bytes transferred, CPU, memory, disk writes, and recovery against a versioned
 corpus across three network scenarios (LAN, Tailscale direct, Tailscale DERP).
 No competitor measurements. [[adr-003-drop-competitor-benchmarking]]
@@ -237,7 +237,7 @@ No competitor measurements. [[adr-003-drop-competitor-benchmarking]]
 
 ## Architecture objective
 
-Syncthis must begin with a solid, extensible architecture rather than a throwaway implementation. The design should support new transports, storage engines, user interfaces, operating systems, discovery methods, and sync policies without changing the core synchronization rules.
+Syngo must begin with a solid, extensible architecture rather than a throwaway implementation. The design should support new transports, storage engines, user interfaces, operating systems, discovery methods, and sync policies without changing the core synchronization rules.
 
 Use ports and adapters with a strong domain model:
 
@@ -260,7 +260,7 @@ The architecture must make these future changes possible without rewriting the d
 
 ### Implementation decision: Go
 
-Syncthis will be written in Go. Go is an implementation choice, not an excuse to weaken the architecture. Keep the protocol and local state format documented so a Rust implementation remains possible later, but optimize the initial release for fast delivery and iteration while preserving the domain boundaries.
+Syngo will be written in Go. Go is an implementation choice, not an excuse to weaken the architecture. Keep the protocol and local state format documented so a Rust implementation remains possible later, but optimize the initial release for fast delivery and iteration while preserving the domain boundaries.
 
 ### Product objective
 
@@ -322,7 +322,7 @@ Validate personal file synchronization across two Tailscale-connected devices. T
 - Bubble Tea with Lip Gloss for the interactive terminal UI.
 - Structured logging with stable event fields.
 
-The first transport should be a simple authenticated stream over Tailscale. Benchmark TCP and QUIC before selecting a more complex transport. Tailscale already supplies encrypted network reachability, so Syncthis should not build a custom VPN or public relay.
+The first transport should be a simple authenticated stream over Tailscale. Benchmark TCP and QUIC before selecting a more complex transport. Tailscale already supplies encrypted network reachability, so Syngo should not build a custom VPN or public relay.
 
 ### Delivery milestones
 
@@ -358,12 +358,12 @@ The primary network goal is direct peer-to-peer synchronization over the user's 
 ### Tailscale-focused commands
 
 ```bash
-syncthis network tailscale detect
-syncthis network peers
-syncthis peer add nas.tailnet-name.ts.net --verify
-syncthis peer test nas.tailnet-name.ts.net
-syncthis daemon run --interface tailscale0
-syncthis status --network --json
+syngo network tailscale detect
+syngo network peers
+syngo peer add nas.tailnet-name.ts.net --verify
+syngo peer test nas.tailnet-name.ts.net
+syngo daemon run --interface tailscale0
+syngo status --network --json
 ```
 
 Interactive mode should show each peer's Tailscale hostname, tailnet IP, online state, direct-path status, latency, and last successful transfer. It should explain when traffic is direct, DERP-relayed by Tailscale, blocked by ACLs, or failing because a node is offline.
@@ -570,7 +570,7 @@ V1 is a general file sync daemon for two or more devices connected through Tails
 
 Build a Tailscale-first, Go-based sync engine (see [[adr-001-go-tech-stack]]). Use Tailscale for encrypted network reachability, QUIC or another multiplexed transport over the Tailscale path, event-driven journals, BLAKE3 manifests, resumable chunk transfers, and direct peer connections. Keep application-level pairing, folder authorization, conflict safety, and audit logs inside the sync system.
 
-The first release will validate that Syncthis meets its design goals: fast change detection (under two seconds for ordinary files), small-edit efficiency (through content-defined chunking; see [[adr-004-chunk-size-64kib]]), self-hosted P2P operation over Tailscale, explainable conflicts, and recovery after interruption. Benchmark every claim against the Phase 0 corpus.
+The first release will validate that Syngo meets its design goals: fast change detection (under two seconds for ordinary files), small-edit efficiency (through content-defined chunking; see [[adr-004-chunk-size-64kib]]), self-hosted P2P operation over Tailscale, explainable conflicts, and recovery after interruption. Benchmark every claim against the Phase 0 corpus.
 ---
         
 > Note: This is a research draft. Validate project activity, protocol compatibility, and security claims before selecting dependencies.

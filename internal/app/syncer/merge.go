@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
-	"github.com/wesbragagt/syncthis/internal/domain/textmerge"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/textmerge"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // A three-way merge is the one thing the puller does that settles a conflict

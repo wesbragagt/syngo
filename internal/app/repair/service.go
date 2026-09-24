@@ -10,15 +10,15 @@ import (
 	"path"
 	"sort"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // TempDir is the folder-relative directory holding partial downloads.
-const TempDir = ".syncthis/tmp"
+const TempDir = ".syngo/tmp"
 
 // ErrRootMissing reports a folder root that does not exist or is not a
 // directory. Repair refuses to run rather than report every stored entry as
@@ -230,7 +230,7 @@ func (s *Service) spent(f folder.Folder, m manifest.Manifest, t transfer.Transfe
 	return e.Hash == t.Hash
 }
 
-// inspectTemp lists the partial files under <root>/.syncthis/tmp that no
+// inspectTemp lists the partial files under <root>/.syngo/tmp that no
 // unfinished transfer claims.
 func (s *Service) inspectTemp(ctx context.Context, f folder.Folder, transfers []transfer.Transfer, report *Report) ([]string, error) {
 	claimed := make(map[string]bool, len(transfers))

@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/peers"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/peers"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // peerView is the JSON shape of one known peer.
@@ -150,7 +150,7 @@ func newPeerAddCmd(deps *Deps) *cobra.Command {
 				viaTailnet(result.ResolvedFrom))
 			if !result.Accepted {
 				_, _ = fmt.Fprintf(deps.Stdout,
-					"the peer has not added this device yet; run `syncthis peer add` there too\n")
+					"the peer has not added this device yet; run `syngo peer add` there too\n")
 			}
 			return nil
 		},

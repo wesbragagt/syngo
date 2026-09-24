@@ -10,9 +10,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/tui"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/tui"
 )
 
 // guidedBudget is the wall-clock bound this test holds the guided walk to.

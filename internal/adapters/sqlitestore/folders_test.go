@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 func TestSaveFolder_PersistsSyncWindows(t *testing.T) {

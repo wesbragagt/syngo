@@ -3,14 +3,14 @@ title: ADR 001 Go Tech Stack
 date: 2026-09-21
 status: accepted
 tags:
-  - syncthis
+  - syngo
   - project
   - adr
   - go
   - architecture
 ---
 
-# ADR 001: Use Go for the Syncthis prototype
+# ADR 001: Use Go for the Syngo prototype
 
 - **Status:** Accepted
 - **Date:** 2026-09-21
@@ -18,13 +18,13 @@ tags:
 
 ## Context
 
-Syncthis is a personal file synchronization system for arbitrary files across devices connected through Tailscale. The first milestone must validate the product quickly. It needs a CLI, an interactive terminal UI, filesystem watching, resumable transfers, conflict visibility, and reliable recovery after network or process interruptions.
+Syngo is a personal file synchronization system for arbitrary files across devices connected through Tailscale. The first milestone must validate the product quickly. It needs a CLI, an interactive terminal UI, filesystem watching, resumable transfers, conflict visibility, and reliable recovery after network or process interruptions.
 
 Rust is a possible long-term implementation, but choosing it now would increase prototype development time before the product and protocol are validated.
 
 ## Decision
 
-Write Syncthis entirely in **Go** for the initial release.
+Write Syngo entirely in **Go** for the initial release.
 
 Do not split the system between Go and Rust. Preserve a ports-and-adapters architecture and a strong domain model so a later Rust implementation remains possible without coupling the core rules to Go libraries or infrastructure adapters. Document the protocol and local state format. Treat any rewrite as a separate decision based on benchmark evidence.
 
@@ -107,7 +107,7 @@ A rewrite is not part of prototype completion. It must have its own ADR, migrati
 
 ## Related documents
 
-- [[syncthis-spec]]
+- [[syngo-spec]]
 - [[CONTEXT]]
 
 ## Rejected alternatives
@@ -130,4 +130,4 @@ Review after Phase 5 performance testing or when the prototype meets all initial
 
 ---
 
-> Note link: https://notes.dory-pentatonic.ts.net/notes/projects/syncthis/adr-001-go-tech-stack/
+> Note link: https://notes.dory-pentatonic.ts.net/notes/projects/syngo/adr-001-go-tech-stack/

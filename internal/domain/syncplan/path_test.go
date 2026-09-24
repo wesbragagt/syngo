@@ -3,8 +3,8 @@ package syncplan_test
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
 )
 
 // TestPlan_SkipsPathsOutsideTheFolder proves the planner never asks for an
@@ -12,7 +12,7 @@ import (
 func TestPlan_SkipsPathsOutsideTheFolder(t *testing.T) {
 	hostile := []string{
 		"..", "../escape.txt", "../../escape.txt", "a/../../escape.txt",
-		"/etc/passwd", ".", "./a", ".syncthis/tmp/x", ".syncthisignore", "a\x00b",
+		"/etc/passwd", ".", "./a", ".syngo/tmp/x", ".syngoignore", "a\x00b",
 	}
 	for _, p := range hostile {
 		t.Run(p, func(t *testing.T) {

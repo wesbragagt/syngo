@@ -13,7 +13,7 @@ package tui
 // encoding/json, which is the same tolerance every other consumer of `--json`
 // has.
 
-// Status is `syncthis status --json`.
+// Status is `syngo status --json`.
 type Status struct {
 	SchemaVersion int           `json:"schema_version"`
 	Device        StatusDevice  `json:"device"`
@@ -133,7 +133,7 @@ type ConflictCount struct {
 	Unresolved int `json:"unresolved"`
 }
 
-// NetPath is one entry of `syncthis network path --json`.
+// NetPath is one entry of `syngo network path --json`.
 type NetPath struct {
 	PeerID   string  `json:"peer_id"`
 	Name     string  `json:"name"`
@@ -145,7 +145,7 @@ type NetPath struct {
 	Reason   *string `json:"reason"`
 }
 
-// Conflict is one entry of `syncthis conflict list --json`, and the object
+// Conflict is one entry of `syngo conflict list --json`, and the object
 // `conflict show --json` extends.
 type Conflict struct {
 	ID           string  `json:"id"`
@@ -175,7 +175,7 @@ type ConflictFile struct {
 	Version string  `json:"version"`
 }
 
-// InitResult is `syncthis init --json`.
+// InitResult is `syngo init --json`.
 type InitResult struct {
 	DeviceID string `json:"device_id"`
 	Name     string `json:"name"`
@@ -184,7 +184,7 @@ type InitResult struct {
 	Created  bool   `json:"created"`
 }
 
-// PeerAdded is `syncthis peer add --json`.
+// PeerAdded is `syngo peer add --json`.
 type PeerAdded struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
@@ -196,7 +196,7 @@ type PeerAdded struct {
 	ResolvedFrom string  `json:"resolved_from"`
 }
 
-// PeerTested is `syncthis peer test --json`.
+// PeerTested is `syngo peer test --json`.
 type PeerTested struct {
 	Address       string  `json:"address"`
 	DeviceID      string  `json:"device_id"`
@@ -209,7 +209,7 @@ type PeerTested struct {
 	Error         *string `json:"error"`
 }
 
-// FolderAdded is `syncthis folder add --json`, and the object `folder list`
+// FolderAdded is `syngo folder add --json`, and the object `folder list`
 // prints an array of.
 type FolderAdded struct {
 	ID           string   `json:"id"`
@@ -222,13 +222,13 @@ type FolderAdded struct {
 	Paused       bool     `json:"paused"`
 }
 
-// Granted is `syncthis folder grant --json`.
+// Granted is `syngo folder grant --json`.
 type Granted struct {
 	Folder string `json:"folder"`
 	Device string `json:"device"`
 }
 
-// ConflictResolved is `syncthis conflict resolve --json`.
+// ConflictResolved is `syngo conflict resolve --json`.
 type ConflictResolved struct {
 	ID          string `json:"id"`
 	FolderID    string `json:"folder_id"`
@@ -240,7 +240,7 @@ type ConflictResolved struct {
 	Resolved    bool   `json:"resolved"`
 }
 
-// FolderDevices is `syncthis folder devices ID --json`.
+// FolderDevices is `syngo folder devices ID --json`.
 type FolderDevices struct {
 	Folder  string       `json:"folder"`
 	Devices []DeviceName `json:"devices"`

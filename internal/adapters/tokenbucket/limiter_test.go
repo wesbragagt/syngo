@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/tokenbucket"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/adapters/tokenbucket"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // fakeClock is a clock that only moves when a sleep asks it to, which makes

@@ -1,12 +1,12 @@
 // Package e2edocker runs one daemon per container and checks that a cluster
 // of devices converges while daemons are killed, links are cut and clocks
-// disagree. It is opt-in: without SYNCTHIS_E2E_DOCKER=1 every test skips, so
+// disagree. It is opt-in: without SYNGO_E2E_DOCKER=1 every test skips, so
 // `go test ./...` on a machine without docker costs a compile and nothing
 // more.
 //
 // The image is built by `make e2e-docker-image`; `make e2e-docker` builds it
 // and runs this package. Every container and network carries the label
-// syncthis.e2e, so `make e2e-docker-clean` removes what a killed run left
+// syngo.e2e, so `make e2e-docker-clean` removes what a killed run left
 // behind.
 //
 // The package holds only _test.go files, so nothing can import it.
@@ -25,11 +25,11 @@ import (
 // Environment. The image and the docker binary are overridable so the same
 // suite runs against a prebuilt image or podman.
 var (
-	image     = envOr("SYNCTHIS_E2E_IMAGE", "syncthis-e2e:dev")
-	dockerBin = envOr("SYNCTHIS_E2E_DOCKER_BIN", "docker")
+	image     = envOr("SYNGO_E2E_IMAGE", "syngo-e2e:dev")
+	dockerBin = envOr("SYNGO_E2E_DOCKER_BIN", "docker")
 	// keepArtifacts writes the per-device evidence even for a test that
 	// passed.
-	keepArtifacts = os.Getenv("SYNCTHIS_E2E_KEEP") == "1"
+	keepArtifacts = os.Getenv("SYNGO_E2E_KEEP") == "1"
 )
 
 // timeoutScale multiplies every waiting time, for a machine too loaded to
@@ -79,7 +79,7 @@ func envOr(key, fallback string) string {
 }
 
 func envTimeoutScale() time.Duration {
-	scale, err := strconv.Atoi(os.Getenv("SYNCTHIS_E2E_TIMEOUT_SCALE"))
+	scale, err := strconv.Atoi(os.Getenv("SYNGO_E2E_TIMEOUT_SCALE"))
 	if err != nil || scale < 1 {
 		return 1
 	}
@@ -89,12 +89,12 @@ func envTimeoutScale() time.Duration {
 // TestMain gates the whole package. The gate is checked before docker is, so
 // a machine without docker never runs a command.
 func TestMain(m *testing.M) {
-	if os.Getenv("SYNCTHIS_E2E_DOCKER") != "1" {
-		fmt.Println("skipping container end-to-end tests: set SYNCTHIS_E2E_DOCKER=1 (see make e2e-docker)")
+	if os.Getenv("SYNGO_E2E_DOCKER") != "1" {
+		fmt.Println("skipping container end-to-end tests: set SYNGO_E2E_DOCKER=1 (see make e2e-docker)")
 		os.Exit(0)
 	}
 	if err := checkDocker(); err != nil {
-		fmt.Fprintf(os.Stderr, "syncthis container tests need docker: %v\n", err)
+		fmt.Fprintf(os.Stderr, "syngo container tests need docker: %v\n", err)
 		os.Exit(1)
 	}
 	os.Exit(m.Run())

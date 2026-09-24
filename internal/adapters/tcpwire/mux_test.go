@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // muxHandler answers a chunk request with bytes derived from its index, and

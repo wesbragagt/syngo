@@ -13,10 +13,10 @@ import (
 const (
 	// ReservedDir is the per-folder state directory, holding the partial
 	// downloads among other things.
-	ReservedDir = ".syncthis"
+	ReservedDir = ".syngo"
 	// IgnoreFile is the per-folder ignore file. It is the local user's
 	// statement about what this device wants; a peer may not write it.
-	IgnoreFile = ".syncthisignore"
+	IgnoreFile = ".syngoignore"
 )
 
 // ErrInvalidPath reports a manifest path that may not be used: one that is

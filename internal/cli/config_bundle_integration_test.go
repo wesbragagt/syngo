@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/configbundle"
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/configbundle"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // bundlePeerID is the peer the export tests write into the database directly:

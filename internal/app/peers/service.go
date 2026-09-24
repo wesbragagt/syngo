@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // ErrNotConfirmed reports that the caller did not confirm the identity of the

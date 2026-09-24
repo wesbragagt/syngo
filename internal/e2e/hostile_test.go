@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/adapters/identityfile"
-	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/adapters/identityfile"
+	"github.com/wesbragagt/syngo/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // hostilePeer is a peer that speaks the protocol but answers with whatever a
@@ -181,8 +181,8 @@ func TestHostilePeer_CannotWriteOutsideTheFolder(t *testing.T) {
 	escape := peer.Serve("../escape.txt", []byte("written outside the folder"))
 	deep := peer.Serve("../../escape-deep.txt", []byte("written two levels out"))
 	cleaned := peer.Serve("a/../../escape-clean.txt", []byte("written out through a clean"))
-	absolute := peer.Serve("/tmp/syncthis-escape-absolute", []byte("written at an absolute path"))
-	reserved := peer.Serve(".syncthisignore", []byte("*\n"))
+	absolute := peer.Serve("/tmp/syngo-escape-absolute", []byte("written at an absolute path"))
+	reserved := peer.Serve(".syngoignore", []byte("*\n"))
 	tombstone := manifest.Entry{Path: "../victim.txt", Kind: manifest.KindFile, Deleted: true}
 	peer.SetManifest(escape, deep, cleaned, absolute, reserved, tombstone)
 	peer.trust(t, receiver)
@@ -195,8 +195,8 @@ func TestHostilePeer_CannotWriteOutsideTheFolder(t *testing.T) {
 	assertNotWritten(t, filepath.Join(outside, "escape.txt"), escape)
 	assertNotWritten(t, filepath.Join(filepath.Dir(outside), "escape-deep.txt"), deep)
 	assertNotWritten(t, filepath.Join(filepath.Dir(outside), "escape-clean.txt"), cleaned)
-	assertNotWritten(t, "/tmp/syncthis-escape-absolute", absolute)
-	assertNotWritten(t, filepath.Join(receiver.Root, ".syncthisignore"), reserved)
+	assertNotWritten(t, "/tmp/syngo-escape-absolute", absolute)
+	assertNotWritten(t, filepath.Join(receiver.Root, ".syngoignore"), reserved)
 	if _, err := os.Lstat(filepath.Join(outside, "victim.txt")); err != nil {
 		t.Fatalf("the hostile peer deleted the file outside the folder: %v", err)
 	}

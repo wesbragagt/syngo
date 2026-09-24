@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // chunkSourceBytes adds up the payload of the chunks a node verified for one path,

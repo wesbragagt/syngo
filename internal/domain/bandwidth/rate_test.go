@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 func TestParseRate_Table(t *testing.T) {

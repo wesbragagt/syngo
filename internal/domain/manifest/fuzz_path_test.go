@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // overLongPath is a path longer than any filesystem accepts, used as a

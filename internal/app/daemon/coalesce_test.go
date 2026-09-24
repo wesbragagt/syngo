@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/daemon"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/daemon"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 func TestCoalesce_MergesSiblingEventsToParentDir(t *testing.T) {

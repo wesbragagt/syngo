@@ -74,15 +74,15 @@ func TestTUI_KillingItLeavesTheDaemonAndItsTransferAlone(t *testing.T) {
 	dirB, rootB := t.TempDir(), t.TempDir()
 	listenA, listenB := freeLoopbackAddr(t), freeLoopbackAddr(t)
 
-	syncthis(t, bin, dirA, "init", "--name", "laptop", "--listen", listenA)
-	syncthis(t, bin, dirB, "init", "--name", "nas", "--listen", listenB)
-	syncthis(t, bin, dirA, tighteningArgs()...)
-	syncthis(t, bin, dirB, tighteningArgs()...)
+	syngo(t, bin, dirA, "init", "--name", "laptop", "--listen", listenA)
+	syngo(t, bin, dirB, "init", "--name", "nas", "--listen", listenB)
+	syngo(t, bin, dirA, tighteningArgs()...)
+	syngo(t, bin, dirB, tighteningArgs()...)
 	// Only the receiving side is paced, so the file takes long enough to
 	// be interrupted in the middle of.
-	syncthis(t, bin, dirA, "config", "set", "--download-limit", transferLimit)
-	syncthis(t, bin, dirA, "folder", "add", rootA, "--id", string(folderID))
-	syncthis(t, bin, dirB, "folder", "add", rootB, "--id", string(folderID))
+	syngo(t, bin, dirA, "config", "set", "--download-limit", transferLimit)
+	syngo(t, bin, dirA, "folder", "add", rootA, "--id", string(folderID))
+	syngo(t, bin, dirB, "folder", "add", rootB, "--id", string(folderID))
 
 	logA := filepath.Join(dirA, "daemon.log")
 	daemonA := startDaemonProcess(t, bin, dirA, logA)
@@ -91,10 +91,10 @@ func TestTUI_KillingItLeavesTheDaemonAndItsTransferAlone(t *testing.T) {
 	reportA := waitDaemon(t, bin, dirA)
 	reportB := waitDaemon(t, bin, dirB)
 
-	syncthis(t, bin, dirA, "peer", "add", reportB.Daemon.Listen, "--yes")
-	syncthis(t, bin, dirB, "peer", "add", reportA.Daemon.Listen, "--yes")
-	syncthis(t, bin, dirA, "folder", "grant", string(folderID), reportB.Device.ID)
-	syncthis(t, bin, dirB, "folder", "grant", string(folderID), reportA.Device.ID)
+	syngo(t, bin, dirA, "peer", "add", reportB.Daemon.Listen, "--yes")
+	syngo(t, bin, dirB, "peer", "add", reportA.Daemon.Listen, "--yes")
+	syngo(t, bin, dirA, "folder", "grant", string(folderID), reportB.Device.ID)
+	syngo(t, bin, dirB, "folder", "grant", string(folderID), reportA.Device.ID)
 
 	// The file that will be in flight.
 	want := payload(transferSize, 7)

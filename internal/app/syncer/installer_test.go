@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/syncer"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/syncer"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // root is the folder the installer tests write into.
@@ -46,7 +46,7 @@ func newInstallFixture(t *testing.T, rel string, data []byte) *installFixture {
 
 func TestTempDir_IsInsideTheFolderRoot(t *testing.T) {
 	installer := syncer.NewInstaller(fakes.NewFileSystem(), fakes.NewHasher())
-	if got := installer.TempDir(root); got != root+"/.syncthis/tmp" {
+	if got := installer.TempDir(root); got != root+"/.syngo/tmp" {
 		t.Fatalf("temp dir = %q, want it inside the folder so a rename stays on one filesystem", got)
 	}
 }

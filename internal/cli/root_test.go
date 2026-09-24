@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // run executes the CLI and returns the exit code with both output streams.
@@ -22,7 +22,7 @@ func TestExecute_NoArgsPrintsHelpExit0(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
 	}
-	for _, want := range []string{"Usage:", "syncthis", "Available Commands:"} {
+	for _, want := range []string{"Usage:", "syngo", "Available Commands:"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout does not contain %q:\n%s", want, stdout)
 		}
@@ -46,8 +46,8 @@ func TestExecute_UnknownCommandExit2(t *testing.T) {
 			if code != cli.ExitUsage {
 				t.Fatalf("exit = %d, want %d", code, cli.ExitUsage)
 			}
-			if !strings.HasPrefix(stderr, "syncthis:") {
-				t.Fatalf("stderr = %q, want it to start with %q", stderr, "syncthis:")
+			if !strings.HasPrefix(stderr, "syngo:") {
+				t.Fatalf("stderr = %q, want it to start with %q", stderr, "syngo:")
 			}
 		})
 	}
@@ -101,8 +101,8 @@ func TestCompletionBash_Emits(t *testing.T) {
 		want  string
 	}{
 		{"bash", "bash completion"},
-		{"zsh", "#compdef syncthis"},
-		{"fish", "syncthis"},
+		{"zsh", "#compdef syngo"},
+		{"fish", "syngo"},
 		{"powershell", "Register-ArgumentCompleter"},
 	}
 	for _, tt := range tests {

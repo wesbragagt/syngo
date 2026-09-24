@@ -48,7 +48,7 @@ func requireBinary(t *testing.T) string {
 	}
 	path, err := binary()
 	if err != nil {
-		t.Skipf("no syncthis binary to kill: %v", err)
+		t.Skipf("no syngo binary to kill: %v", err)
 	}
 	return path
 }
@@ -122,7 +122,7 @@ func mutateFixture(t *testing.T) (string, int64) {
 	return root, total
 }
 
-// child is a syncthis process the test can kill. Everything the process
+// child is a syngo process the test can kill. Everything the process
 // writes, and its exit status, is only read once Wait has returned: os/exec
 // fills both from goroutines of its own.
 type child struct {

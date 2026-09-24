@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 func TestValidRelPath(t *testing.T) {
@@ -32,9 +32,9 @@ func TestValidRelPath(t *testing.T) {
 		{name: "trailing slash", path: "a/"},
 		{name: "empty segment", path: "a//b"},
 		{name: "nul byte", path: "a\x00b"},
-		{name: "reserved directory", path: ".syncthis"},
-		{name: "inside the reserved directory", path: ".syncthis/tmp/x"},
-		{name: "ignore file", path: ".syncthisignore"},
+		{name: "reserved directory", path: ".syngo"},
+		{name: "inside the reserved directory", path: ".syngo/tmp/x"},
+		{name: "ignore file", path: ".syngoignore"},
 	}
 
 	for _, tc := range cases {
@@ -68,7 +68,7 @@ func TestValidLinkTarget(t *testing.T) {
 		{name: "root", link: "a", target: "/"},
 		{name: "climbs out", link: "a", target: "../outside"},
 		{name: "climbs out from a subdirectory", link: "a/b", target: "../../outside"},
-		{name: "reaches the state directory", link: "a", target: ".syncthis"},
+		{name: "reaches the state directory", link: "a", target: ".syngo"},
 		{name: "nul byte", link: "a", target: "x\x00y"},
 		{name: "invalid link path", link: "../a", target: "file.txt"},
 	}

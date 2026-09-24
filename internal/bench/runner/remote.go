@@ -10,14 +10,14 @@ import (
 
 // remoteListenPort is the port the peer machine's bench daemon listens on.
 // It is deliberately not 22000: a bench run must not collide with, or be
-// mistaken for, a syncthis the operator already runs on that machine.
+// mistaken for, a syngo the operator already runs on that machine.
 const remoteListenPort = 22300
 
 // remoteReadyTimeout bounds how long the driver waits for the daemon it
 // started on the peer machine to answer its control socket.
 const remoteReadyTimeout = 60 * time.Second
 
-// remoteDevice drives syncthis on the peer machine over ssh: it places the
+// remoteDevice drives syngo on the peer machine over ssh: it places the
 // binary, initializes a data directory, adds the folder, starts and stops the
 // daemon, and reads status, file hashes and the tailnet path back as JSON.
 //
@@ -61,18 +61,18 @@ func validateRemoteDir(dir string) error {
 	case "":
 		return fmt.Errorf("--peer-dir is required: every path a run creates on the peer machine sits under it")
 	case "/", "~", "~/":
-		return fmt.Errorf("--peer-dir %q is the whole home or root directory; name a directory of its own, for example ~/syncthis-bench-remote", dir)
+		return fmt.Errorf("--peer-dir %q is the whole home or root directory; name a directory of its own, for example ~/syngo-bench-remote", dir)
 	}
 	for _, part := range strings.Split(strings.TrimPrefix(trimmed, "~/"), "/") {
 		if part == ".." {
-			return fmt.Errorf("--peer-dir %q escapes itself with %q; name a plain directory, for example ~/syncthis-bench-remote", dir, "..")
+			return fmt.Errorf("--peer-dir %q escapes itself with %q; name a plain directory, for example ~/syngo-bench-remote", dir, "..")
 		}
 	}
 	return nil
 }
 
 // paths under the remote directory.
-func (r *remoteDevice) bin() string     { return r.dir + "/bin/syncthis" }
+func (r *remoteDevice) bin() string     { return r.dir + "/bin/syngo" }
 func (r *remoteDevice) dataDir() string { return r.dir + "/data" }
 func (r *remoteDevice) root() string    { return r.dir + "/root" }
 func (r *remoteDevice) pidFile() string { return r.dir + "/daemon.pid" }
@@ -83,9 +83,9 @@ func (r *remoteDevice) run(ctx context.Context, script string) ([]byte, error) {
 	return r.exec.Run(ctx, "ssh", sshArgs(r.host, script)...)
 }
 
-// syncthis runs the peer's syncthis binary against the remote data
+// syngo runs the peer's syngo binary against the remote data
 // directory.
-func (r *remoteDevice) syncthis(ctx context.Context, args ...string) ([]byte, error) {
+func (r *remoteDevice) syngo(ctx context.Context, args ...string) ([]byte, error) {
 	return r.run(ctx, shellJoin(append([]string{r.bin(), "--data-dir", r.dataDir()}, args...)...))
 }
 
@@ -136,7 +136,7 @@ func validateResolvedDir(dir string) error {
 	}
 	if len(parts) < 2 {
 		return fmt.Errorf("the peer directory resolved to %q, too close to the root of the peer machine "+
-			"for a run to clear it; name a directory of its own, for example ~/syncthis-bench-remote", dir)
+			"for a run to clear it; name a directory of its own, for example ~/syngo-bench-remote", dir)
 	}
 	return nil
 }
@@ -167,7 +167,7 @@ func (r *remoteDevice) reset(ctx context.Context) error {
 	return nil
 }
 
-// buildFunc compiles a syncthis binary for the given platform into dest.
+// buildFunc compiles a syngo binary for the given platform into dest.
 type buildFunc func(ctx context.Context, dest, goos, goarch string) error
 
 // prepare places the binary, creates the directories and initializes the data
@@ -194,13 +194,13 @@ func (r *remoteDevice) prepare(ctx context.Context, localBinary string, build bu
 		return err
 	}
 	if _, err := r.exec.Run(ctx, "scp", scpArgs(localBinary, r.host, r.bin())...); err != nil {
-		return fmt.Errorf("copy the syncthis binary to %s: %w", r.host, err)
+		return fmt.Errorf("copy the syngo binary to %s: %w", r.host, err)
 	}
 	if _, err := r.run(ctx, shellJoin("chmod", "+x", r.bin())); err != nil {
 		return fmt.Errorf("make %s executable: %w", r.bin(), err)
 	}
 
-	initOut, err := r.syncthis(ctx, "init",
+	initOut, err := r.syngo(ctx, "init",
 		"--name", "bench-"+r.host,
 		"--listen", fmt.Sprintf("127.0.0.1:%d", remoteListenPort),
 		"--json")
@@ -223,7 +223,7 @@ func (r *remoteDevice) prepare(ctx context.Context, localBinary string, build bu
 // addFolder shares the remote root as FolderID. An id already configured from
 // an earlier run is not an error.
 func (r *remoteDevice) addFolder(ctx context.Context) error {
-	out, err := r.syncthis(ctx, "folder", "add", r.root(), "--id", string(FolderID), "--json")
+	out, err := r.syngo(ctx, "folder", "add", r.root(), "--id", string(FolderID), "--json")
 	if err == nil {
 		return nil
 	}
@@ -236,7 +236,7 @@ func (r *remoteDevice) addFolder(ctx context.Context) error {
 // trust stores the local device on the peer, the half of pairing the peer
 // machine has to run itself.
 func (r *remoteDevice) trust(ctx context.Context, localAddr, localID string) error {
-	if _, err := r.syncthis(ctx, "peer", "add", localAddr,
+	if _, err := r.syngo(ctx, "peer", "add", localAddr,
 		"--device-id", localID, "--yes", "--json"); err != nil {
 		return fmt.Errorf("pair %s with this machine at %s: %w", r.host, localAddr, err)
 	}
@@ -247,7 +247,7 @@ func (r *remoteDevice) trust(ctx context.Context, localAddr, localID string) err
 // the peer's half of sharing: a folder is served to no device until it is
 // granted one.
 func (r *remoteDevice) grant(ctx context.Context, localID string) error {
-	if _, err := r.syncthis(ctx, "folder", "grant", string(FolderID), localID, "--json"); err != nil {
+	if _, err := r.syngo(ctx, "folder", "grant", string(FolderID), localID, "--json"); err != nil {
 		return fmt.Errorf("grant %s on the folder of %s: %w", localID, r.host, err)
 	}
 	return nil
@@ -337,7 +337,7 @@ func (r *remoteDevice) stop(ctx context.Context) error {
 	return nil
 }
 
-// remoteStatus is the part of `syncthis status --json` a bench run reads back
+// remoteStatus is the part of `syngo status --json` a bench run reads back
 // from the peer machine.
 type remoteStatus struct {
 	Daemon struct {
@@ -361,14 +361,14 @@ type remoteStatus struct {
 
 // status reads the peer's status document.
 func (r *remoteDevice) status(ctx context.Context) (remoteStatus, error) {
-	out, err := r.syncthis(ctx, "status", "--json")
+	out, err := r.syngo(ctx, "status", "--json")
 	if err != nil {
 		return remoteStatus{}, err
 	}
 	return parseRemoteStatus(out)
 }
 
-// parseRemoteStatus decodes what `syncthis status --json` printed on the peer.
+// parseRemoteStatus decodes what `syngo status --json` printed on the peer.
 func parseRemoteStatus(out []byte) (remoteStatus, error) {
 	var report remoteStatus
 	if err := json.Unmarshal(out, &report); err != nil {
@@ -412,11 +412,11 @@ func (r *remoteDevice) hashes(ctx context.Context) (map[string]string, error) {
 }
 
 // remoteHashScript is the shell command that prints "<sha256>  ./<path>" for
-// every regular file under root, skipping the ".syncthis" state directory,
+// every regular file under root, skipping the ".syngo" state directory,
 // which is bookkeeping rather than synchronized content.
 func remoteHashScript(root string) string {
 	return "cd " + shellQuote(root) +
-		` && find . -path ./.syncthis -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum`
+		` && find . -path ./.syngo -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum`
 }
 
 // tailscaleStatus reads `tailscale status --json` on the peer machine.

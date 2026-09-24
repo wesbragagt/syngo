@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // TestFiles_ProvisionalSurvivesTheDatabase checks that the mark a version

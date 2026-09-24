@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // MigrationSQL returns the script that brings the schema to the given version.

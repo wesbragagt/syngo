@@ -8,7 +8,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 var _ ports.ControlClient = (*Client)(nil)

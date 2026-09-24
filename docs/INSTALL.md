@@ -1,4 +1,4 @@
-# Installing syncthis
+# Installing syngo
 
 One binary per device: the CLI and the daemon are the same program. Every
 install below ends the same way, with a daemon that has an identity, a data
@@ -30,23 +30,23 @@ Add the flake as an input and import the NixOS module.
 This repository is not published yet: it has no git remote, so there is no
 `github:` URL to fetch and every snippet below points at a local checkout
 instead. Clone it somewhere and use that path. Once the repository is
-published, `syncthis.url = "github:wesbragagt/syncthis";` replaces the `path:`
+published, `syngo.url = "github:wesbragagt/syngo";` replaces the `path:`
 line in every snippet on this page and nothing else changes.
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    syncthis.url = "path:/home/you/src/syncthis";
+    syngo.url = "path:/home/you/src/syngo";
   };
 
-  outputs = { self, nixpkgs, syncthis }: {
+  outputs = { self, nixpkgs, syngo }: {
     nixosConfigurations.laptop = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
-        syncthis.nixosModules.default
+        syngo.nixosModules.default
         {
-          services.syncthis = {
+          services.syngo = {
             enable = true;
             interface = "tailscale0";
           };
@@ -76,9 +76,9 @@ $ nix build .#checks.x86_64-linux.nixos-module --no-link --print-out-paths
 
 `nix flake check` runs that one and additionally boots the module in two VMs.
 
-The module adds `syncthis` to `environment.systemPackages`, creates the
-`syncthis` user and group, creates `/var/lib/syncthis` mode 0700 owned by that
-user through `systemd.tmpfiles`, and defines `syncthis.service`.
+The module adds `syngo` to `environment.systemPackages`, creates the
+`syngo` user and group, creates `/var/lib/syngo` mode 0700 owned by that
+user through `systemd.tmpfiles`, and defines `syngo.service`.
 
 ### Options
 
@@ -86,18 +86,18 @@ Defined in `nix/service.nix` and `nix/nixos-module.nix`.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `services.syncthis.enable` | `false` | run the daemon |
-| `services.syncthis.package` | this flake's `syncthis` | the package to run |
-| `services.syncthis.dataDir` | `/var/lib/syncthis` | passed as `SYNCTHIS_DATA_DIR` |
-| `services.syncthis.interface` | `null` | passed as `daemon run --interface`; `null` keeps the listen address from `config.json` |
-| `services.syncthis.restart` | `"always"` | systemd `Restart=` |
-| `services.syncthis.restartSec` | `5` | seconds between restarts |
-| `services.syncthis.user` | `"syncthis"` | the user the daemon runs as |
-| `services.syncthis.group` | `"syncthis"` | the group the daemon runs as |
-| `services.syncthis.createUser` | `true` | declare that user and group here |
+| `services.syngo.enable` | `false` | run the daemon |
+| `services.syngo.package` | this flake's `syngo` | the package to run |
+| `services.syngo.dataDir` | `/var/lib/syngo` | passed as `SYNGO_DATA_DIR` |
+| `services.syngo.interface` | `null` | passed as `daemon run --interface`; `null` keeps the listen address from `config.json` |
+| `services.syngo.restart` | `"always"` | systemd `Restart=` |
+| `services.syngo.restartSec` | `5` | seconds between restarts |
+| `services.syngo.user` | `"syngo"` | the user the daemon runs as |
+| `services.syngo.group` | `"syngo"` | the group the daemon runs as |
+| `services.syngo.createUser` | `true` | declare that user and group here |
 
 The daemon's user must be able to read and write every synchronized folder. If
-the folders belong to your login user, set `services.syncthis.user` to it and
+the folders belong to your login user, set `services.syngo.user` to it and
 `createUser = false`.
 
 The module opens no firewall port. Which port the daemon listens on comes from
@@ -112,19 +112,19 @@ configuration. Run `init` once, as the daemon's user, with the same data
 directory the unit uses.
 
 ```console
-$ sudo -u syncthis env SYNCTHIS_DATA_DIR=/var/lib/syncthis \
-    syncthis init --name laptop --listen 0.0.0.0:22000
-initialized /var/lib/syncthis
+$ sudo -u syngo env SYNGO_DATA_DIR=/var/lib/syngo \
+    syngo init --name laptop --listen 0.0.0.0:22000
+initialized /var/lib/syngo
 device id: IRGAXGLUF4X5OSDVNADDCDXI4K5T476EK6E4A3WGFYMP2FMBOJFQ
 device name: laptop
 listen: 0.0.0.0:22000
 ```
 
 (The id comes from a run on a scratch data directory on this machine, and the
-first line named that directory rather than `/var/lib/syncthis`; your id
+first line named that directory rather than `/var/lib/syngo`; your id
 differs.)
 
-With `services.syncthis.interface = "tailscale0"` the host part of `--listen`
+With `services.syngo.interface = "tailscale0"` the host part of `--listen`
 is replaced at start by the interface's address, so `0.0.0.0:22000` here only
 picks the port.
 
@@ -135,8 +135,8 @@ daemon exits 3 and `Restart=always` brings it back, so the unit loops instead
 of failing, and it comes up on its own as soon as `init` has run.
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/empty daemon run
-syncthis: device identity not initialized: /tmp/sdemo/empty/identity.key missing
+$ syngo --data-dir /tmp/sdemo/empty daemon run
+syngo: device identity not initialized: /tmp/sdemo/empty/identity.key missing
 $ echo $?
 3
 ```
@@ -144,10 +144,10 @@ $ echo $?
 The journal carries the same line, naming the missing file:
 
 ```console
-$ systemctl show syncthis.service -p ExecMainStatus --value
+$ systemctl show syngo.service -p ExecMainStatus --value
 3
-$ journalctl -u syncthis.service | grep 'identity'
-... syncthis: device identity not initialized: /var/lib/syncthis/identity.key missing
+$ journalctl -u syngo.service | grep 'identity'
+... syngo: device identity not initialized: /var/lib/syngo/identity.key missing
 ```
 
 `nix/vm-tests.nix` asserts exactly this: exit status 3, the message
@@ -159,23 +159,23 @@ unit going active after `init`.
 To try the binary without adding an input, run the checkout:
 
 ```console
-$ nix run path:/home/you/src/syncthis -- version
-syncthis dev (dev, go1.26.7)
+$ nix run path:/home/you/src/syngo -- version
+syngo dev (dev, go1.26.7)
 ```
 
 A `path:` flake carries no git revision, so the version stamp is `dev`. Point
 Nix at the git tree instead and it stamps the commit:
 
 ```console
-$ nix run "git+file:///home/you/src/syncthis" -- version
-syncthis 6e76ddb-dirty (6e76ddb, go1.26.7)
+$ nix run "git+file:///home/you/src/syngo" -- version
+syngo 6e76ddb-dirty (6e76ddb, go1.26.7)
 ```
 
 That is HEAD of the checkout, with the `-dirty` suffix because the tree it was
 run against had uncommitted changes, the same suffix `git describe --dirty`
 adds. Add `?ref=<branch>` to pick a branch.
 
-Once the repository is published this is `nix run github:wesbragagt/syncthis
+Once the repository is published this is `nix run github:wesbragagt/syngo
 -- version`.
 
 ## Home-manager
@@ -191,11 +191,11 @@ under real home-manager.
 
 ```nix
 {
-  inputs.syncthis.url = "path:/home/you/src/syncthis";
+  inputs.syngo.url = "path:/home/you/src/syngo";
 
   # inside your home-manager configuration
-  imports = [ syncthis.homeManagerModules.default ];
-  services.syncthis = {
+  imports = [ syngo.homeManagerModules.default ];
+  services.syngo = {
     enable = true;
     interface = "tailscale0";
   };
@@ -203,14 +203,14 @@ under real home-manager.
 ```
 
 The options are the ones in the table above, minus `user`, `group` and
-`createUser`. `dataDir` defaults to `${config.xdg.dataHome}/syncthis`.
+`createUser`. `dataDir` defaults to `${config.xdg.dataHome}/syngo`.
 
 Then, once:
 
 ```console
-$ syncthis init --name laptop
+$ syngo init --name laptop
 $ loginctl enable-linger $USER     # keep the daemon running when logged out
-$ systemctl --user status syncthis
+$ systemctl --user status syngo
 ```
 
 ## Linux without Nix
@@ -219,17 +219,17 @@ Build the archives on any machine with Go 1.26:
 
 ```console
 $ make dist
-building syncthis_6e76ddb_linux-amd64
-building syncthis_6e76ddb_linux-arm64
-building syncthis_6e76ddb_linux-armv7
-building syncthis_6e76ddb_darwin-amd64
-building syncthis_6e76ddb_darwin-arm64
+building syngo_6e76ddb_linux-amd64
+building syngo_6e76ddb_linux-arm64
+building syngo_6e76ddb_linux-armv7
+building syngo_6e76ddb_darwin-amd64
+building syngo_6e76ddb_darwin-arm64
 -rw-r--r-- 1 wesbragagt users     512 Sep 22 12:10 SHA256SUMS
--rw-r--r-- 1 wesbragagt users 9809703 Sep 22 12:10 syncthis_6e76ddb_darwin-amd64.tar.gz
--rw-r--r-- 1 wesbragagt users 9351724 Sep 22 12:10 syncthis_6e76ddb_darwin-arm64.tar.gz
--rw-r--r-- 1 wesbragagt users 9658527 Sep 22 12:10 syncthis_6e76ddb_linux-amd64.tar.gz
--rw-r--r-- 1 wesbragagt users 9002715 Sep 22 12:10 syncthis_6e76ddb_linux-arm64.tar.gz
--rw-r--r-- 1 wesbragagt users 9034334 Sep 22 12:10 syncthis_6e76ddb_linux-armv7.tar.gz
+-rw-r--r-- 1 wesbragagt users 9809703 Sep 22 12:10 syngo_6e76ddb_darwin-amd64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9351724 Sep 22 12:10 syngo_6e76ddb_darwin-arm64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9658527 Sep 22 12:10 syngo_6e76ddb_linux-amd64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9002715 Sep 22 12:10 syngo_6e76ddb_linux-arm64.tar.gz
+-rw-r--r-- 1 wesbragagt users 9034334 Sep 22 12:10 syngo_6e76ddb_linux-armv7.tar.gz
 ```
 
 The version in every file name is what `git describe --tags --always --dirty`
@@ -245,22 +245,22 @@ for this machine:
 
 ```console
 $ make dist-verify
-sha256 ok   syncthis_6e76ddb_darwin-amd64.tar.gz
-sha256 ok   syncthis_6e76ddb_darwin-arm64.tar.gz
-sha256 ok   syncthis_6e76ddb_linux-amd64.tar.gz
-sha256 ok   syncthis_6e76ddb_linux-arm64.tar.gz
-sha256 ok   syncthis_6e76ddb_linux-armv7.tar.gz
-extract ok  syncthis_6e76ddb_linux-amd64
-static ok   dist/verify/syncthis_6e76ddb_linux-amd64/syncthis (elf EM_X86_64)
-version ok  syncthis_6e76ddb_linux-amd64: syncthis 6e76ddb (6e76ddb, go1.26.7)
-extract ok  syncthis_6e76ddb_linux-arm64
-static ok   dist/verify/syncthis_6e76ddb_linux-arm64/syncthis (elf EM_AARCH64)
-extract ok  syncthis_6e76ddb_linux-armv7
-static ok   dist/verify/syncthis_6e76ddb_linux-armv7/syncthis (elf EM_ARM)
-extract ok  syncthis_6e76ddb_darwin-amd64
-static ok   dist/verify/syncthis_6e76ddb_darwin-amd64/syncthis (mach-o CpuAmd64)
-extract ok  syncthis_6e76ddb_darwin-arm64
-static ok   dist/verify/syncthis_6e76ddb_darwin-arm64/syncthis (mach-o CpuArm64)
+sha256 ok   syngo_6e76ddb_darwin-amd64.tar.gz
+sha256 ok   syngo_6e76ddb_darwin-arm64.tar.gz
+sha256 ok   syngo_6e76ddb_linux-amd64.tar.gz
+sha256 ok   syngo_6e76ddb_linux-arm64.tar.gz
+sha256 ok   syngo_6e76ddb_linux-armv7.tar.gz
+extract ok  syngo_6e76ddb_linux-amd64
+static ok   dist/verify/syngo_6e76ddb_linux-amd64/syngo (elf EM_X86_64)
+version ok  syngo_6e76ddb_linux-amd64: syngo 6e76ddb (6e76ddb, go1.26.7)
+extract ok  syngo_6e76ddb_linux-arm64
+static ok   dist/verify/syngo_6e76ddb_linux-arm64/syngo (elf EM_AARCH64)
+extract ok  syngo_6e76ddb_linux-armv7
+static ok   dist/verify/syngo_6e76ddb_linux-armv7/syngo (elf EM_ARM)
+extract ok  syngo_6e76ddb_darwin-amd64
+static ok   dist/verify/syngo_6e76ddb_darwin-amd64/syngo (mach-o CpuAmd64)
+extract ok  syngo_6e76ddb_darwin-arm64
+static ok   dist/verify/syngo_6e76ddb_darwin-arm64/syngo (mach-o CpuArm64)
 dist-verify: all artifacts ok
 ```
 
@@ -268,36 +268,36 @@ On the target machine, check the digest and install the binary:
 
 ```console
 $ sha256sum -c --ignore-missing SHA256SUMS
-$ tar -xzf syncthis_<version>_linux-amd64.tar.gz
-$ sudo install -m 0755 syncthis /usr/local/bin/syncthis
-$ syncthis version
+$ tar -xzf syngo_<version>_linux-amd64.tar.gz
+$ sudo install -m 0755 syngo /usr/local/bin/syngo
+$ syngo version
 ```
 
-`/usr/local/bin/syncthis` is the path `packaging/systemd/syncthis.service` and
+`/usr/local/bin/syngo` is the path `packaging/systemd/syngo.service` and
 the launchd plist both name. Install it elsewhere and edit the unit.
 
 Then the identity and the user unit:
 
 ```console
-$ syncthis init --name laptop
+$ syngo init --name laptop
 $ mkdir -p ~/.config/systemd/user
-$ cp packaging/systemd/syncthis.service ~/.config/systemd/user/
+$ cp packaging/systemd/syngo.service ~/.config/systemd/user/
 $ systemctl --user daemon-reload
-$ systemctl --user enable --now syncthis
-$ systemctl --user is-active syncthis
+$ systemctl --user enable --now syngo
+$ systemctl --user is-active syngo
 active
 ```
 
 The unit runs as the invoking user, with
-`SYNCTHIS_DATA_DIR=%h/.local/share/syncthis`, `Restart=always`,
+`SYNGO_DATA_DIR=%h/.local/share/syngo`, `Restart=always`,
 `RestartSec=5`, `KillSignal=SIGTERM` and `StartLimitIntervalSec=0`. Nothing in
 it needs root. Change the data directory or add `--interface` with
-`systemctl --user edit syncthis`. Add `loginctl enable-linger $USER` to keep
+`systemctl --user edit syngo`. Add `loginctl enable-linger $USER` to keep
 the daemon running when that user is not logged in.
 
 Partly untested here. NixOS has no `/usr/local/bin`, so `install` into it was
 not run. The unit itself was started on this machine under a scratch name,
-with `ExecStart` pointed at the Nix store binary and `SYNCTHIS_DATA_DIR`
+with `ExecStart` pointed at the Nix store binary and `SYNGO_DATA_DIR`
 pointed at a scratch directory; systemd reported `active (running)`.
 
 ## macOS
@@ -307,14 +307,14 @@ The `darwin-amd64` and `darwin-arm64` archives are built and inspected by
 `make dist-verify` above, which checks the Mach-O header and the architecture
 but cannot run the binary.
 
-Take `syncthis_<version>_darwin-arm64.tar.gz` for Apple silicon,
+Take `syngo_<version>_darwin-arm64.tar.gz` for Apple silicon,
 `darwin-amd64` for Intel.
 
 ```console
 $ shasum -a 256 -c SHA256SUMS
-$ tar -xzf syncthis_<version>_darwin-arm64.tar.gz
-$ sudo install -m 0755 syncthis /usr/local/bin/syncthis
-$ syncthis init --name macbook
+$ tar -xzf syngo_<version>_darwin-arm64.tar.gz
+$ sudo install -m 0755 syngo /usr/local/bin/syngo
+$ syngo init --name macbook
 ```
 
 The plist is a LaunchAgent: it runs as the user who loads it, so the daemon
@@ -324,27 +324,27 @@ in for your short name. Substitute it while copying:
 
 ```console
 $ mkdir -p ~/Library/LaunchAgents ~/Library/Logs
-$ sed "s/USER/$(id -un)/g" packaging/launchd/com.github.wesbragagt.syncthis.plist \
-    > ~/Library/LaunchAgents/com.github.wesbragagt.syncthis.plist
-$ launchctl load -w ~/Library/LaunchAgents/com.github.wesbragagt.syncthis.plist
-$ launchctl list | grep syncthis
+$ sed "s/USER/$(id -un)/g" packaging/launchd/com.github.wesbragagt.syngo.plist \
+    > ~/Library/LaunchAgents/com.github.wesbragagt.syngo.plist
+$ launchctl load -w ~/Library/LaunchAgents/com.github.wesbragagt.syngo.plist
+$ launchctl list | grep syngo
 ```
 
-`USER` appears four times: in `SYNCTHIS_DATA_DIR`
-(`/Users/USER/Library/Application Support/syncthis`), `WorkingDirectory`,
+`USER` appears four times: in `SYNGO_DATA_DIR`
+(`/Users/USER/Library/Application Support/syngo`), `WorkingDirectory`,
 `StandardOutPath` and `StandardErrorPath`. The data directory there is not the
-`~/.local/share/syncthis` default, so pass `--data-dir` to `init` if you want
+`~/.local/share/syngo` default, so pass `--data-dir` to `init` if you want
 the CLI and the agent to share one:
 
 ```console
-$ syncthis --data-dir "$HOME/Library/Application Support/syncthis" init --name macbook
+$ syngo --data-dir "$HOME/Library/Application Support/syngo" init --name macbook
 ```
 
-or export `SYNCTHIS_DATA_DIR` in your shell. Logs go to
-`~/Library/Logs/syncthis.log`. To stop it:
+or export `SYNGO_DATA_DIR` in your shell. Logs go to
+`~/Library/Logs/syngo.log`. To stop it:
 
 ```console
-$ launchctl unload -w ~/Library/LaunchAgents/com.github.wesbragagt.syncthis.plist
+$ launchctl unload -w ~/Library/LaunchAgents/com.github.wesbragagt.syngo.plist
 ```
 
 ## NAS and headless servers
@@ -355,8 +355,8 @@ with `GOARM=7`. Check with `uname -m`: `aarch64` means arm64, `armv7l` means
 armv7.
 
 ```console
-$ tar -xzf syncthis_<version>_linux-armv7.tar.gz
-$ sudo install -m 0755 syncthis /usr/local/bin/syncthis
+$ tar -xzf syngo_<version>_linux-armv7.tar.gz
+$ sudo install -m 0755 syngo /usr/local/bin/syngo
 ```
 
 Not run here: this machine is x86_64, so neither ARM binary was executed.
@@ -367,18 +367,18 @@ A headless box has no logged-in user, so run the daemon as a system service.
 Give it its own user, a data directory it owns, and the folders it syncs:
 
 ```console
-$ sudo useradd --system --home-dir /var/lib/syncthis --create-home syncthis
-$ sudo install -d -m 0700 -o syncthis -g syncthis /var/lib/syncthis
-$ sudo install -d -m 0755 -o syncthis -g syncthis /srv/docs
-$ sudo -u syncthis env SYNCTHIS_DATA_DIR=/var/lib/syncthis \
-    syncthis init --name nas --listen 0.0.0.0:22000
+$ sudo useradd --system --home-dir /var/lib/syngo --create-home syngo
+$ sudo install -d -m 0700 -o syngo -g syngo /var/lib/syngo
+$ sudo install -d -m 0755 -o syngo -g syngo /srv/docs
+$ sudo -u syngo env SYNGO_DATA_DIR=/var/lib/syngo \
+    syngo init --name nas --listen 0.0.0.0:22000
 ```
 
 Not run here: `useradd` is not how NixOS declares users, and creating a system
-user, `/var/lib/syncthis` and `/srv/docs` on this machine would leave state
+user, `/var/lib/syngo` and `/srv/docs` on this machine would leave state
 behind that no configuration owns. The NixOS module does all four, and the VM
 tests boot it and assert the data directory is mode 0700 owned by
-`syncthis:syncthis`. `syncthis init --name nas --listen 0.0.0.0:22000` itself
+`syngo:syngo`. `syngo init --name nas --listen 0.0.0.0:22000` itself
 was run here against a scratch data directory and printed
 `listen: 0.0.0.0:22000`.
 
@@ -386,17 +386,17 @@ Then a system unit, which is the user unit in `packaging/systemd/` plus the
 three lines a system service needs:
 
 ```console
-$ sudo cp packaging/systemd/syncthis.service /etc/systemd/system/
-$ sudo systemctl edit --full syncthis    # set the three lines below
+$ sudo cp packaging/systemd/syngo.service /etc/systemd/system/
+$ sudo systemctl edit --full syngo    # set the three lines below
 $ sudo systemctl daemon-reload
-$ sudo systemctl enable --now syncthis
+$ sudo systemctl enable --now syngo
 ```
 
 ```ini
 [Service]
-User=syncthis
-Group=syncthis
-Environment=SYNCTHIS_DATA_DIR=/var/lib/syncthis
+User=syngo
+Group=syngo
+Environment=SYNGO_DATA_DIR=/var/lib/syngo
 ```
 
 and change `[Install] WantedBy=default.target` to `multi-user.target`, so it
@@ -413,13 +413,13 @@ exercised by `nix flake check`.
 The image is built from `packaging/container/Dockerfile`:
 
 ```console
-$ make container IMAGE=syncthis:docs-test
- => naming to docker.io/library/syncthis:docs-test
+$ make container IMAGE=syngo:docs-test
+ => naming to docker.io/library/syngo:docs-test
 ```
 
-It runs as the user `syncthis`, uid 1000, with `SYNCTHIS_DATA_DIR=/data` and
-`ENTRYPOINT ["/usr/local/bin/syncthis"]`, so arguments to `docker run` are
-syncthis arguments. Two volumes: `/data` is the identity and the database,
+It runs as the user `syngo`, uid 1000, with `SYNGO_DATA_DIR=/data` and
+`ENTRYPOINT ["/usr/local/bin/syngo"]`, so arguments to `docker run` are
+syngo arguments. Two volumes: `/data` is the identity and the database,
 `/folders` the synchronized trees. A bind-mounted host directory must be
 readable and writable by uid 1000.
 
@@ -429,7 +429,7 @@ one `docker run` with the same mount the daemon gets:
 ```console
 $ mkdir -p /tmp/sdemo/c/data /tmp/sdemo/c/folders/docs
 $ docker run --rm -v /tmp/sdemo/c/data:/data -v /tmp/sdemo/c/folders:/folders \
-    syncthis:docs-test init --name box
+    syngo:docs-test init --name box
 initialized /data
 device id: JRNOBFID54R57OO5SN2ABC4FWLPPVV6IUNHE4R4XWX2OSKHPFICQ
 device name: box
@@ -440,15 +440,15 @@ The daemon refuses a public bind without `--allow-public`, and a wildcard bind
 counts as public, so give it the container's own interface:
 
 ```console
-$ docker run -d --name syncthis -v /tmp/sdemo/c/data:/data \
+$ docker run -d --name syngo -v /tmp/sdemo/c/data:/data \
     -v /tmp/sdemo/c/folders:/folders -p 22003:22000 \
-    syncthis:docs-test daemon run --interface eth0
-$ docker logs syncthis
+    syngo:docs-test daemon run --interface eth0
+$ docker logs syngo
 time=2026-09-22T17:11:37.964Z level=INFO msg="peer listener bound" address=172.17.0.2:22000
 time=2026-09-22T17:11:37.964Z level=INFO msg="listening for peers" address=172.17.0.2:22000
 time=2026-09-22T17:11:37.964Z level=INFO msg="bandwidth limits applied" upload=unlimited download=unlimited
 time=2026-09-22T17:11:37.964Z level=INFO msg="daemon started" folders=0 rescan_interval=10m0s
-syncthis daemon running (pid 1, data dir /data)
+syngo daemon running (pid 1, data dir /data)
 ```
 
 The daemon is pid 1, so `docker stop` sends it SIGTERM, which is what it shuts
@@ -456,27 +456,27 @@ down cleanly on. Every other command goes into the running container, where it
 reaches the control socket in `/data`:
 
 ```console
-$ docker exec syncthis syncthis status --json | jq -c .daemon
+$ docker exec syngo syngo status --json | jq -c .daemon
 {"running":true,"pid":1,"listen":"172.17.0.2:22000","started_at":"2026-09-22T17:11:37Z","upload_limit":0,"download_limit":0,"listener":{"bound":true,"address":"172.17.0.2:22000","interface":"eth0","bound_at":"2026-09-22T17:11:37Z","lost_at":null,"rebinds":0,"failures":0,"error":null}}
-$ docker exec syncthis syncthis folder add /folders/docs --id docs
+$ docker exec syngo syngo folder add /folders/docs --id docs
 added folder docs at /folders/docs
 ```
 
 The directory has to exist inside the container before `folder add`: the
 command exits 2 on a path that is not a directory, which is why the `mkdir`
 above created `/tmp/sdemo/c/folders/docs`. The folder is served to no device
-until `docker exec syncthis syncthis folder grant docs <device id>` names one.
+until `docker exec syngo syngo folder grant docs <device id>` names one.
 
 A peer outside the container reaches it at the published port, `22003` above.
 The address the daemon binds is the container's, so tell the peer the host's
-address and port: `syncthis peer add <host>:22003`.
+address and port: `syngo peer add <host>:22003`.
 
 ## Configure
 
 ### Data directory
 
-Resolved from `--data-dir`, else `$SYNCTHIS_DATA_DIR`, else
-`$XDG_DATA_HOME/syncthis`, else `~/.local/share/syncthis`. Every install above
+Resolved from `--data-dir`, else `$SYNGO_DATA_DIR`, else
+`$XDG_DATA_HOME/syngo`, else `~/.local/share/syngo`. Every install above
 sets it explicitly for the service, so set the same one for the CLI, or the CLI
 talks to a different device with no daemon behind it.
 
@@ -489,7 +489,7 @@ to trust a new id. `config export` never includes them. Full contents in
 
 ### Settings worth changing
 
-`syncthis config show` prints them, `syncthis config set` writes them and asks
+`syngo config show` prints them, `syngo config set` writes them and asks
 a running daemon to reload.
 
 | Setting | Why you would change it |
@@ -526,8 +526,8 @@ refused. It bounds the requests, not the memory: the download side holds at
 most 64 MiB of chunk content at a time whatever this is set to.
 
 ```console
-$ syncthis config set --download-limit 4MiB
-$ syncthis config set --interface tailscale0
+$ syngo config set --download-limit 4MiB
+$ syngo config set --interface tailscale0
 ```
 
 ### The interface rule on a tailnet
@@ -539,29 +539,29 @@ such as `0.0.0.0:22000` counts as public and is refused with exit 2.
 So on a tailnet, bind the interface and never pass `--allow-public`:
 
 ```console
-$ syncthis daemon run --interface tailscale0
+$ syngo daemon run --interface tailscale0
 ```
 
 The daemon then listens on the device's `100.64.0.0/10` address, which only the
 tailnet can reach. No firewall port is opened. Set it once with
-`syncthis config set --interface tailscale0`, or with
-`services.syncthis.interface = "tailscale0"` under NixOS, and `daemon run`
+`syngo config set --interface tailscale0`, or with
+`services.syngo.interface = "tailscale0"` under NixOS, and `daemon run`
 needs no flag. Check the interface first:
 
 ```console
-$ syncthis network tailscale detect
-$ syncthis network peers
+$ syngo network tailscale detect
+$ syngo network peers
 ```
 
 ### Where folder state lives
 
 Two directories per synchronized folder, both inside it:
 
-- `<folder>/.syncthis/tmp/` holds partial downloads, so a finished file is
+- `<folder>/.syngo/tmp/` holds partial downloads, so a finished file is
   renamed onto its target without crossing a filesystem boundary. The scanner
-  always ignores `.syncthis`. `syncthis repair` removes partial files no
+  always ignores `.syngo`. `syngo repair` removes partial files no
   unfinished transfer claims.
-- `<folder>/.syncthisignore` is this device's ignore patterns. It is never
+- `<folder>/.syngoignore` is this device's ignore patterns. It is never
   scanned, never sent to a peer and never accepted from one.
 
 Everything else, the file table, the transfer journal and the conflicts, is in
@@ -575,24 +575,24 @@ the shortest path from an installed binary to two devices that agree.
 
 The walkthrough below runs two devices on one machine, each with its own data
 directory, folder and port, so it is reproducible without a second machine.
-Every block was run in order, exactly as written, with `syncthis` on `PATH`.
+Every block was run in order, exactly as written, with `syngo` on `PATH`.
 For two real devices, drop `--data-dir` and run each block on its own machine;
 the differences are called out where they matter.
 
 ### 1. Start the daemon
 
 Give each device an identity and a data directory first. On a real device this
-is one `syncthis init`, and the service you installed above starts the daemon;
+is one `syngo init`, and the service you installed above starts the daemon;
 here it is two of each.
 
 ```console
 $ mkdir -p /tmp/sdemo/a/data /tmp/sdemo/a/docs /tmp/sdemo/b/data /tmp/sdemo/b/docs
-$ syncthis --data-dir /tmp/sdemo/a/data init --name laptop --listen 127.0.0.1:22001
+$ syngo --data-dir /tmp/sdemo/a/data init --name laptop --listen 127.0.0.1:22001
 initialized /tmp/sdemo/a/data
 device id: PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
 device name: laptop
 listen: 127.0.0.1:22001
-$ syncthis --data-dir /tmp/sdemo/b/data init --name nas    --listen 127.0.0.1:22002
+$ syngo --data-dir /tmp/sdemo/b/data init --name nas    --listen 127.0.0.1:22002
 initialized /tmp/sdemo/b/data
 device id: JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
 device name: nas
@@ -603,17 +603,17 @@ Keep both device ids: step 2 pins them. Then start the daemons. On a real
 device this is the service instead:
 
 ```console
-$ systemctl --user start syncthis          # user unit
-$ sudo systemctl start syncthis            # system unit, NixOS module included
+$ systemctl --user start syngo          # user unit
+$ sudo systemctl start syngo            # system unit, NixOS module included
 ```
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/a/data daemon run > /tmp/sdemo/a.log 2>&1 &
-$ syncthis --data-dir /tmp/sdemo/b/data daemon run > /tmp/sdemo/b.log 2>&1 &
+$ syngo --data-dir /tmp/sdemo/a/data daemon run > /tmp/sdemo/a.log 2>&1 &
+$ syngo --data-dir /tmp/sdemo/b/data daemon run > /tmp/sdemo/b.log 2>&1 &
 $ sleep 2
-$ syncthis --data-dir /tmp/sdemo/a/data status --json | jq .daemon.running
+$ syngo --data-dir /tmp/sdemo/a/data status --json | jq .daemon.running
 true
-$ syncthis --data-dir /tmp/sdemo/b/data status --json | jq .daemon.running
+$ syngo --data-dir /tmp/sdemo/b/data status --json | jq .daemon.running
 true
 ```
 
@@ -628,12 +628,12 @@ Each side runs `peer add` once, naming the other. Pairing is done when both
 sides have run it.
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/a/data peer add 127.0.0.1:22002 --yes
+$ syngo --data-dir /tmp/sdemo/a/data peer add 127.0.0.1:22002 --yes
 device id: JI7HZGFPUXQ5R-YPY6CA6Y3J677-2RRQD6VDL3UIL-RIHUL6J2M2XEA
 name:      nas
 added peer nas (JI7HZGFPUXQ5R-YPY6CA6Y3J677-2RRQD6VDL3UIL-RIHUL6J2M2XEA) at 127.0.0.1:22002
-the peer has not added this device yet; run `syncthis peer add` there too
-$ syncthis --data-dir /tmp/sdemo/b/data peer add 127.0.0.1:22001 --yes
+the peer has not added this device yet; run `syngo peer add` there too
+$ syngo --data-dir /tmp/sdemo/b/data peer add 127.0.0.1:22001 --yes
 device id: PQXYNPE2LEFKU-FHG2DQCSTKYZ5-NZ4XDTTNNKEOC-WFTMMYNO3PJSQ
 name:      laptop
 added peer laptop (PQXYNPE2LEFKU-FHG2DQCSTKYZ5-NZ4XDTTNNKEOC-WFTMMYNO3PJSQ) at 127.0.0.1:22001
@@ -646,14 +646,14 @@ On a tailnet, name the device instead of an address and pin the id `init`
 printed on it:
 
 ```console
-laptop$ syncthis peer add nas    --device-id JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
-nas$    syncthis peer add laptop --device-id PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
+laptop$ syngo peer add nas    --device-id JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
+nas$    syngo peer add laptop --device-id PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
 ```
 
-`syncthis status --json | jq -r '.device.id, .daemon.listen'` prints the id and
+`syngo status --json | jq -r '.device.id, .daemon.listen'` prints the id and
 the address each side pins. A bare host name is looked up through the local
 Tailscale client and the address that answers is stored. Without Tailscale,
-give an address: `syncthis peer add 100.70.66.9:22000`. Without `--device-id`
+give an address: `syngo peer add 100.70.66.9:22000`. Without `--device-id`
 the command prints the identity the peer presents and asks whether to trust it,
 which is the same decision made by eye; `--yes` answers it, as the loopback
 block above does.
@@ -663,9 +663,9 @@ block above does.
 The same id on both devices. The path may differ.
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/a/data folder add /tmp/sdemo/a/docs --id docs
+$ syngo --data-dir /tmp/sdemo/a/data folder add /tmp/sdemo/a/docs --id docs
 added folder docs at /tmp/sdemo/a/docs
-$ syncthis --data-dir /tmp/sdemo/b/data folder add /tmp/sdemo/b/docs --id docs
+$ syngo --data-dir /tmp/sdemo/b/data folder add /tmp/sdemo/b/docs --id docs
 added folder docs at /tmp/sdemo/b/docs
 ```
 
@@ -674,13 +674,13 @@ two decisions: a folder is served to no device until `folder grant` names one,
 so without these two lines the daemons connect and move nothing.
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/a/data folder grant docs JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
+$ syngo --data-dir /tmp/sdemo/a/data folder grant docs JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA
 device JI7HZGFPUXQ5RYPY6CA6Y3J6772RRQD6VDL3UILRIHUL6J2M2XEA may synchronize folder docs
-$ syncthis --data-dir /tmp/sdemo/b/data folder grant docs PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
+$ syngo --data-dir /tmp/sdemo/b/data folder grant docs PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ
 device PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ may synchronize folder docs
 ```
 
-`syncthis folder devices docs` shows what a folder is authorized for, and
+`syngo folder devices docs` shows what a folder is authorized for, and
 `folder revoke` takes it back.
 
 `folder add`, `folder set`, `folder remove`, `folder grant`, `folder revoke`,
@@ -699,7 +699,7 @@ its notes but not its `.obsidian` folder: no theme, no plugin settings, no
 plugin data. Add `--include-hidden` at creation time to carry dotfiles too:
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/a/data folder add /tmp/sdemo/a/vault --id vault --include-hidden
+$ syngo --data-dir /tmp/sdemo/a/data folder add /tmp/sdemo/a/vault --id vault --include-hidden
 ```
 
 `--include-hidden` cannot be changed later with `folder set`; today the only
@@ -709,7 +709,7 @@ again, which drops that folder's database rows. Decide before the first
 
 Some of what `--include-hidden` carries is per-machine noise, not something
 you want travelling between devices: window layout, a second sync plugin, a
-local cache. `<folder>/.syncthisignore` filters it out, gitignore-style, and
+local cache. `<folder>/.syngoignore` filters it out, gitignore-style, and
 belongs to this one device alone — it is never synced, so each device that
 should skip the same paths needs its own copy:
 
@@ -726,13 +726,13 @@ Write a file on one side and read the other's report. One `jq` line covers it:
 
 ```console
 $ echo "hello from A" > /tmp/sdemo/a/docs/greeting.txt
-$ syncthis --data-dir /tmp/sdemo/b/data status --json | jq -c '{running: .daemon.running, peers: [.peers[] | {name, connected}], folders: [.folders[] | {id, state, files, bytes}], transfers: .transfers.active, conflicts: .conflicts.unresolved}'
+$ syngo --data-dir /tmp/sdemo/b/data status --json | jq -c '{running: .daemon.running, peers: [.peers[] | {name, connected}], folders: [.folders[] | {id, state, files, bytes}], transfers: .transfers.active, conflicts: .conflicts.unresolved}'
 {"running":true,"peers":[{"name":"laptop","connected":true}],"folders":[{"id":"docs","state":"idle","files":1,"bytes":13}],"transfers":0,"conflicts":0}
 $ cat /tmp/sdemo/b/docs/greeting.txt
 hello from A
 ```
 
-`syncthis peer test <id of the other device>` is the narrower check: it dials
+`syngo peer test <id of the other device>` is the narrower check: it dials
 the peer, reports the identity it presented and the latency, and exits 7 if the
 peer could not be dialled, refused the handshake or presented another identity.
 
@@ -746,7 +746,7 @@ is outside its sync window and is waiting on purpose. `sync-plan` is the other
 way to say converged: it prints what a sync would do without doing it.
 
 ```console
-$ syncthis --data-dir /tmp/sdemo/b/data sync-plan docs
+$ syngo --data-dir /tmp/sdemo/b/data sync-plan docs
 peer laptop (PQXYNPE2LEFKUFHG2DQCSTKYZ5NZ4XDTTNNKEOCWFTMMYNO3PJSQ) at 127.0.0.1:22001
 ACTION  PATH          REASON
 none    greeting.txt  in-sync
@@ -754,7 +754,7 @@ none    greeting.txt  in-sync
 folder is in sync; nothing would change
 ```
 
-Stop the two daemons when you are done: `pkill -f 'syncthis --data-dir
+Stop the two daemons when you are done: `pkill -f 'syngo --data-dir
 /tmp/sdemo'`, or SIGTERM each pid, which is what they shut down cleanly on.
 
 ### 5. Read the exit code
@@ -765,7 +765,7 @@ that come up during an install:
 
 | Code | Meaning during install |
 |---|---|
-| 3 | the data directory has no identity: run `syncthis init` |
+| 3 | the data directory has no identity: run `syngo init` |
 | 6 | the daemon is needed and none runs, or a second daemon tried to take a data directory |
 | 7 | the peer could not be dialled, refused the handshake, or presented another identity |
 | 2 | bad flags, a path that is not a directory, or a listen address that is public without `--allow-public` |
@@ -773,8 +773,8 @@ that come up during an install:
 
 ```console
 $ mkdir -p /tmp/sdemo/empty
-$ syncthis --data-dir /tmp/sdemo/empty status; echo "exit=$?"
-syncthis: device identity not initialized: /tmp/sdemo/empty/identity.key missing
+$ syngo --data-dir /tmp/sdemo/empty status; echo "exit=$?"
+syngo: device identity not initialized: /tmp/sdemo/empty/identity.key missing
 exit=3
 ```
 

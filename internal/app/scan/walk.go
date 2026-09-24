@@ -9,12 +9,12 @@ import (
 	"path"
 	"strings"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/chunker"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/ignore"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/chunker"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/ignore"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 const (
@@ -31,7 +31,7 @@ const (
 )
 
 // LoadIgnore builds the matcher for a folder: the always-ignored paths first,
-// then the configured patterns, then the lines of <root>/.syncthisignore. Later
+// then the configured patterns, then the lines of <root>/.syngoignore. Later
 // rules win, so the ignore file can re-include what a configured pattern
 // excluded. A missing ignore file is not an error.
 func LoadIgnore(ctx context.Context, fsys ports.FileSystem, f folder.Folder) (*ignore.Matcher, error) {

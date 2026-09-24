@@ -1,10 +1,10 @@
-# Runs the syncthis daemon as a system-wide systemd service for one named
-# user. The unit is the one packaging/systemd/syncthis.service describes; the
+# Runs the syngo daemon as a system-wide systemd service for one named
+# user. The unit is the one packaging/systemd/syngo.service describes; the
 # only additions are the ones a system service needs and a user service does
 # not: User, Group and the state directory.
 #
 # The daemon needs an identity before it starts. Run it once as that user:
-#   sudo -u syncthis env SYNCTHIS_DATA_DIR=/var/lib/syncthis syncthis init --name <name>
+#   sudo -u syngo env SYNGO_DATA_DIR=/var/lib/syngo syngo init --name <name>
 # Until then the unit exits and systemd keeps restarting it, which is the
 # documented restart policy, not a bug.
 { self }:
@@ -12,16 +12,16 @@
 
 let
   service = import ./service.nix { inherit lib; };
-  cfg = config.services.syncthis;
+  cfg = config.services.syngo;
 in
 {
-  options.services.syncthis = service.mkOptions {
-    defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.syncthis;
-    defaultDataDir = "/var/lib/syncthis";
+  options.services.syngo = service.mkOptions {
+    defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.syngo;
+    defaultDataDir = "/var/lib/syngo";
   } // {
     user = lib.mkOption {
       type = lib.types.str;
-      default = "syncthis";
+      default = "syngo";
       description = ''
         The user the daemon runs as. It owns the data directory and every file
         the daemon writes, so it needs read and write access to each
@@ -31,7 +31,7 @@ in
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "syncthis";
+      default = "syngo";
       description = "The group the daemon runs as.";
     };
 
@@ -51,7 +51,7 @@ in
         isSystemUser = true;
         group = cfg.group;
         home = cfg.dataDir;
-        description = "syncthis daemon";
+        description = "syngo daemon";
       };
     };
     users.groups = lib.mkIf cfg.createUser { ${cfg.group} = { }; };
@@ -65,7 +65,7 @@ in
       "d ${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} - -"
     ];
 
-    systemd.services.syncthis = {
+    systemd.services.syngo = {
       description = service.unitSection.Description;
       documentation = [ service.unitSection.Documentation ];
       after = service.unitSection.After;

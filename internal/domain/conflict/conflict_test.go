@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/conflict"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/conflict"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // at is the detection time every name test uses.

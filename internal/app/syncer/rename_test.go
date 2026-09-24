@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // renameOnSource moves a file of the source device, which is what its own

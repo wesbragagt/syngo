@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syngo/internal/compose"
 )
 
 // Deps are the streams and options a command tree needs. Later milestones add
@@ -45,12 +45,12 @@ func (d *Deps) printer() Printer {
 	return Printer{JSON: d.Global.JSON, W: d.Stdout}
 }
 
-// NewRootCmd builds the syncthis command tree bound to deps.
+// NewRootCmd builds the syngo command tree bound to deps.
 func NewRootCmd(deps *Deps) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "syncthis",
+		Use:   "syngo",
 		Short: "Peer-to-peer file synchronization",
-		Long:  "syncthis keeps folders in sync between devices you own.",
+		Long:  "syngo keeps folders in sync between devices you own.",
 		// Errors and usage are printed by Execute so that --json output
 		// stays machine-readable.
 		SilenceUsage:  true,

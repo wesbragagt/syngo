@@ -7,8 +7,8 @@ import (
 
 	"lukechampine.com/blake3"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 var _ ports.Hasher = Hasher{}

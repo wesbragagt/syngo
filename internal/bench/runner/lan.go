@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/bench/report"
+	"github.com/wesbragagt/syngo/internal/bench/report"
 )
 
 // recoveryObserveTimeout bounds how long the recovery test waits for a real
@@ -31,23 +31,23 @@ func runLAN(ctx context.Context, cfg Config) (Outcome, error) {
 		return Outcome{}, err
 	}
 
-	dataDirA, cleanA, err := tempOrGiven(cfg.DataDirA, "syncthis-bench-a-data-")
+	dataDirA, cleanA, err := tempOrGiven(cfg.DataDirA, "syngo-bench-a-data-")
 	if err != nil {
 		return Outcome{}, err
 	}
 	defer cleanA()
-	dataDirB, cleanB, err := tempOrGiven(cfg.DataDirB, "syncthis-bench-b-data-")
+	dataDirB, cleanB, err := tempOrGiven(cfg.DataDirB, "syngo-bench-b-data-")
 	if err != nil {
 		return Outcome{}, err
 	}
 	defer cleanB()
 
-	rootA, err := os.MkdirTemp("", "syncthis-bench-a-root-")
+	rootA, err := os.MkdirTemp("", "syngo-bench-a-root-")
 	if err != nil {
 		return Outcome{}, fmt.Errorf("create root for a: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(rootA) }()
-	rootB, err := os.MkdirTemp("", "syncthis-bench-b-root-")
+	rootB, err := os.MkdirTemp("", "syngo-bench-b-root-")
 	if err != nil {
 		return Outcome{}, fmt.Errorf("create root for b: %w", err)
 	}

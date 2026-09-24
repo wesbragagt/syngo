@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syngo/internal/compose"
 )
 
 func TestResolveDataDir_Precedence(t *testing.T) {
@@ -22,8 +22,8 @@ func TestResolveDataDir_Precedence(t *testing.T) {
 	}{
 		{"flag wins", env, xdg, flag, flag},
 		{"env over xdg", env, xdg, "", env},
-		{"xdg over home", "", xdg, "", filepath.Join(xdg, "syncthis")},
-		{"home fallback", "", "", "", filepath.Join(home, ".local", "share", "syncthis")},
+		{"xdg over home", "", xdg, "", filepath.Join(xdg, "syngo")},
+		{"home fallback", "", "", "", filepath.Join(home, ".local", "share", "syngo")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // TestMainDelegatesToCLI checks the entry point's only job: running the CLI
@@ -18,7 +18,7 @@ func TestMainDelegatesToCLI(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("Execute(version) = %d, want %d (stderr: %s)", code, cli.ExitOK, stderr.String())
 	}
-	if !strings.HasPrefix(stdout.String(), "syncthis ") {
-		t.Fatalf("stdout = %q, want it to start with %q", stdout.String(), "syncthis ")
+	if !strings.HasPrefix(stdout.String(), "syngo ") {
+		t.Fatalf("stdout = %q, want it to start with %q", stdout.String(), "syngo ")
 	}
 }

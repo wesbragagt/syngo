@@ -1,11 +1,11 @@
-# Syncthis peer protocol, version 4
+# Syngo peer protocol, version 4
 
 This is what `internal/adapters/tcpwire` implements. It is the contract between
 two daemons; the application layer sees it through `internal/app/ports`.
 
 ## Transport
 
-TLS 1.3 over TCP, ALPN `syncthis/1`. Both sides present their identity
+TLS 1.3 over TCP, ALPN `syngo/1`. Both sides present their identity
 certificate; the server requires a client certificate. Certificates are
 self-signed, so chain verification is disabled: the identity of a peer is the
 device ID derived from its leaf certificate,
@@ -89,8 +89,8 @@ not a peer to take anything from.
 
 `path` is folder-relative and slash-separated. It must be non-empty, must not
 start with a `/`, must contain no `.` or `..` or empty segment and no NUL byte,
-and must name neither `.syncthis` nor `.syncthisignore` nor anything beneath
-them. `.syncthis` is this device's own state directory; `.syncthisignore` is
+and must name neither `.syngo` nor `.syngoignore` nor anything beneath
+them. `.syngo` is this device's own state directory; `.syngoignore` is
 the local user's statement about what this device wants, so a peer may not
 write it. The rules are `manifest.ValidRelPath`, and the plan and the installer
 apply them again on their own.
@@ -344,8 +344,8 @@ in `TestParseVersionLeadingSpaceDeviceIDDefect`.
 ## Pairing
 
 ```
-syncthis --data-dir A peer add <host-of-B>:22000 --verify   # A trusts B
-syncthis --data-dir B peer add <host-of-A>:22000 --verify   # B trusts A
+syngo --data-dir A peer add <host-of-B>:22000 --verify   # A trusts B
+syngo --data-dir B peer add <host-of-A>:22000 --verify   # B trusts A
 ```
 
 `peer add` probes the address, which yields the peer's device ID and name even

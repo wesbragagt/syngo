@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/identityfile"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/adapters/identityfile"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 func TestLoadOrCreate_CreatesThenLoadsSameID(t *testing.T) {
@@ -84,7 +84,7 @@ func TestIDMatchesCertSPKI(t *testing.T) {
 	if want := device.IDFromPublicKey(leaf.RawSubjectPublicKeyInfo); id.DeviceID() != want {
 		t.Fatalf("DeviceID() = %q, want %q", id.DeviceID(), want)
 	}
-	if leaf.Subject.CommonName != "syncthis" {
-		t.Fatalf("CommonName = %q, want syncthis", leaf.Subject.CommonName)
+	if leaf.Subject.CommonName != "syngo" {
+		t.Fatalf("CommonName = %q, want syngo", leaf.Subject.CommonName)
 	}
 }

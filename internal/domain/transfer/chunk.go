@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/domain/chunker"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/chunker"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Chunk is one content-defined piece of a transferred file. Offset and Length

@@ -3,7 +3,7 @@ package manifest
 import (
 	"sort"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // Manifest is a snapshot of a folder's contents, including tombstones.

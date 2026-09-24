@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // Limiter paces how many bytes per second pass through it. One limiter stands

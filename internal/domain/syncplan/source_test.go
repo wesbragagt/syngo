@@ -3,8 +3,8 @@ package syncplan_test
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
 )
 
 // pullOf returns a pull item for a remote entry.

@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // Default timings of a connection. Tests shorten them; see export_test.go.

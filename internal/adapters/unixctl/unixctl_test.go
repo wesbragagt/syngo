@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/adapters/unixctl"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // handlerFunc adapts a function to ports.ControlHandler.

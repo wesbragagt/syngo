@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 func TestLoad_MissingFileReturnsDefaults(t *testing.T) {

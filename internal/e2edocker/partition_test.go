@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // TestPartition_EditBothSidesThenHeal cuts one device off from the other two,

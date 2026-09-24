@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/repair"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/repair"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // Control commands understood by a running daemon.

@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/compose"
 )
 
 // convergeTimeout bounds how long a test waits for the daemon to pick a change up.

@@ -5,11 +5,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/domain/backoff"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/domain/backoff"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // peerBackoff bounds how often an unreachable peer is dialled again. It never

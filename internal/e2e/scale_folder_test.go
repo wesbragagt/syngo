@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // The shape of the scale fixture: 200 directories of 25 files, so the default
@@ -21,12 +21,12 @@ import (
 // adr-006: the folder this program is being built to carry is a notes vault
 // of a few hundred to a few thousand markdown files plus attachments, and
 // 5,000 is comfortably larger than it with headroom left over.
-// SYNCTHIS_SCALE_FILES_EACH changes how many files each directory holds,
+// SYNGO_SCALE_FILES_EACH changes how many files each directory holds,
 // which is how a machine with more time runs the same test over a larger tree
 // and reports the number it really ran.
 const (
 	scaleTreeDirs          = 200
-	scaleTreeFilesEachEnv  = "SYNCTHIS_SCALE_FILES_EACH"
+	scaleTreeFilesEachEnv  = "SYNGO_SCALE_FILES_EACH"
 	scaleTreeFilesEachFull = 25
 )
 
@@ -348,7 +348,7 @@ const idleMemoryLimit = 100 << 20
 // short window measures the heap right after the scan rather than the idle
 // daemon. The default is five minutes, which is long enough for the
 // scavenger to have run several times.
-const scaleIdleSecondsEnv = "SYNCTHIS_SCALE_IDLE_SECONDS"
+const scaleIdleSecondsEnv = "SYNGO_SCALE_IDLE_SECONDS"
 
 // TestScale_IdleMemoryUnderTheLimit starts a real daemon process over a
 // 5,000-file folder, waits until it has scanned everything and gone idle,

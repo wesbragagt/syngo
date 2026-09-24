@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/domain/conflict"
-	"github.com/wesbragagt/syncthis/internal/testutil/tree"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/domain/conflict"
+	"github.com/wesbragagt/syngo/internal/testutil/tree"
 )
 
 // Topology is the set of pairings of a cluster, as index pairs. Every pair is
@@ -150,7 +150,7 @@ func StartWith(t *testing.T, o ClusterOptions) *Cluster {
 		netem:    map[int]bool{},
 		started:  time.Now(),
 	}
-	c.Network = "syncthis-e2e-" + c.RunID
+	c.Network = "syngo-e2e-" + c.RunID
 	t.Cleanup(c.Close)
 	c.createNetwork()
 
@@ -189,7 +189,7 @@ func (c *Cluster) createNetwork() {
 	for attempt := 0; attempt < 10; attempt++ {
 		subnet := fmt.Sprintf("172.30.%d.0/24", 100+attempt)
 		res, err := c.d.try("network", "create",
-			"--label", "syncthis.e2e=1", "--label", "syncthis.e2e.run="+c.RunID,
+			"--label", "syngo.e2e=1", "--label", "syngo.e2e.run="+c.RunID,
 			"--subnet", subnet, c.Network)
 		if err != nil {
 			c.T.Fatalf("create network %s: %v", c.Network, err)
@@ -211,7 +211,7 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 	dev := &Device{
 		Index: i, Name: spec.Name, Spec: spec, c: c,
 		IP:        fmt.Sprintf("%s.%d", strings.TrimSuffix(c.Subnet, ".0/24"), 10+i),
-		Ctr:       fmt.Sprintf("syncthis-e2e-%s-%s", c.RunID, spec.Name),
+		Ctr:       fmt.Sprintf("syngo-e2e-%s-%s", c.RunID, spec.Name),
 		HostData:  filepath.Join(c.tmp, spec.Name, "data"),
 		HostRoot:  filepath.Join(c.tmp, spec.Name, "docs"),
 		HostExtra: filepath.Join(c.tmp, spec.Name, "extra"),
@@ -256,11 +256,11 @@ func (c *Cluster) createDevice(i int, spec DeviceSpec, tweak func(*jsonconfig.Co
 	// A container runs as the host user unless the test asked otherwise,
 	// so everything the daemon
 	// writes on the two bind mounts is owned by whoever runs the test:
-	// the host can hash the tree, read .syncthis and delete the temporary
+	// the host can hash the tree, read .syngo and delete the temporary
 	// directory afterwards. Commands that need capabilities (iptables,
 	// tc) are execed as root instead.
 	args := []string{"run", "-d", "--name", dev.Ctr, "--user", dev.user(),
-		"--label", "syncthis.e2e=1", "--label", "syncthis.e2e.run=" + c.RunID,
+		"--label", "syngo.e2e=1", "--label", "syngo.e2e.run=" + c.RunID,
 		"--network", c.Network, "--ip", dev.IP,
 		"--cap-add", "NET_ADMIN",
 		"-v", dev.HostData + ":" + containerData,
@@ -436,33 +436,33 @@ func (d *Device) giveMountsBack() {
 		"chown", "-R", hostUser(), containerData, containerRoot)
 }
 
-// Run executes a syncthis command in the container and returns its stdout and
+// Run executes a syngo command in the container and returns its stdout and
 // exit code. Anything on stderr is logged.
 func (d *Device) Run(args ...string) (string, int) {
 	d.c.T.Helper()
-	res := d.c.d.exec(d.Ctr, "", append([]string{"syncthis", "--data-dir", containerData}, args...)...)
+	res := d.c.d.exec(d.Ctr, "", append([]string{"syngo", "--data-dir", containerData}, args...)...)
 	if strings.TrimSpace(res.stderr) != "" {
 		d.c.T.Logf("%s stderr: %s", d.Name, strings.TrimSpace(res.stderr))
 	}
 	return res.stdout, res.code
 }
 
-// RunOK executes a syncthis command and fails the test unless it exits zero.
+// RunOK executes a syngo command and fails the test unless it exits zero.
 func (d *Device) RunOK(args ...string) string {
 	d.c.T.Helper()
 	out, code := d.Run(args...)
 	if code != 0 {
-		d.c.T.Fatalf("%s: syncthis %s: exit %d: %s", d.Name, strings.Join(args, " "), code, out)
+		d.c.T.Fatalf("%s: syngo %s: exit %d: %s", d.Name, strings.Join(args, " "), code, out)
 	}
 	return out
 }
 
-// RunJSON executes a syncthis command with --json and decodes the document.
+// RunJSON executes a syngo command with --json and decodes the document.
 func (d *Device) RunJSON(v any, args ...string) {
 	d.c.T.Helper()
 	out := d.RunOK(append(args, "--json")...)
 	if err := json.Unmarshal([]byte(out), v); err != nil {
-		d.c.T.Fatalf("%s: decode `syncthis %s --json`: %v: %s", d.Name, strings.Join(args, " "), err, out)
+		d.c.T.Fatalf("%s: decode `syngo %s --json`: %v: %s", d.Name, strings.Join(args, " "), err, out)
 	}
 }
 
@@ -532,7 +532,7 @@ func (d *Device) StartDaemon() {
 	// like a slow start. The shell waits for the daemon, so the pid file
 	// still holds the daemon's own pid.
 	cmd := fmt.Sprintf(
-		"syncthis --data-dir %s --log-level debug --log-format json daemon run %s >>%s/daemon.stdout 2>>%s/daemon.log; echo $? >>%s/daemon.exit",
+		"syngo --data-dir %s --log-level debug --log-format json daemon run %s >>%s/daemon.stdout 2>>%s/daemon.log; echo $? >>%s/daemon.exit",
 		containerData, bind, containerData, containerData, containerData)
 	d.c.d.execDetached(d.Ctr, "", "sh", "-c", cmd)
 
@@ -744,10 +744,10 @@ func (d *Device) Tree() map[string]tree.Entry {
 func (d *Device) PartFiles() []string {
 	d.c.T.Helper()
 	res := d.c.d.exec(d.Ctr, "", "sh", "-c",
-		"find "+containerRoot+"/.syncthis -type f -name '*.part' 2>/dev/null || true")
+		"find "+containerRoot+"/.syngo -type f -name '*.part' 2>/dev/null || true")
 	var parts []string
 	for _, line := range strings.Fields(res.stdout) {
-		parts = append(parts, strings.TrimPrefix(line, containerRoot+"/.syncthis/"))
+		parts = append(parts, strings.TrimPrefix(line, containerRoot+"/.syngo/"))
 	}
 	return parts
 }
@@ -829,7 +829,7 @@ func (d *Device) WaitScanRecorded(from int) {
 // three JSON reports, the container description and the network state of
 // every device.
 func (c *Cluster) SaveArtifacts(reason string) {
-	base := envOr("SYNCTHIS_E2E_ARTIFACTS", filepath.Join("..", "..", "bin", "e2e-artifacts"))
+	base := envOr("SYNGO_E2E_ARTIFACTS", filepath.Join("..", "..", "bin", "e2e-artifacts"))
 	base = filepath.Join(base, strings.ReplaceAll(c.T.Name(), "/", "_"))
 	c.T.Logf("saving artifacts (%s) to %s", reason, base)
 

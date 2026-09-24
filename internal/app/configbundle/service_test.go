@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/configbundle"
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/configbundle"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // peerID is a valid device id for the exported peer.

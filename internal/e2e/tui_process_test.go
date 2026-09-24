@@ -17,22 +17,22 @@ import (
 // the test process cannot be told apart from the test. So this file builds the
 // binary and runs everything through it, the way a person would.
 
-// syncthis runs one command with the binary and fails the test when it does
+// syngo runs one command with the binary and fails the test when it does
 // not exit 0. It returns what the command printed on stdout.
-func syncthis(t *testing.T, bin, dataDir string, args ...string) string {
+func syngo(t *testing.T, bin, dataDir string, args ...string) string {
 	t.Helper()
 	full := append([]string{"--data-dir", dataDir}, args...)
 	cmd := exec.Command(bin, full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("syncthis %s: %v\nstdout: %s\nstderr: %s",
+		t.Fatalf("syngo %s: %v\nstdout: %s\nstderr: %s",
 			strings.Join(full, " "), err, stdout.String(), stderr.String())
 	}
 	return stdout.String()
 }
 
-// process is a syncthis process the test started and can kill.
+// process is a syngo process the test started and can kill.
 type process struct {
 	t   *testing.T
 	cmd *exec.Cmd
@@ -140,7 +140,7 @@ func (p *process) waitOutput(what, want string, timeout time.Duration) {
 	p.t.Fatalf("timed out waiting for %s (%q). The process drew:\n%s", what, want, p.frames())
 }
 
-// startDaemonProcess runs `syncthis daemon run` as its own process, with its
+// startDaemonProcess runs `syngo daemon run` as its own process, with its
 // log going to a file, which is what the TUI's --log-file tails.
 func startDaemonProcess(t *testing.T, bin, dataDir, logPath string) *process {
 	t.Helper()
@@ -151,7 +151,7 @@ func startDaemonProcess(t *testing.T, bin, dataDir, logPath string) *process {
 	t.Cleanup(func() { _ = logFile.Close() })
 
 	p := start(t, bin, logFile, "--data-dir", dataDir, "--log-format", "json", "daemon", "run")
-	p.waitOutput("the daemon to answer", "syncthis daemon running", daemonTimeout)
+	p.waitOutput("the daemon to answer", "syngo daemon running", daemonTimeout)
 	return p
 }
 
@@ -159,7 +159,7 @@ func startDaemonProcess(t *testing.T, bin, dataDir, logPath string) *process {
 // the reconnect test asserts on.
 func tuiStatusOf(t *testing.T, bin, dataDir string) tuiStatus {
 	t.Helper()
-	return decodeStatus(t, syncthis(t, bin, dataDir, "--json", "status"))
+	return decodeStatus(t, syngo(t, bin, dataDir, "--json", "status"))
 }
 
 // waitDaemon waits until a data directory has a daemon answering, and returns

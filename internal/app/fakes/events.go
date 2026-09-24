@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // Events is a ports.EventSink that records everything published.

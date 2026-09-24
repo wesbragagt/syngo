@@ -25,16 +25,16 @@ func writeTree(t *testing.T, files map[string]string) string {
 
 func TestHashTreeSkipsTheStateDirectory(t *testing.T) {
 	dir := writeTree(t, map[string]string{
-		"a.txt":              "hello",
-		"deep/b.txt":         "world",
-		".syncthis/state.db": "bookkeeping",
+		"a.txt":           "hello",
+		"deep/b.txt":      "world",
+		".syngo/state.db": "bookkeeping",
 	})
 	got, err := hashTree(dir)
 	if err != nil {
 		t.Fatalf("hashTree: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("hashTree returned %d files, want 2 (the .syncthis directory is not content): %v", len(got), got)
+		t.Fatalf("hashTree returned %d files, want 2 (the .syngo directory is not content): %v", len(got), got)
 	}
 	// "hello" hashed with SHA-256, the same digest `sha256sum` prints on the
 	// peer machine.

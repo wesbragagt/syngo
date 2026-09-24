@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // confirming is one command that asks before it acts, together with a way to

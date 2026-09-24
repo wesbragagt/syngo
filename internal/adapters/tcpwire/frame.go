@@ -1,4 +1,4 @@
-// Package tcpwire speaks the syncthis peer protocol: length-prefixed frames
+// Package tcpwire speaks the syngo peer protocol: length-prefixed frames
 // over TLS 1.3 on TCP, with device identities derived from the certificates.
 // docs/PROTOCOL.md describes the wire format.
 package tcpwire

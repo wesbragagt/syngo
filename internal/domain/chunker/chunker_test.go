@@ -7,8 +7,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/chunker"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/domain/chunker"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // testCfg is the configuration the tests share: small enough that a test file

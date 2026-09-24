@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/mergebase"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/mergebase"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // The three contents of a merge: the version both devices had, and the two

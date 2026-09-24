@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // ignoreFile is the per-folder ignore file, read from the folder root.
-const ignoreFile = ".syncthisignore"
+const ignoreFile = ".syngoignore"
 
 // TestSync_SkipsIncomingPathsTheFolderIgnores proves the ignore rules hold for
 // what a peer offers as much as for what a scan finds. Without them an ignored
@@ -58,7 +58,7 @@ func TestSync_SkipsIncomingPathsTheFolderIgnores(t *testing.T) {
 }
 
 // TestSync_SkipsIncomingPathsTheIgnoreFileCovers proves the local
-// .syncthisignore is consulted as well, and that a peer cannot send one.
+// .syngoignore is consulted as well, and that a peer cannot send one.
 func TestSync_SkipsIncomingPathsTheIgnoreFileCovers(t *testing.T) {
 	src := newSource(t, folder.ModeSendReceive)
 	src.addFile(t, "keep.txt", payload(16, 1))

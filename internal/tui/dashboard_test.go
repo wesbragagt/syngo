@@ -169,7 +169,7 @@ func TestDashboard_FolderKeysRunTheirCommands(t *testing.T) {
 		}
 		next, _ := drive(t, m2, msg)
 		if !runner.called(want) {
-			t.Errorf("%q did not run `syncthis %s`; calls were %v", key, want, runner.calls)
+			t.Errorf("%q did not run `syngo %s`; calls were %v", key, want, runner.calls)
 		}
 		if notice, ok := msg.(noticeMsg); ok && notice.err != nil {
 			t.Errorf("%q failed: %v", key, notice.err)

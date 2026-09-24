@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // sampleID is a syntactically valid device ID used by the codec tests.
@@ -99,8 +99,8 @@ func TestFoldersChanged_HeaderRoundTrip(t *testing.T) {
 func TestFromWireManifest_RejectsAHostileManifest(t *testing.T) {
 	hostile := []string{
 		"..", "../escape.txt", "../../escape.txt", "a/../../escape.txt",
-		"/etc/passwd", "", ".", "./a", "a//b", ".syncthis/tmp/x",
-		".syncthisignore", "a\x00b",
+		"/etc/passwd", "", ".", "./a", "a//b", ".syngo/tmp/x",
+		".syngoignore", "a\x00b",
 	}
 	for _, p := range hostile {
 		t.Run(p, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestFromWireManifest_RejectsATombstoneOutsideTheFolder(t *testing.T) {
 }
 
 func TestFromWireManifest_RejectsASymlinkLeavingTheFolder(t *testing.T) {
-	for _, target := range []string{"/etc", "../outside", "/tmp/outside", ".syncthis"} {
+	for _, target := range []string{"/etc", "../outside", "/tmp/outside", ".syngo"} {
 		t.Run(target, func(t *testing.T) {
 			header := manifestReplyHeader{
 				FolderID: "docs",

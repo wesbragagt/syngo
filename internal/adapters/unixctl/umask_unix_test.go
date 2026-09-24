@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
+	"github.com/wesbragagt/syngo/internal/adapters/unixctl"
 )
 
 // TestListen_RestrictsTheSocketToItsOwner proves the daemon cannot be

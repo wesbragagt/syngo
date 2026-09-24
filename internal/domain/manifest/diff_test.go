@@ -3,7 +3,7 @@ package manifest_test
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // hashOf builds a deterministic non-zero hash from a seed byte.

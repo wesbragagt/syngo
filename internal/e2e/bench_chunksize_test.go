@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // The two tests in this file are the measurement behind the Phase 5 decision
@@ -27,19 +27,19 @@ import (
 const (
 	// chunkEvalAveragesEnv is the list of average chunk sizes to measure,
 	// in KiB, largest first.
-	chunkEvalAveragesEnv = "SYNCTHIS_SCALE_CHUNKEVAL_KIB"
+	chunkEvalAveragesEnv = "SYNGO_SCALE_CHUNKEVAL_KIB"
 	// chunkEvalSizeEnv is the size of the file each average moves, in MiB.
 	// One gibibyte is enough: the insertion cost is a function of the
 	// insertion and the chunk size and not of the file, which the 1 GiB
 	// and 10 GiB runs in docs/BENCH.md agree on.
-	chunkEvalSizeEnv = "SYNCTHIS_SCALE_CHUNKEVAL_MIB"
+	chunkEvalSizeEnv = "SYNGO_SCALE_CHUNKEVAL_MIB"
 	// chunkEvalOffsetEnv is where the megabyte is inserted, in KiB from
 	// the start. The cost of an insertion is the insertion plus the chunks
 	// its two ends land in, so it depends on where the boundaries around
 	// that position happen to fall: an average whose margin against the
 	// budget is small at one position is not a safe default, and moving
 	// the position is how that is found out.
-	chunkEvalOffsetEnv = "SYNCTHIS_SCALE_CHUNKEVAL_OFFSET_KIB"
+	chunkEvalOffsetEnv = "SYNGO_SCALE_CHUNKEVAL_OFFSET_KIB"
 )
 
 // chunkEvalAverages returns the average chunk sizes under test.

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // ErrInvalidVersion reports counters that cannot form a version vector: an

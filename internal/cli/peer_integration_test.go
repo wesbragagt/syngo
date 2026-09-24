@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // peerStatus is the part of `status --json` the peer tests look at.

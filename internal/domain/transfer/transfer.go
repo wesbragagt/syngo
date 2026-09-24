@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Chunk sizing. Since content-defined chunking the configured size is the
@@ -23,7 +23,7 @@ import (
 // every position, 256 KiB at two of six, 64 KiB at none, with 31% to spare.
 // What it costs is measured there too, and paid where it is cheapest: about
 // 0.5% of the content in chunk index rows, and a chunking throughput ceiling
-// of about 240 MiB/s, which is above any network Syncthis synchronizes over.
+// of about 240 MiB/s, which is above any network Syngo synchronizes over.
 const (
 	DefaultChunkSize = 64 << 10
 	MinChunkSize     = 4096

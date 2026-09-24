@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // Log levels and formats accepted by the global flags. The levels are the ones
@@ -31,7 +31,7 @@ func defaultGlobalOpts() GlobalOpts {
 // register binds the global flags to o on cmd's persistent flag set.
 func (o *GlobalOpts) register(cmd *cobra.Command) {
 	f := cmd.PersistentFlags()
-	f.StringVar(&o.DataDir, "data-dir", o.DataDir, "data directory (default $SYNCTHIS_DATA_DIR or $XDG_DATA_HOME/syncthis)")
+	f.StringVar(&o.DataDir, "data-dir", o.DataDir, "data directory (default $SYNGO_DATA_DIR or $XDG_DATA_HOME/syngo)")
 	f.BoolVar(&o.JSON, "json", o.JSON, "emit machine-readable JSON")
 	f.BoolVar(&o.NoInput, "no-input", o.NoInput, "never prompt; fail instead")
 	f.BoolVar(&o.Yes, "yes", o.Yes, "assume yes for confirmations")

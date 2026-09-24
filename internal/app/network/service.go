@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // Detection is the answer to "is Tailscale usable on this device". A device

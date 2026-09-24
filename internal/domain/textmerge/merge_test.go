@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/textmerge"
+	"github.com/wesbragagt/syngo/internal/domain/textmerge"
 )
 
 // TestMerge_DisjointRegionsTakeBothEdits is the case the feature exists for:

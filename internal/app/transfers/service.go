@@ -1,14 +1,14 @@
-// Package transfers is the read model behind `syncthis transfer list` and
-// `syncthis transfer show`: it turns journal rows into what the CLI prints.
+// Package transfers is the read model behind `syngo transfer list` and
+// `syngo transfer show`: it turns journal rows into what the CLI prints.
 package transfers
 
 import (
 	"context"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // Filter narrows a listing. Zero fields mean "no filter".

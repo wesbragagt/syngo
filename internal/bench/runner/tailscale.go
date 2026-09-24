@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/peers"
-	"github.com/wesbragagt/syncthis/internal/bench/report"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/peers"
+	"github.com/wesbragagt/syngo/internal/bench/report"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // remotePollInterval is how often a two-machine run asks the peer machine for
@@ -25,7 +25,7 @@ const remoteRecoveryObserveTimeout = 30 * time.Second
 
 // runTailscale runs the "tailscale-direct" or "tailscale-derp" scenario
 // across two machines: this one, and the peer it drives over ssh. The peer's
-// syncthis is placed, initialized, started and stopped by this process, so
+// syngo is placed, initialized, started and stopped by this process, so
 // both sides of the pair are observable and convergence, recovery and the
 // network path are measured rather than left to a second invocation.
 //
@@ -44,7 +44,7 @@ func runTailscale(ctx context.Context, cfg Config) (Outcome, error) {
 		return Outcome{}, err
 	}
 
-	work, err := os.MkdirTemp("", "syncthis-bench-")
+	work, err := os.MkdirTemp("", "syngo-bench-")
 	if err != nil {
 		return Outcome{}, fmt.Errorf("create working directory: %w", err)
 	}
@@ -64,11 +64,11 @@ func runTailscale(ctx context.Context, cfg Config) (Outcome, error) {
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
 		if err := remote.stop(stopCtx); err != nil {
-			fmt.Fprintln(os.Stderr, "syncthis-bench:", err)
+			fmt.Fprintln(os.Stderr, "syngo-bench:", err)
 		}
 	}()
 
-	if err := remote.prepare(ctx, filepath.Join(work, "syncthis"), buildStaticBinary); err != nil {
+	if err := remote.prepare(ctx, filepath.Join(work, "syngo"), buildStaticBinary); err != nil {
 		return Outcome{}, err
 	}
 	if err := remote.addFolder(ctx); err != nil {
@@ -78,7 +78,7 @@ func runTailscale(ctx context.Context, cfg Config) (Outcome, error) {
 		return Outcome{}, err
 	}
 
-	dataDir, cleanData, err := tempOrGiven(cfg.LocalDataDir, "syncthis-bench-local-data-")
+	dataDir, cleanData, err := tempOrGiven(cfg.LocalDataDir, "syngo-bench-local-data-")
 	if err != nil {
 		return Outcome{}, err
 	}

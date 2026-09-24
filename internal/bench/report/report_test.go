@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/bench/report"
+	"github.com/wesbragagt/syngo/internal/bench/report"
 )
 
 func sampleResult() report.Result {

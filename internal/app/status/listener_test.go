@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/app/status"
 )
 
 // liveListener is a report from a daemon whose listener lost its address once

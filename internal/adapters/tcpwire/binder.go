@@ -7,7 +7,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 var _ ports.Binder = (*Binder)(nil)

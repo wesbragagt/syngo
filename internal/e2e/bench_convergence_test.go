@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/daemon"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/daemon"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // The two benchmarks in this file measure Phase 5 claims that need neither
@@ -81,7 +81,7 @@ const (
 // both ends, and which needs two machines on a tailnet to measure. Loopback
 // is therefore a lower bound: a figure above one second here would rule the
 // claim out, and a figure below it leaves the claim unproven until a
-// two-machine run measures it. `syncthis-bench --scenario tailscale-direct`
+// two-machine run measures it. `syngo-bench --scenario tailscale-direct`
 // is the run that does that.
 func TestBench_DocumentChangeConvergence(t *testing.T) {
 	a := startNodeWith(t, "a", benchNodeConfig(folder.ModeSendReceive))

@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/conflict"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/conflict"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // Conflicts are kept, never resolved by the puller: whatever it does, both
@@ -170,7 +170,7 @@ func (p *Puller) conflictKept(ctx context.Context, f folder.Folder, peer device.
 	return p.recordConflict(ctx, f, peer, item, "")
 }
 
-// recordConflict writes the conflict row behind `syncthis conflict list` and
+// recordConflict writes the conflict row behind `syngo conflict list` and
 // publishes the event. The row is identified by what diverged, so a conflict
 // the sync plan reports once per cycle updates one row instead of adding one.
 func (p *Puller) recordConflict(ctx context.Context, f folder.Folder, peer device.ID,

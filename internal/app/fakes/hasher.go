@@ -5,8 +5,8 @@ import (
 	"hash"
 	"io"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Hasher is a deterministic ports.Hasher backed by SHA-256. Domain code only

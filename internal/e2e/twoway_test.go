@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/domain/conflict"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/domain/conflict"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // settle is how long a converged pair is watched to confirm that it stays that

@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // The fake filesystem is the substitute every later milestone tests against,
@@ -79,9 +79,9 @@ func TestFileSystem_ReadAtShortReadAtEOF(t *testing.T) {
 
 func TestFileSystem_TempFileRenameRecorded(t *testing.T) {
 	fsys := fakes.NewFileSystem()
-	fsys.AddDir("/root/.syncthis/tmp", 0o755)
+	fsys.AddDir("/root/.syngo/tmp", 0o755)
 
-	tmp, err := fsys.CreateTemp("/root/.syncthis/tmp", "*.part")
+	tmp, err := fsys.CreateTemp("/root/.syngo/tmp", "*.part")
 	if err != nil {
 		t.Fatalf("CreateTemp error: %v", err)
 	}

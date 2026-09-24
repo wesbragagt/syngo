@@ -18,7 +18,7 @@ import (
 // sides that report the same file count can still hold different bytes, and
 // only a content hash can tell.
 //
-// The ".syncthis" state directory is skipped on both sides: it is
+// The ".syngo" state directory is skipped on both sides: it is
 // bookkeeping, not synchronized content.
 func hashTree(root string) (map[string]string, error) {
 	out := make(map[string]string)
@@ -27,7 +27,7 @@ func hashTree(root string) (map[string]string, error) {
 			return err
 		}
 		if info.IsDir() {
-			if info.Name() == ".syncthis" {
+			if info.Name() == ".syngo" {
 				return filepath.SkipDir
 			}
 			return nil

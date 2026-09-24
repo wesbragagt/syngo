@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/tailscalecli"
+	"github.com/wesbragagt/syngo/internal/adapters/tailscalecli"
 )
 
 // TestExecRunner_CancelsAForkedChild checks that the deadline holds when the

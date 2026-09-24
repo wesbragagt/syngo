@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // Watcher is a ports.Watcher whose events are pushed by the test.

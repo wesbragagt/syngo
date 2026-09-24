@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // Settings are the device-wide settings the application may read and write

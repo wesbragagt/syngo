@@ -3,7 +3,7 @@ package e2e
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // The document the two devices share and the two edits they make to it while

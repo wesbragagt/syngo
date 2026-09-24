@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // testChunkSize is the chunk size of the journal rows these tests write.
@@ -54,7 +54,7 @@ func seedTransfer(t *testing.T, e env, id transfer.ID, path string, state transf
 	}
 	row := transfer.NewInbound(id, "docs", entry, "PEERDEVICE",
 		transfer.FixedChunks(entry.Size, testChunkSize), testChunkSize,
-		e.folderPath+"/.syncthis/tmp/"+string(id)+".part", at)
+		e.folderPath+"/.syngo/tmp/"+string(id)+".part", at)
 	row.State = state
 	for i := range done {
 		if err := row.MarkVerified(i, manifest.Hash{}, at); err != nil {

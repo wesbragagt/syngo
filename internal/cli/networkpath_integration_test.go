@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // pathPeerID is the peer the path tests configure.

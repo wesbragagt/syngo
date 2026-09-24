@@ -81,5 +81,5 @@ func printError(w io.Writer, asJSON bool, code int, err error) {
 		_ = enc.Encode(payload)
 		return
 	}
-	_, _ = fmt.Fprintln(w, "syncthis:", err.Error())
+	_, _ = fmt.Fprintln(w, "syngo:", err.Error())
 }

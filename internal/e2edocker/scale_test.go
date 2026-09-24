@@ -18,13 +18,13 @@ const (
 )
 
 // bigFileMiB is how large the single-file scale test makes its file. A run
-// with -short moves far less; SYNCTHIS_E2E_BIG_MIB overrides both.
+// with -short moves far less; SYNGO_E2E_BIG_MIB overrides both.
 func bigFileMiB(t *testing.T) int {
 	t.Helper()
-	if raw := os.Getenv("SYNCTHIS_E2E_BIG_MIB"); raw != "" {
+	if raw := os.Getenv("SYNGO_E2E_BIG_MIB"); raw != "" {
 		mib, err := strconv.Atoi(raw)
 		if err != nil || mib <= 0 {
-			t.Fatalf("SYNCTHIS_E2E_BIG_MIB=%q is not a positive number of MiB", raw)
+			t.Fatalf("SYNGO_E2E_BIG_MIB=%q is not a positive number of MiB", raw)
 		}
 		return mib
 	}

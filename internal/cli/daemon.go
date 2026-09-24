@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // newDaemonCmd builds the "daemon" command group.
@@ -41,7 +41,7 @@ func printDaemonStarted(deps *Deps, dataDir string) error {
 	if deps.Global.JSON {
 		return deps.printer().PrintJSON(daemonStarted{Running: true, PID: os.Getpid(), DataDir: dataDir})
 	}
-	_, err := fmt.Fprintf(deps.Stdout, "syncthis daemon running (pid %d, data dir %s)\n", os.Getpid(), dataDir)
+	_, err := fmt.Fprintf(deps.Stdout, "syngo daemon running (pid %d, data dir %s)\n", os.Getpid(), dataDir)
 	return err
 }
 

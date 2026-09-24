@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // Limiter is a ports.Limiter that records what it was asked to pass and never

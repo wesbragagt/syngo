@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/network"
+	"github.com/wesbragagt/syngo/internal/app/network"
 )
 
 // detectView is the JSON shape of `network tailscale detect`.
@@ -148,7 +148,7 @@ func newNetworkPeersCmd(deps *Deps) *cobra.Command {
 		Use:   "peers",
 		Short: "List the devices on this tailnet",
 		Long: "peers lists what the local Tailscale client knows about the other devices\n" +
-			"of the tailnet. These are not syncthis peers: pair one with `peer add`.",
+			"of the tailnet. These are not syngo peers: pair one with `peer add`.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := deps.app(cmd.Context(), false)

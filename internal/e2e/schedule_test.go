@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // closedWindowSpec returns a one-minute window six hours from now in local

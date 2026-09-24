@@ -35,7 +35,7 @@ type event struct {
 // There are two sources and they are honestly different things. The first is
 // the daemon's own structured log, which the daemon writes to stderr; a TUI in
 // another process cannot read another process's stderr, so it tails a file the
-// operator redirected it to (`syncthis tui --log-file`). The second is what
+// operator redirected it to (`syngo tui --log-file`). The second is what
 // this process saw for itself: every change between one `status --json` and
 // the next. The second always works and needs no setup; the first is the full
 // record. Lines from each are marked, so neither is mistaken for the other.

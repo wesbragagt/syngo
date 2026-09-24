@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // detectReport is the JSON shape of `network tailscale detect`.

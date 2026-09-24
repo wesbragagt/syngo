@@ -3,7 +3,7 @@ package ports
 import (
 	"io"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Hasher computes content hashes.

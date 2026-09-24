@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // TestChmod_DoesNotEraseAConcurrentEdit is the chmod race: a mode change on
@@ -56,7 +56,7 @@ func holdsContent(t *testing.T, root, want string) bool {
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // a tree being written under us is not a failure
 		}
-		if strings.Contains(filepath.ToSlash(p), "/.syncthis/") {
+		if strings.Contains(filepath.ToSlash(p), "/.syngo/") {
 			return nil
 		}
 		data, readErr := os.ReadFile(p)

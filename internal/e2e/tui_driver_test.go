@@ -12,8 +12,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/tui"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/tui"
 )
 
 // The TUI tests drive the Bubble Tea model directly rather than through a
@@ -181,7 +181,7 @@ func freeLoopbackAddr(t *testing.T) string {
 	return addr
 }
 
-// runDaemonCLI starts `syncthis daemon run` for a data directory, exactly as a
+// runDaemonCLI starts `syngo daemon run` for a data directory, exactly as a
 // user would in another terminal, and stops it when the test ends.
 func runDaemonCLI(t *testing.T, dataDir string) {
 	t.Helper()
@@ -204,7 +204,7 @@ func runDaemonCLI(t *testing.T, dataDir string) {
 
 // tighten shortens a device's reconcile and sync intervals to what the rest of
 // these tests use, so a cycle happens inside a test rather than at the shipped
-// ten-minute and thirty-second defaults. It is `syncthis config set`, and it
+// ten-minute and thirty-second defaults. It is `syngo config set`, and it
 // is test tuning: nothing about the guided walk depends on it.
 func tighten(t *testing.T, dataDir string) {
 	t.Helper()

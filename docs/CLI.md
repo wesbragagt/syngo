@@ -1,4 +1,4 @@
-# Syncthis command line
+# Syngo command line
 
 Every command takes the global flags below, writes its result to stdout and its
 diagnostics to stderr, and exits with a code from the table in
@@ -22,8 +22,8 @@ show the shape of each document; the commands print them indented.
 
 ### Data directory
 
-`--data-dir`, else `$SYNCTHIS_DATA_DIR`, else `$XDG_DATA_HOME/syncthis`, else
-`~/.local/share/syncthis`. Its contents are described in
+`--data-dir`, else `$SYNGO_DATA_DIR`, else `$XDG_DATA_HOME/syngo`, else
+`~/.local/share/syngo`. Its contents are described in
 [docs/STATE.md](STATE.md).
 
 ## Exit codes
@@ -33,7 +33,7 @@ show the shape of each document; the commands print them indented.
 | 0 | ok | the command did what it was asked |
 | 1 | error | an unexpected failure |
 | 2 | usage | bad flags or arguments |
-| 3 | not initialized | the data directory has no identity; run `syncthis init` |
+| 3 | not initialized | the data directory has no identity; run `syngo init` |
 | 4 | not found | the folder, peer, transfer or conflict does not exist, or the conflict was already resolved |
 | 5 | already exists | the folder id, folder path or peer is already configured |
 | 6 | daemon unavailable | the command needs the daemon and none is running, or one already owns the data directory |
@@ -58,18 +58,18 @@ and nothing else is written there.
 
 ## Commands
 
-### `syncthis init [--name NAME] [--listen HOST:PORT]`
+### `syngo init [--name NAME] [--listen HOST:PORT]`
 
 Creates the data directory, generates the ed25519 identity, writes
 `config.json` and creates the database. Running it again changes nothing and
 prints the identity that is already there.
 
 ```console
-$ syncthis init --name laptop --json
+$ syngo init --name laptop --json
 {
   "device_id": "ZFBP44XEKUVRBOA2CSBDZ7QAUEW5DBCGZHBLOSB5C4XWX5UV35JQ",
   "name": "laptop",
-  "data_dir": "/home/u/.local/share/syncthis",
+  "data_dir": "/home/u/.local/share/syngo",
   "listen": "127.0.0.1:22000",
   "created": true
 }
@@ -77,7 +77,7 @@ $ syncthis init --name laptop --json
 
 `--name` defaults to the hostname, `--listen` to `127.0.0.1:22000`.
 
-### `syncthis folder add PATH --id ID`
+### `syngo folder add PATH --id ID`
 
 Starts synchronizing a directory.
 
@@ -95,15 +95,15 @@ Starts synchronizing a directory.
 | `--device ID` | none | device allowed to synchronize this folder; repeatable, see [Folder authorization](#folder-authorization) |
 
 The ignore rules are the patterns given here plus the lines of
-`<PATH>/.syncthisignore`, and they decide both what is scanned and what is
+`<PATH>/.syngoignore`, and they decide both what is scanned and what is
 installed: a path this device ignores is not pulled from a peer either, so an
 ignored file cannot arrive, be recorded, and be read as deleted by the next
-scan. `.syncthis` and `.syncthisignore` are always ignored and are never
+scan. `.syngo` and `.syngoignore` are always ignored and are never
 accepted from a peer. [INSTALL.md](INSTALL.md#syncing-a-notes-vault-or-anything-with-dotfiles)
 has a worked example for a folder full of dotfiles, such as a notes vault.
 
 ```console
-$ syncthis folder add ~/docs --id docs --json
+$ syngo folder add ~/docs --id docs --json
 {
   "id": "docs",
   "path": "/home/u/docs",
@@ -128,13 +128,13 @@ a typo leaves nothing behind.
 A folder added without `--device` is authorized for no device and is served to
 no peer until `folder grant` names one.
 
-### `syncthis folder list`
+### `syngo folder list`
 
 Prints the columns `ID`, `PATH`, `LABEL`, `MODE`, `DELETE POLICY`, `WINDOWS`,
 `PAUSED`. `WINDOWS` reads `always` for a folder without sync windows. With
 `--json` it prints an array of the object `folder add` returns.
 
-### `syncthis folder set ID [--mode M] [--delete-policy P] [--sync-window W] [--clear-sync-windows]`
+### `syngo folder set ID [--mode M] [--delete-policy P] [--sync-window W] [--clear-sync-windows]`
 
 Changes the mode, the delete policy or the sync windows of a configured folder
 and prints the folder in the shape `folder add` uses. At least one flag is
@@ -147,9 +147,9 @@ so it applies the new setting to its connected peers right away; see
 time again. Passing both is a usage error, exit 2.
 
 ```console
-$ syncthis folder set docs --mode sendonly
+$ syngo folder set docs --mode sendonly
 folder docs: mode sendonly, delete policy propagate, windows always
-$ syncthis folder set docs --sync-window 22:00-06:00
+$ syngo folder set docs --sync-window 22:00-06:00
 folder docs: mode sendonly, delete policy propagate, windows 22:00-06:00
 ```
 
@@ -183,14 +183,14 @@ spanning the hour autumn repeats is one hour longer that night. There is no
 per-folder sync interval: the global `sync_interval` covers it, and windows
 plus the peers' change notifications do the rest.
 
-### `syncthis folder remove ID [--yes]`
+### `syngo folder remove ID [--yes]`
 
 Stops synchronizing a folder. The files stay on disk; only the configuration
 and the database rows go. It asks first, so it needs `--yes` when there is no
 terminal.
 
 ```console
-$ syncthis folder remove docs --json --yes
+$ syngo folder remove docs --json --yes
 {"removed": "docs"}
 ```
 
@@ -214,21 +214,21 @@ synchronization. Everything created afterwards starts authorized for nobody,
 because a folder nobody can read is a visible, reversible mistake and a folder
 the wrong device can read is neither.
 
-### `syncthis folder grant ID DEVICE-ID`
+### `syngo folder grant ID DEVICE-ID`
 
 Allows one paired device to synchronize one folder. Granting a device that is
 already authorized succeeds and changes nothing. A running daemon is told at
 once, so the device starts synchronizing over the connection it already has.
 
 ```console
-$ syncthis folder grant docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA --json
+$ syngo folder grant docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA --json
 {"folder": "docs", "device": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA"}
 ```
 
 Exits 2 when either id does not parse, and 4 when the folder is not configured
 or the device is not paired.
 
-### `syncthis folder revoke ID DEVICE-ID`
+### `syngo folder revoke ID DEVICE-ID`
 
 Withdraws the authorization of one device for one folder. It takes effect on
 the connection the device already has, in the middle of a transfer if there is
@@ -238,21 +238,21 @@ files already installed on the other device stay where they are. The device
 remains paired and keeps every other folder it was granted.
 
 ```console
-$ syncthis folder revoke docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA --json
+$ syngo folder revoke docs ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA --json
 {"folder": "docs", "device": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA"}
 ```
 
 Exits 2 when either id does not parse, and 4 when the folder is not configured
 or the device was not authorized for it.
 
-### `syncthis folder devices ID`
+### `syngo folder devices ID`
 
 Shows which devices may synchronize a folder. Prints the columns `DEVICE ID`
 and `NAME`, sorted by device id; the name is empty for a device that is
 authorized but no longer paired.
 
 ```console
-$ syncthis folder devices docs --json
+$ syngo folder devices docs --json
 {
   "folder": "docs",
   "devices": [
@@ -265,13 +265,13 @@ A folder authorized for nobody prints an empty list, and says so in the text
 output. Exits 4 when the folder is not configured, so an empty list is never
 the answer for a folder that does not exist.
 
-### `syncthis config show`
+### `syngo config show`
 
 Prints the device settings from `config.json`, the ones commands and the daemon
 read. It does not need a running daemon.
 
 ```console
-$ syncthis config show
+$ syngo config show
 listen = 127.0.0.1:22000
 interface =
 chunk_size = 65536
@@ -296,7 +296,7 @@ unlimited:
 }
 ```
 
-### `syncthis config set [FLAGS]`
+### `syngo config set [FLAGS]`
 
 Writes one or more settings and asks a running daemon to reload. It needs at
 least one flag and exits 2 without one. It prints the settings afterwards, in
@@ -340,16 +340,16 @@ divergence that started after it was turned on. A merged file is reported as a
 keep-both writes.
 
 ```console
-$ syncthis config set --download-limit 4MiB
+$ syngo config set --download-limit 4MiB
 ...
 download_limit = 4 MiB/s
-$ syncthis config set --download-limit 0 --json | jq .download_limit
+$ syngo config set --download-limit 0 --json | jq .download_limit
 0
-$ syncthis config set --text-merge --json | jq .text_merge
+$ syngo config set --text-merge --json | jq .text_merge
 true
 ```
 
-### `syncthis config export [--output FILE]`
+### `syngo config export [--output FILE]`
 
 Writes the configuration of this device as one JSON document: the settings, the
 folders with their ignore patterns and sync windows, and the known peers.
@@ -365,9 +365,9 @@ created, last scanned, added or last seen. A bundle describes a configuration,
 not a device.
 
 ```console
-$ syncthis config export --output /tmp/a.json
+$ syngo config export --output /tmp/a.json
 exported 1 folder and 1 peer to /tmp/a.json
-$ syncthis config export --output /tmp/a.json --json
+$ syngo config export --output /tmp/a.json --json
 {"written": "/tmp/a.json", "folders": 1, "peers": 1}
 ```
 
@@ -397,7 +397,7 @@ The document:
 
 `exported_at` is informational and ignored on import.
 
-### `syncthis config import FILE [--replace] [--dry-run] [--yes]`
+### `syngo config import FILE [--replace] [--dry-run] [--yes]`
 
 Applies a bundle to this device. `FILE` may be `-` to read the document from
 stdin; `--replace` then needs `--yes`, because stdin is already taken by the
@@ -440,14 +440,14 @@ A successful import asks a running daemon to reload, so the folders, the peers
 and the limits take effect at once; see [Lifecycle](#lifecycle).
 
 ```console
-$ syncthis config import /tmp/a.json
+$ syngo config import /tmp/a.json
 folder docs: added
 peer ETI3RRZ…: added
 settings: changed
-$ syncthis config import /tmp/a.json
+$ syngo config import /tmp/a.json
 folder "docs": id already configured
 peer ETI3RRZ…: already configured
-syncthis: folder "docs": id already configured; peer ETI3RRZ…: already configured
+syngo: folder "docs": id already configured; peer ETI3RRZ…: already configured
 $ echo $?
 5
 ```
@@ -464,13 +464,13 @@ and a path two folders of the bundle share; 5 for conflicts; 9 for `--replace`
 without a confirmation; 10 for a `--dry-run` that would change something; 1 for
 a write that failed midway.
 
-### `syncthis scan ID [--dry-run]`
+### `syngo scan ID [--dry-run]`
 
 Walks the folder, hashes what changed and records it. `--dry-run` classifies
 without writing anything and exits 10 when there is something to write.
 
 ```console
-$ syncthis scan docs --json
+$ syngo scan docs --json
 {
   "folder_id": "docs",
   "changes": [
@@ -493,7 +493,7 @@ $ syncthis scan docs --json
 path. An entry the scan cannot read is counted in `skipped`, named in
 `warnings` and does not fail the folder.
 
-### `syncthis rescan [ID]`
+### `syngo rescan [ID]`
 
 Rescans one folder, or every folder that is not paused. With a daemon running
 the scan is queued in the daemon, so two processes never write the same folder
@@ -511,7 +511,7 @@ believes about it. It is the way to ask for a full pass: the periodic tick
 skips a folder the filesystem watcher has covered without a gap since the last
 full scan. See [STATE.md](STATE.md#scan-watermarks).
 
-### `syncthis repair [ID] [--dry-run]`
+### `syngo repair [ID] [--dry-run]`
 
 Restores agreement between the database and the files on disk: paths the
 database knows and the disk does not become tombstones, files whose size or
@@ -531,7 +531,7 @@ command instead: every entry would look missing and the folder would be marked
 deleted for its peers. Mount the directory again, or remove the folder.
 
 ```console
-$ syncthis repair docs --json
+$ syngo repair docs --json
 [
   {
     "folder_id": "docs",
@@ -551,7 +551,7 @@ Exits 10 after a dry run that found something to fix, and 8 when a path is
 listed in `unrecoverable`, which is a path repair could neither read nor
 classify. It asks no question: what it writes follows what is already on disk.
 
-### `syncthis status [--json]`
+### `syngo status [--json]`
 
 Reports the device, the daemon, every folder, every peer and the transfer
 journal. With a daemon running the report comes from the daemon and knows which
@@ -561,7 +561,7 @@ from the database and `daemon.running` is `false`.
 ```json
 {
   "schema_version": 1,
-  "device": {"id": "RCUFGP7…", "name": "laptop", "data_dir": "/home/u/.local/share/syncthis"},
+  "device": {"id": "RCUFGP7…", "name": "laptop", "data_dir": "/home/u/.local/share/syngo"},
   "daemon": {"running": true, "pid": 3776214, "listen": "127.0.0.1:22001",
              "started_at": "2026-09-21T08:32:15Z",
              "upload_limit": 0, "download_limit": 4194304,
@@ -614,7 +614,7 @@ path, `relay` is the DERP region on a relayed one, `active` says whether the
 client saw traffic to the peer recently, and `observed_at` is when it was read.
 Nothing is guessed: a path the client cannot describe is `unknown` with
 `reason` saying why, including when there is no Tailscale client at all.
-`syncthis network path` prints the same thing for a person.
+`syngo network path` prints the same thing for a person.
 
 `daemon.upload_limit` and `daemon.download_limit` are the rates in force in the
 running daemon, in bytes per second, `0` for unlimited and for no daemon.
@@ -635,7 +635,7 @@ are RFC3339 in UTC, or `null`. `transfers.items` holds the same objects as
 `transfer list`. Fields are added over time but never renamed or removed, and
 `schema_version` says which shape this is.
 
-### `syncthis daemon run`
+### `syngo daemon run`
 
 Watches every configured folder, reconciles them periodically, serves peers and
 answers the control socket until it is interrupted with SIGINT or SIGTERM.
@@ -644,7 +644,7 @@ A tick reconciles rather than rescans: a folder whose watch has been up without
 a gap since its last full scan is not walked at all, because every change since
 then was already reported and scanned. A folder that cannot make that claim is
 walked whole. [STATE.md](STATE.md#scan-watermarks) lists every case that falls
-back to the full scan; `syncthis rescan` asks for one at any time.
+back to the full scan; `syngo rescan` asks for one at any time.
 
 | Flag | Meaning |
 |---|---|
@@ -662,7 +662,7 @@ counts as public and is refused with exit 2. On a tailnet this is what you
 want:
 
 ```console
-$ syncthis daemon run --interface tailscale0
+$ syngo daemon run --interface tailscale0
 ```
 
 The daemon then listens on the device's `100.64.0.0/10` address, which only
@@ -683,7 +683,7 @@ Exactly one daemon owns a data directory. A second one exits 6. It prints one
 line when it is serving, or with `--json` one document:
 
 ```json
-{"running": true, "pid": 3776214, "data_dir": "/home/u/.local/share/syncthis"}
+{"running": true, "pid": 3776214, "data_dir": "/home/u/.local/share/syngo"}
 ```
 
 With `--log-format json` every log line on stderr is a JSON object with at
@@ -735,7 +735,7 @@ connected, and runs a sync cycle against each of them. Without a daemon the comm
 and only write the database. The daemon never has to be restarted for a
 configuration change.
 
-### `syncthis peer add HOST[:PORT]`
+### `syngo peer add HOST[:PORT]`
 
 Contacts the device at the address, shows the identity it presents and stores
 it. The port defaults to 22000.
@@ -758,7 +758,7 @@ calls itself `localhost` must not be able to take that name over.
 | `--verify` | ask for confirmation even when `--device-id` pins the identity |
 
 ```console
-$ syncthis peer add 100.64.0.2:22000 --json --yes
+$ syngo peer add 100.64.0.2:22000 --json --yes
 {
   "id": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA",
   "name": "nas",
@@ -778,16 +778,16 @@ peer nas (ETI3…) at 100.64.0.3:22000 (nas via tailnet)`.
 `accepted` says whether the peer already trusts this device. Pairing is done
 when both sides ran `peer add` and both report `accepted: true`.
 
-### `syncthis peer list`
+### `syngo peer list`
 
 Prints the columns `PEER`, `NAME`, `ADDRESS`, `VERIFIED`, `LAST SEEN`, or with
 `--json` an array of the object above without `accepted`.
 
-### `syncthis peer remove ID [--yes]`
+### `syngo peer remove ID [--yes]`
 
 Forgets a peer. It asks first.
 
-### `syncthis peer test ID|HOST[:PORT]`
+### `syngo peer test ID|HOST[:PORT]`
 
 Runs the handshake and reports what happened. It exits 7 when the peer cannot
 be reached or refuses this device. A `HOST` that is not an address literal is
@@ -801,7 +801,7 @@ as a peer that will not accept us would name the wrong problem. Testing this
 device's own host name is therefore exit 2, not exit 7.
 
 ```console
-$ syncthis peer test 100.64.0.2:22000 --json
+$ syngo peer test 100.64.0.2:22000 --json
 {
   "address": "100.64.0.2:22000",
   "device_id": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA",
@@ -820,7 +820,7 @@ $ syncthis peer test 100.64.0.2:22000 --json
 is `reason: rejected:protocol_version` whichever side noticed the mismatch,
 not a broken handshake: the connection got far enough to compare versions.
 
-### `syncthis network tailscale detect`
+### `syngo network tailscale detect`
 
 Runs `tailscale status --json` and reports what the local Tailscale client
 said. A device without Tailscale is not a failure: the command prints
@@ -835,7 +835,7 @@ something this program cannot read, and one that does not answer within the
 five second command timeout, including when it leaves a child process behind.
 
 ```console
-$ syncthis network tailscale detect --json
+$ syngo network tailscale detect --json
 {
   "present": true,
   "running": true,
@@ -853,7 +853,7 @@ $ syncthis network tailscale detect --json
 With no Tailscale installed every field is empty or false:
 
 ```console
-$ syncthis network tailscale detect --json
+$ syngo network tailscale detect --json
 {
   "present": false, "running": false, "backend_state": "", "version": "",
   "interface": "", "hostname": "", "dns_name": "", "ips": [],
@@ -865,7 +865,7 @@ With Tailscale installed and unable to answer, `present` is true, `error` says
 why, and nothing else is known:
 
 ```console
-$ syncthis network tailscale detect --json
+$ syngo network tailscale detect --json
 {
   "present": true, "running": false, "backend_state": "", "version": "",
   "interface": "", "hostname": "", "dns_name": "", "ips": [],
@@ -882,7 +882,7 @@ the value to pass to `daemon run --interface`.
 Text form:
 
 ```console
-$ syncthis network tailscale detect
+$ syngo network tailscale detect
 tailscale:        installed
 version:          1.80.2
 backend state:    Running
@@ -899,30 +899,30 @@ A client that is there and cannot answer prints the reason instead of the
 fields it does not know, and `not installed` stays a single line:
 
 ```console
-$ syncthis network tailscale detect
+$ syngo network tailscale detect
 tailscale:        installed
 error:            tailscale is not available: tailscale status --json: exit status 1
 
-$ syncthis network tailscale detect
+$ syngo network tailscale detect
 tailscale: not installed
 ```
 
-### `syncthis network peers`
+### `syngo network peers`
 
 Lists the other devices of the tailnet, sorted by host name in byte order, so
 uppercase names come before lowercase ones and the order does not depend on the
-locale. These are tailnet peers, not syncthis peers: pair one with `peer add`. Unlike `detect` the
+locale. These are tailnet peers, not syngo peers: pair one with `peer add`. Unlike `detect` the
 command exits 11 when there is no Tailscale client to ask, or when its backend
 is not running, because the listing that was asked for cannot exist.
 
 ```console
-$ syncthis network peers
+$ syngo network peers
 HOSTNAME  DNS NAME                 IPS                             ONLINE  OS
 desktop   desktop.tail1234.ts.net  100.64.0.5,fd7a:115c:a1e0::5    true    windows
 nas       nas.tail1234.ts.net      100.64.0.3,fd7a:115c:a1e0::3    true    linux
 phone     phone.tail1234.ts.net    100.64.0.4,fd7a:115c:a1e0::4    false   iOS
 
-$ syncthis network peers --json
+$ syngo network peers --json
 [
   {
     "id": "nNAS123CNTRL",
@@ -940,7 +940,7 @@ is read tolerantly: unknown fields are ignored, `Online` falls back to `Active`
 on clients too old to report it, and the MagicDNS suffix is read from
 `CurrentTailnet` first and the top-level field second.
 
-### `syncthis network path`
+### `syngo network path`
 
 Reports, for every configured peer, whether traffic reaches it peer-to-peer or
 through a DERP relay. It is read from the local Tailscale client and nothing is
@@ -951,12 +951,12 @@ Like `network peers` it exits 11 when there is no client to ask, because the
 listing that was asked for cannot exist.
 
 ```console
-$ syncthis network path
+$ syngo network path
 PEER  ADDRESS                     PATH    DETAIL               ACTIVE
 nas   100.64.0.3:22000            direct  192.168.1.20:41641   true
 phone nas.tail1234.ts.net:22000   relay   DERP fra             true
 
-$ syncthis network path --json
+$ syngo network path --json
 [
   {
     "peer_id": "ETI3RRZ…",
@@ -990,7 +990,7 @@ Tailscale client.
 Nothing but these three commands, the path section of `status`, and the host
 name convenience of `peer add` depends on Tailscale.
 
-### `syncthis pause [FOLDER]` and `syncthis resume [FOLDER]`
+### `syngo pause [FOLDER]` and `syngo resume [FOLDER]`
 
 Stops or resumes scanning and syncing, for one folder or for all of them. A
 running daemon applies it at once, including to a transfer in flight, which
@@ -998,7 +998,7 @@ stops within one chunk and keeps its journal. Without a daemon the flag is
 written to the database.
 
 ```console
-$ syncthis pause docs --json
+$ syngo pause docs --json
 {"folders": ["docs"], "paused": true}
 ```
 
@@ -1008,7 +1008,7 @@ nothing else: on `resume` the transfer becomes `pending`, and a folder that
 never pulls, because it is send-only, leaves it `pending` with `folder is
 send-only` as its error.
 
-### `syncthis transfer list [--state S]`
+### `syngo transfer list [--state S]`
 
 Shows the journal of inbound downloads. A transfer leaves it once its file is
 installed, so what is left is running, paused or failed. `--state` takes one of
@@ -1024,7 +1024,7 @@ holding the content it was after, so a converged mesh has an empty journal.
 Columns: `ID`, `FOLDER`, `PATH`, `STATE`, `CHUNKS`, `DONE`, `SIZE`, `PEER`.
 
 ```console
-$ syncthis transfer list --json
+$ syngo transfer list --json
 [
   {
     "id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
@@ -1045,7 +1045,7 @@ $ syncthis transfer list --json
 ]
 ```
 
-### `syncthis transfer show TRANSFER_ID`
+### `syngo transfer show TRANSFER_ID`
 
 The same object plus the chunks the transfer still needs.
 
@@ -1067,7 +1067,7 @@ The same object plus the chunks the transfer still needs.
 field is absent otherwise. The text output names the first ten. Exits 4 when no
 transfer has that id.
 
-### `syncthis sync-plan FOLDER [--peer ID]`
+### `syngo sync-plan FOLDER [--peer ID]`
 
 Asks every known peer, or the one named by `--peer`, for its manifest and
 prints what this device would do with it. Nothing is written and nothing is
@@ -1077,7 +1077,7 @@ running daemon; it opens the database alongside the daemon, which is safe
 because the database is in WAL mode with a five second busy timeout.
 
 ```console
-$ syncthis sync-plan docs --json
+$ syngo sync-plan docs --json
 {
   "folder_id": "docs",
   "dry_run": true,
@@ -1144,7 +1144,7 @@ out of the folder or names the state directory, or a symbolic link whose target
 leaves the folder. Such an entry is skipped rather than acted on. A path the
 folder's ignore rules cover does not appear in the plan at all.
 
-### `syncthis conflict list [FOLDER] [--all]`
+### `syngo conflict list [FOLDER] [--all]`
 
 Lists the paths both sides changed. Unresolved ones only, unless `--all` adds
 the ones already dealt with. Without FOLDER it lists every folder.
@@ -1153,7 +1153,7 @@ Columns: `ID`, `FOLDER`, `PATH`, `REASON`, `COPY`, `PEER`, `DETECTED`,
 `RESOLVED`, `STALE`.
 
 ```console
-$ syncthis conflict list --json
+$ syngo conflict list --json
 [
   {
     "id": "6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a",
@@ -1215,14 +1215,14 @@ greater content hash wins. Both devices reach that answer from the same two
 hashes, so only the side whose version loses writes a copy, and that copy then
 syncs like any other file. Both devices end up with the same two files.
 
-### `syncthis conflict show ID`
+### `syngo conflict show ID`
 
 Prints the conflict and both versions as they are on disk now: the path each
 one holds, its size, its modification time and its content hash. Exits 4 when
 no conflict has that id.
 
 ```console
-$ syncthis conflict show 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a
+$ syngo conflict show 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a
 id:       6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a
 folder:   docs (/home/u/docs)
 path:     notes/report.md
@@ -1256,7 +1256,7 @@ what is at `path` and a `copy` object for what is at `conflict_path`, each with
 or `unknown` when something edited it since). Either is absent when there is no
 file there any more.
 
-### `syncthis conflict resolve ID --keep local|remote|both`
+### `syngo conflict resolve ID --keep local|remote|both`
 
 Says which version wins. `local` keeps the version this device had, `remote`
 the version the peer had, whichever of the two files holds it now; the other
@@ -1273,8 +1273,8 @@ two versions the conflict recorded. A file holding anything else was never
 decided about, so the resolution exits 8, names that file and changes nothing:
 
 ```console
-$ syncthis conflict resolve 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a --keep local --yes
-syncthis: notes/report.md has changed since the conflict was recorded: keep both versions with --keep both, or resolve again after looking at the file
+$ syngo conflict resolve 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a --keep local --yes
+syngo: notes/report.md has changed since the conflict was recorded: keep both versions with --keep both, or resolve again after looking at the file
 $ echo $?
 8
 ```
@@ -1292,7 +1292,7 @@ nothing. A resolution that changed the
 folder rescans it, through the daemon when one is running.
 
 ```console
-$ syncthis conflict resolve 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a --keep remote --yes
+$ syngo conflict resolve 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a --keep remote --yes
 notes/report.md: remote version kept
 notes/report.sync-conflict-20260921-153000-ETI3RRZ.md: removed
 ```
@@ -1311,7 +1311,7 @@ notes/report.sync-conflict-20260921-153000-ETI3RRZ.md: removed
 
 `moved_from` is added when the winning version had to be renamed onto the path.
 
-### `syncthis conflict export ID DIR`
+### `syngo conflict export ID DIR`
 
 Copies both versions into DIR, together with a JSON file describing the
 conflict, for a comparison or a merge by hand. The folder is not touched and
@@ -1326,13 +1326,13 @@ A directory that cannot be created or written into exits 1 with a message
 naming it, for example when DIR is under a directory the user may not write to.
 
 ```console
-$ syncthis conflict export 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a /tmp/review
+$ syngo conflict export 6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a /tmp/review
 /tmp/review/path-report.md
 /tmp/review/conflict-report.sync-conflict-20260921-153000-ETI3RRZ.md
 /tmp/review/6f1c2f3a4b5c6d7e8f9a0b1c2d3e4f5a.json
 ```
 
-### `syncthis tui`
+### `syngo tui`
 
 Opens the interactive terminal interface: live device, folder, queue, path and
 error views, a guided walk from an empty data directory to a paired folder, a
@@ -1345,25 +1345,25 @@ else.
 interactive interface.
 
 ```console
-$ syncthis tui
-$ syncthis tui --poll 5s --log-file ~/.local/share/syncthis/daemon.log
+$ syngo tui
+$ syngo tui --poll 5s --log-file ~/.local/share/syngo/daemon.log
 ```
 
-### `syncthis completion bash|zsh|fish|powershell`
+### `syngo completion bash|zsh|fish|powershell`
 
 Writes a completion script to stdout. It is a shell script, not JSON, whatever
 `--json` says. `--help` is the other exemption: it prints the usage text on
 stdout whatever `--json` says, because help is for a person to read. Asking a
-command group such as `syncthis folder` for its subcommand list with `--json`
+command group such as `syngo folder` for its subcommand list with `--json`
 is a usage error (exit 2) rather than help text, so a script never gets prose
 where it expects a document.
 
-### `syncthis version`
+### `syngo version`
 
 ```console
-$ syncthis version
-syncthis 0.1.0-dev (4a0a52d, go1.26.7)
-$ syncthis version --json
+$ syngo version
+syngo 0.1.0-dev (4a0a52d, go1.26.7)
+$ syngo version --json
 {"version": "0.1.0-dev", "commit": "4a0a52d", "go": "go1.26.7"}
 ```
 

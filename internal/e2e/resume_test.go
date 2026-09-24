@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // hugeFileSize is large enough that the receiver is interrupted in the middle
@@ -40,7 +40,7 @@ func statusJSON(t *testing.T, dataDir string) status.Report {
 	return report
 }
 
-// runCLI runs a syncthis command against a data directory and returns its
+// runCLI runs a syngo command against a data directory and returns its
 // exit code and standard output.
 func runCLI(t *testing.T, dataDir string, args ...string) (int, string) {
 	t.Helper()
@@ -59,7 +59,7 @@ func contains(output, s string) bool { return strings.Contains(output, s) }
 // partFiles lists the partial downloads of a folder.
 func partFiles(t *testing.T, root string) []string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(root, ".syncthis", "tmp", "*.part"))
+	matches, err := filepath.Glob(filepath.Join(root, ".syngo", "tmp", "*.part"))
 	if err != nil {
 		t.Fatalf("list partial files: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestResume_LeftoverJournalRowsAreClearedOnRestart(t *testing.T) {
 	}
 	withStore(t, b.DataDir, func(store ports.MetadataStore) {
 		for _, row := range leftovers {
-			temp := filepath.Join(b.Root, ".syncthis", "tmp", string(row.id)+".part")
+			temp := filepath.Join(b.Root, ".syngo", "tmp", string(row.id)+".part")
 			writeFileIn(t, filepath.Dir(temp), filepath.Base(temp), payload(512, 3))
 			entry := manifest.Entry{Path: row.path, Kind: manifest.KindFile, Size: 4096}
 			leftover := transfer.NewInbound(row.id, folderID, entry, a.ID,

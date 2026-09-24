@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/testutil/tree"
+	"github.com/wesbragagt/syngo/internal/testutil/tree"
 )
 
 // waitFor polls cond until it holds or the timeout runs out. Every wait in

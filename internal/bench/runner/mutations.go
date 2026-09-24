@@ -3,7 +3,7 @@ package runner
 import (
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/bench/fixture"
+	"github.com/wesbragagt/syngo/internal/bench/fixture"
 )
 
 // applyMutationSet renames, deletes, modifies and editor-saves one file each

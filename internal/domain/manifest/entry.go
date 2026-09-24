@@ -3,7 +3,7 @@ package manifest
 import (
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // Kind distinguishes the filesystem object an Entry describes.

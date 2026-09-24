@@ -3,12 +3,12 @@ package syncer
 import (
 	"context"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/ignore"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/ignore"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
 )
 
 // ReasonIgnored explains a plan item dropped because the folder's ignore rules
@@ -16,7 +16,7 @@ import (
 const ReasonIgnored = "ignored"
 
 // loadIgnore builds the ignore rules of a folder: the configured patterns plus
-// the lines of <root>/.syncthisignore, the same rules a scan applies. They hold
+// the lines of <root>/.syngoignore, the same rules a scan applies. They hold
 // for what a peer offers as much as for what a scan finds, otherwise an
 // ignored path would arrive from the peer, be installed, and then be read as
 // deleted by the next scan and the deletion sent back.

@@ -14,8 +14,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Entry is what a comparison knows about one path of a folder.
@@ -52,7 +52,7 @@ func Read(root string) (map[string]Entry, error) {
 		if rel == "." {
 			return nil
 		}
-		if rel == ".syncthis" {
+		if rel == ".syngo" {
 			return filepath.SkipDir
 		}
 

@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // The benchmarks in this file measure the Phase 5 claims that name a ten
 // gigabyte file or a hundred thousand files. Each one needs tens of gigabytes
 // of disk or minutes of wall time, so they are opt-in exactly as the rest of
-// the scale group is: without SYNCTHIS_SCALE=1 they skip, and `make scale`
+// the scale group is: without SYNGO_SCALE=1 they skip, and `make scale`
 // runs them. Their measured numbers are recorded in docs/BENCH.md.
 
 const (
@@ -21,7 +21,7 @@ const (
 	// benchmarks move, in GiB. The default is the 10 the claims name; a
 	// machine with less disk runs a smaller version and reports the size
 	// it really ran.
-	benchBigGiBEnv = "SYNCTHIS_SCALE_BIGFILE_GIB"
+	benchBigGiBEnv = "SYNGO_SCALE_BIGFILE_GIB"
 	// benchInsertionSize is the insertion the claim is about.
 	benchInsertionSize = 1 << 20
 	// benchInsertionOffset is where it goes: near the front, so that under
@@ -298,7 +298,7 @@ const (
 	benchStatusChangedDirs = 2
 )
 
-// TestScale_BenchStatusLatency measures how long `syncthis status` takes over
+// TestScale_BenchStatusLatency measures how long `syngo status` takes over
 // a 5,000-file folder right after an incremental change, which is the
 // moment it is slowest: the daemon is scanning what changed while the command
 // asks it what it holds.

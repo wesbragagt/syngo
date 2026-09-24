@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // PeerPaths reports how traffic reaches each of the given devices: directly,

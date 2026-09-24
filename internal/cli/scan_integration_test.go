@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
-	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syngo/internal/cli"
+	"github.com/wesbragagt/syngo/internal/compose"
 )
 
 // scanOutput is the JSON shape `scan --json` prints.
@@ -195,7 +195,7 @@ func TestRescan_DetectsExternalChange(t *testing.T) {
 		t.Fatalf("rescan exit = %d (stderr: %s)", code, stderr)
 	}
 
-	// Change the file outside syncthis, then rescan every folder.
+	// Change the file outside syngo, then rescan every folder.
 	if err := os.WriteFile(target, []byte("alpha changed on disk"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}

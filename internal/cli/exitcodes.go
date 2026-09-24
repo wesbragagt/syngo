@@ -1,17 +1,17 @@
-// Package cli implements the syncthis command line interface.
+// Package cli implements the syngo command line interface.
 package cli
 
 import (
 	"errors"
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/app/configbundle"
-	"github.com/wesbragagt/syncthis/internal/app/conflicts"
-	"github.com/wesbragagt/syncthis/internal/app/daemon"
-	"github.com/wesbragagt/syncthis/internal/app/peers"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/app/configbundle"
+	"github.com/wesbragagt/syngo/internal/app/conflicts"
+	"github.com/wesbragagt/syngo/internal/app/daemon"
+	"github.com/wesbragagt/syngo/internal/app/peers"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // Process exit codes. They are part of the CLI contract; see docs/CLI.md.

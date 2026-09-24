@@ -10,16 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/conflict"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/conflict"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // TempDirName is the folder-relative directory holding partial downloads. It
 // lives inside the folder so a finished download is renamed over its target
 // without crossing a filesystem boundary.
-const TempDirName = ".syncthis/tmp"
+const TempDirName = ".syngo/tmp"
 
 // maxConflictNames is how many counted variants of a conflict name are tried
 // before the install gives up. A directory that holds them all has a problem

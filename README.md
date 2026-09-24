@@ -1,6 +1,6 @@
-# syncthis
+# syngo
 
-Syncthis keeps folders in sync between devices you own. It is a single Go
+Syngo keeps folders in sync between devices you own. It is a single Go
 binary: a CLI and a daemon, with no server in the middle and no account. Two
 devices authenticate each other by their ed25519 identity over TLS 1.3, compare
 folders by BLAKE3 content hash, and transfer files in chunks with a journal, so
@@ -12,8 +12,8 @@ reach each other wherever they are.
 ## Build
 
 ```console
-$ make build      # writes bin/syncthis, stamped with git describe
-$ bin/syncthis version
+$ make build      # writes bin/syngo, stamped with git describe
+$ bin/syngo version
 ```
 
 `make test` runs the whole tree; `make e2e` runs the end-to-end tests, which
@@ -35,22 +35,22 @@ Two devices on one machine, each with its own data directory and folder.
 
 ```console
 $ mkdir -p /tmp/a/data /tmp/a/docs /tmp/b/data /tmp/b/docs
-$ bin/syncthis --data-dir /tmp/a/data init --name laptop --listen 127.0.0.1:22001
-$ bin/syncthis --data-dir /tmp/b/data init --name nas    --listen 127.0.0.1:22002
-$ bin/syncthis --data-dir /tmp/a/data folder add /tmp/a/docs --id docs
-$ bin/syncthis --data-dir /tmp/b/data folder add /tmp/b/docs --id docs
+$ bin/syngo --data-dir /tmp/a/data init --name laptop --listen 127.0.0.1:22001
+$ bin/syngo --data-dir /tmp/b/data init --name nas    --listen 127.0.0.1:22002
+$ bin/syngo --data-dir /tmp/a/data folder add /tmp/a/docs --id docs
+$ bin/syngo --data-dir /tmp/b/data folder add /tmp/b/docs --id docs
 
-$ bin/syncthis --data-dir /tmp/a/data daemon run &
-$ bin/syncthis --data-dir /tmp/b/data daemon run &
+$ bin/syngo --data-dir /tmp/a/data daemon run &
+$ bin/syngo --data-dir /tmp/b/data daemon run &
 $ sleep 2      # both daemons return before their listener is up
 
-$ bin/syncthis --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
-$ bin/syncthis --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
+$ bin/syngo --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
+$ bin/syngo --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
 
-$ A=$(bin/syncthis --data-dir /tmp/a/data status --json | jq -r .device.id)
-$ B=$(bin/syncthis --data-dir /tmp/b/data status --json | jq -r .device.id)
-$ bin/syncthis --data-dir /tmp/a/data folder grant docs "$B"
-$ bin/syncthis --data-dir /tmp/b/data folder grant docs "$A"
+$ A=$(bin/syngo --data-dir /tmp/a/data status --json | jq -r .device.id)
+$ B=$(bin/syngo --data-dir /tmp/b/data status --json | jq -r .device.id)
+$ bin/syngo --data-dir /tmp/a/data folder grant docs "$B"
+$ bin/syngo --data-dir /tmp/b/data folder grant docs "$A"
 
 $ echo "hello from A" > /tmp/a/docs/greeting.txt
 $ sleep 10; cat /tmp/b/docs/greeting.txt
@@ -92,7 +92,7 @@ codes are in [docs/INSTALL.md](docs/INSTALL.md#run-and-verify).
   Tailscale client knows, and `peer add nas` takes a MagicDNS host name.
 - `sync-plan` prints what a sync would do without doing it.
 - Every command speaks `--json`, and every failure has its own exit code.
-- `syncthis tui` is the same thing with a screen: live folder, device, queue
+- `syngo tui` is the same thing with a screen: live folder, device, queue
   and path views, a guided walk from nothing to a paired folder, a conflict
   review screen and a searchable log. It runs the commands above and nothing
   else, and [docs/TUI.md](docs/TUI.md) says which key runs which.
@@ -103,7 +103,7 @@ codes are in [docs/INSTALL.md](docs/INSTALL.md#run-and-verify).
   on NixOS, home-manager, Linux, macOS, a NAS and in a container.
 - [docs/CLI.md](docs/CLI.md) — every command, its flags, its JSON shape, the
   exit codes and the daemon lifecycle.
-- [docs/TUI.md](docs/TUI.md) — the interactive interface, `syncthis tui`, and
+- [docs/TUI.md](docs/TUI.md) — the interactive interface, `syngo tui`, and
   the command behind every key it answers to.
 - [docs/STATE.md](docs/STATE.md) — the data directory, the database schema and
   the transfer journal.

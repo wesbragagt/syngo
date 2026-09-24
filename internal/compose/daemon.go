@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/fsnotifywatch"
-	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
-	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
-	"github.com/wesbragagt/syncthis/internal/app/daemon"
-	"github.com/wesbragagt/syncthis/internal/app/network"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/adapters/fsnotifywatch"
+	"github.com/wesbragagt/syngo/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syngo/internal/adapters/unixctl"
+	"github.com/wesbragagt/syngo/internal/app/daemon"
+	"github.com/wesbragagt/syngo/internal/app/network"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // pinnedSettings is the settings store the daemon reads, with the rates a run

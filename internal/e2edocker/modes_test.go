@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/testutil/tree"
+	"github.com/wesbragagt/syngo/internal/testutil/tree"
 )
 
 // TestStar_HubRelaysBetweenSpokes pairs two devices with a hub and not with

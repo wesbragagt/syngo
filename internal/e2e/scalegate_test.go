@@ -16,17 +16,17 @@ import (
 // claims: a 5,000-file folder, idle memory, a 10 GiB transfer, a thousand
 // interruption cycles and a bandwidth limit held to within 5%. Each one runs
 // for minutes and needs disk the rest of the suite does not, so they are
-// opt-in exactly as internal/e2edocker is: without SYNCTHIS_SCALE=1 they skip
+// opt-in exactly as internal/e2edocker is: without SYNGO_SCALE=1 they skip
 // before they allocate anything, and `make test` only pays for compiling
 // them. `make scale` runs them.
 const (
 	// scaleEnv gates every test in this group.
-	scaleEnv = "SYNCTHIS_SCALE"
+	scaleEnv = "SYNGO_SCALE"
 	// scaleDirEnv names a directory the scale tests put their data,
 	// folders and fixtures in. The default is the system temporary
 	// directory, which on a machine where /tmp is a tmpfs is far too small
 	// for the 10 GiB transfer: `make scale` passes a directory on disk.
-	scaleDirEnv = "SYNCTHIS_SCALE_DIR"
+	scaleDirEnv = "SYNGO_SCALE_DIR"
 )
 
 // systemTemp is the system temporary directory as it was before any scale
@@ -92,7 +92,7 @@ func scaleScratch(t *testing.T) string {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatalf("create %s %s: %v", scaleDirEnv, base, err)
 	}
-	dir, err := os.MkdirTemp(base, "syncthis-scale-")
+	dir, err := os.MkdirTemp(base, "syngo-scale-")
 	if err != nil {
 		t.Fatalf("scratch directory in %s: %v", base, err)
 	}

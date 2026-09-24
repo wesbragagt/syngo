@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // TestIgnore_IncomingFileIsNotInstalled proves the receiver's ignore rules
@@ -15,7 +15,7 @@ import (
 func TestIgnore_IncomingFileIsNotInstalled(t *testing.T) {
 	sender := startNode(t, "sender", folder.ModeSendReceive)
 	receiver := startNode(t, "receiver", folder.ModeSendReceive)
-	writeFileIn(t, receiver.Root, ".syncthisignore", []byte("*.tmp\n"))
+	writeFileIn(t, receiver.Root, ".syngoignore", []byte("*.tmp\n"))
 	pair(t, sender, receiver)
 
 	writeFile(t, sender, "junk.tmp", payload(2048, 1))

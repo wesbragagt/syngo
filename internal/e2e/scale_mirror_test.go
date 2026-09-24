@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // The mirror test is the Phase 3 claim that a vault-sized folder mirrors and
@@ -23,9 +23,9 @@ import (
 // reports what it really ran.
 const (
 	// mirrorMiBEnv is the total size of the mirrored folder, in MiB.
-	mirrorMiBEnv = "SYNCTHIS_SCALE_MIRROR_MIB"
+	mirrorMiBEnv = "SYNGO_SCALE_MIRROR_MIB"
 	// mirrorNotesEnv is how many note-sized files the folder holds.
-	mirrorNotesEnv = "SYNCTHIS_SCALE_MIRROR_NOTES"
+	mirrorNotesEnv = "SYNGO_SCALE_MIRROR_NOTES"
 	// mirrorAttachmentSize is the size of one attachment. A vault's
 	// largest files are images, PDFs and the occasional audio note: low
 	// tens of megabytes, not gigabytes.

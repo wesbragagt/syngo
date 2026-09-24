@@ -1,6 +1,6 @@
 package ports
 
-import "github.com/wesbragagt/syncthis/internal/domain/device"
+import "github.com/wesbragagt/syngo/internal/domain/device"
 
 // Identity is this device's own identity.
 type Identity interface {

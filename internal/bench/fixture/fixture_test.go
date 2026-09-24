@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/bench/fixture"
+	"github.com/wesbragagt/syngo/internal/bench/fixture"
 )
 
 // smallSpec keeps every generated test tree tiny: a handful of small text

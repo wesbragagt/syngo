@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/backoff"
+	"github.com/wesbragagt/syngo/internal/domain/backoff"
 )
 
 func TestWaitDoublesUpToMax(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/tailscalecli"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/adapters/tailscalecli"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // fixture reads one of the recorded `tailscale status --json` documents.

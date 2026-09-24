@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/syncer"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/syncer"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // peerID is the device the destination pulls from.
@@ -178,7 +178,7 @@ func (d *dest) transfers(t *testing.T) []transfer.Transfer {
 // tempFiles returns the partial files under the folder's temp directory.
 func (d *dest) tempFiles() []string {
 	var out []string
-	prefix := d.folder.Path + "/.syncthis/tmp/"
+	prefix := d.folder.Path + "/.syngo/tmp/"
 	for _, p := range d.fs.Paths() {
 		if strings.HasPrefix(p, prefix) {
 			out = append(out, p)
@@ -767,7 +767,7 @@ func TestSync_NewTransferPrunesAnOlderFailedRow(t *testing.T) {
 	d, conn := newDest(t, src.server)
 	stale := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
 		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
-		d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
+		d.folder.Path+"/.syngo/tmp/abc.part", d.clock.Now())
 	stale.State = transfer.StateFailed
 	stale.Error = "chunk 1 did not hash right"
 	if err := d.store.SaveTransfer(ctx, stale); err != nil {
@@ -798,7 +798,7 @@ func TestResumeAll_PutsActiveTransfersBackToPending(t *testing.T) {
 	t0 := d.clock.Now()
 	stale := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
 		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
-		d.folder.Path+"/.syncthis/tmp/abc.part", t0)
+		d.folder.Path+"/.syngo/tmp/abc.part", t0)
 	stale.State = transfer.StateActive
 	if err := d.store.SaveTransfer(ctx, stale); err != nil {
 		t.Fatalf("save transfer: %v", err)
@@ -824,7 +824,7 @@ func TestResumeAll_LeavesFailedRowsAlone(t *testing.T) {
 	d, _ := newDest(t, src.server)
 	failed := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
 		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
-		d.folder.Path+"/.syncthis/tmp/abc.part", d.clock.Now())
+		d.folder.Path+"/.syngo/tmp/abc.part", d.clock.Now())
 	failed.State = transfer.StateFailed
 	failed.Error = "chunk 1 did not hash right"
 	if err := d.store.SaveTransfer(ctx, failed); err != nil {
@@ -1356,7 +1356,7 @@ func TestResumeAll_DropsFinishedRowsAndTheirTempFiles(t *testing.T) {
 	src.addFile(t, "big.bin", payload(chunkSize*2, 21))
 
 	d, _ := newDest(t, src.server)
-	temp := d.folder.Path + "/.syncthis/tmp/abc.part"
+	temp := d.folder.Path + "/.syngo/tmp/abc.part"
 	d.fs.AddFile(temp, payload(chunkSize, 21), 0o600)
 	done := transfer.NewInbound("abc", d.folder.ID, manifest.Entry{Path: "big.bin", Size: chunkSize * 2},
 		peerID, transfer.FixedChunks(chunkSize*2, chunkSize), chunkSize,
@@ -1387,7 +1387,7 @@ func TestSync_DropsRowsTheNewPlanNoLongerWants(t *testing.T) {
 	src.addFile(t, "wanted.bin", payload(chunkSize, 4))
 
 	d, conn := newDest(t, src.server)
-	temp := d.folder.Path + "/.syncthis/tmp/orphan.part"
+	temp := d.folder.Path + "/.syngo/tmp/orphan.part"
 	d.fs.AddFile(temp, payload(chunkSize, 9), 0o600)
 	orphan := transfer.NewInbound("orphan", d.folder.ID, manifest.Entry{Path: "gone.bin", Size: chunkSize},
 		peerID, transfer.FixedChunks(chunkSize, chunkSize), chunkSize,
@@ -1421,7 +1421,7 @@ func TestSync_KeepsFailedRowsOfPathsThePlanDropped(t *testing.T) {
 	d, conn := newDest(t, src.server)
 	failed := transfer.NewInbound("bad", d.folder.ID, manifest.Entry{Path: "gone.bin", Size: chunkSize},
 		peerID, transfer.FixedChunks(chunkSize, chunkSize), chunkSize,
-		d.folder.Path+"/.syncthis/tmp/bad.part", d.clock.Now())
+		d.folder.Path+"/.syngo/tmp/bad.part", d.clock.Now())
 	failed.State = transfer.StateFailed
 	failed.Error = "chunk 0 did not hash right"
 	if err := d.store.SaveTransfer(ctx, failed); err != nil {

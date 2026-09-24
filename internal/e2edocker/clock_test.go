@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/conflict"
+	"github.com/wesbragagt/syngo/internal/domain/conflict"
 )
 
 // conflictName is the shape of a conflict copy's name: the stem, the marker,

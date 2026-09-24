@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // binaryName is the executable asked for on every call.

@@ -52,7 +52,7 @@ func (f *fakeRunner) lines() []string {
 	return out
 }
 
-// statusJSON is what the peer's `syncthis status --json` prints in these
+// statusJSON is what the peer's `syngo status --json` prints in these
 // tests: a running daemon with an idle bench folder.
 const statusJSON = `{
   "schema_version": 1,
@@ -84,7 +84,7 @@ func peerAnswers(cmd recordedCommand) ([]byte, error) {
 // newTestRemote returns a driver wired to fake, already resolved.
 func newTestRemote(t *testing.T, fake *fakeRunner) *remoteDevice {
 	t.Helper()
-	r, err := newRemoteDevice("macpro-nixos", "~/syncthis-bench-remote", fake)
+	r, err := newRemoteDevice("macpro-nixos", "~/syngo-bench-remote", fake)
 	if err != nil {
 		t.Fatalf("newRemoteDevice: %v", err)
 	}
@@ -92,10 +92,10 @@ func newTestRemote(t *testing.T, fake *fakeRunner) *remoteDevice {
 }
 
 func TestNewRemoteDeviceRefusesAMissingPeerHost(t *testing.T) {
-	if _, err := newRemoteDevice("", "~/syncthis-bench-remote", &fakeRunner{}); err == nil {
+	if _, err := newRemoteDevice("", "~/syngo-bench-remote", &fakeRunner{}); err == nil {
 		t.Fatal("newRemoteDevice with no host = nil, want a refusal")
 	}
-	if _, err := newRemoteDevice("   ", "~/syncthis-bench-remote", &fakeRunner{}); err == nil {
+	if _, err := newRemoteDevice("   ", "~/syngo-bench-remote", &fakeRunner{}); err == nil {
 		t.Fatal("newRemoteDevice with a blank host = nil, want a refusal")
 	}
 }
@@ -120,11 +120,11 @@ func TestSSHArgsRunOneScriptInBatchMode(t *testing.T) {
 }
 
 func TestSCPArgsNameTheRemotePath(t *testing.T) {
-	args := scpArgs("/tmp/syncthis", "macpro-nixos", "/home/bench/dir/bin/syncthis")
-	if got := args[len(args)-1]; got != "macpro-nixos:/home/bench/dir/bin/syncthis" {
+	args := scpArgs("/tmp/syngo", "macpro-nixos", "/home/bench/dir/bin/syngo")
+	if got := args[len(args)-1]; got != "macpro-nixos:/home/bench/dir/bin/syngo" {
 		t.Errorf("scp destination = %q, want host:path", got)
 	}
-	if got := args[len(args)-2]; got != "/tmp/syncthis" {
+	if got := args[len(args)-2]; got != "/tmp/syngo" {
 		t.Errorf("scp source = %q, want the local binary", got)
 	}
 }
@@ -149,7 +149,7 @@ func TestPrepareKeepsEveryPathUnderTheOperatorsDirectory(t *testing.T) {
 		}
 		return nil
 	}
-	if err := r.prepare(context.Background(), "/tmp/local-syncthis", build); err != nil {
+	if err := r.prepare(context.Background(), "/tmp/local-syngo", build); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestPrepareKeepsEveryPathUnderTheOperatorsDirectory(t *testing.T) {
 	if r.id == "" {
 		t.Error("prepare recorded no device id for the peer")
 	}
-	const dir = "/home/bench/syncthis-bench-remote"
+	const dir = "/home/bench/syngo-bench-remote"
 	if r.dir != dir {
 		t.Fatalf("remote dir = %q, want %q", r.dir, dir)
 	}
@@ -179,7 +179,7 @@ func TestPrepareRefusesAnUnreachablePeer(t *testing.T) {
 	}}
 	r := newTestRemote(t, fake)
 
-	err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error {
+	err := r.prepare(context.Background(), "/tmp/local-syngo", func(context.Context, string, string, string) error {
 		t.Error("prepare built a binary for a peer it could not reach")
 		return nil
 	})
@@ -197,7 +197,7 @@ func TestPrepareRefusesAnUnreachablePeer(t *testing.T) {
 func TestStartAndStopDriveTheDaemonTheRunnerOwns(t *testing.T) {
 	fake := &fakeRunner{answer: peerAnswers}
 	r := newTestRemote(t, fake)
-	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+	if err := r.prepare(context.Background(), "/tmp/local-syngo", func(context.Context, string, string, string) error { return nil }); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	if err := r.start(context.Background(), "tailscale0", time.Millisecond); err != nil {
@@ -267,14 +267,14 @@ func TestRemoteStatusIsSummarizedForTheConvergenceCheck(t *testing.T) {
 }
 
 func TestRemoteStatusRefusesGarbage(t *testing.T) {
-	if _, err := parseRemoteStatus([]byte("bash: syncthis: command not found")); err == nil {
+	if _, err := parseRemoteStatus([]byte("bash: syngo: command not found")); err == nil {
 		t.Fatal("parseRemoteStatus of a shell error = nil, want an error")
 	}
 }
 
 func TestRemoteHashScriptSkipsTheStateDirectory(t *testing.T) {
 	script := remoteHashScript("/home/bench/dir/root")
-	for _, want := range []string{"sha256sum", ".syncthis", "/home/bench/dir/root"} {
+	for _, want := range []string{"sha256sum", ".syngo", "/home/bench/dir/root"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("hash script %q does not mention %q", script, want)
 		}
@@ -288,7 +288,7 @@ func TestRemoteHashScriptSkipsTheStateDirectory(t *testing.T) {
 func TestPrepareClearsThePreviousRunsState(t *testing.T) {
 	fake := &fakeRunner{answer: peerAnswers}
 	r := newTestRemote(t, fake)
-	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+	if err := r.prepare(context.Background(), "/tmp/local-syngo", func(context.Context, string, string, string) error { return nil }); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 
@@ -326,7 +326,7 @@ func TestValidateResolvedDirRefusesTheRootAndItsNeighbours(t *testing.T) {
 			t.Errorf("validateResolvedDir(%q) = nil, want a refusal", dir)
 		}
 	}
-	for _, dir := range []string{"/home/bench/syncthis-bench-remote", "/srv/bench"} {
+	for _, dir := range []string{"/home/bench/syngo-bench-remote", "/srv/bench"} {
 		if err := validateResolvedDir(dir); err != nil {
 			t.Errorf("validateResolvedDir(%q) = %v, want nil", dir, err)
 		}
@@ -360,7 +360,7 @@ func TestStopKillsADaemonWhoseStartReportedFailure(t *testing.T) {
 		return peerAnswers(cmd)
 	}}
 	r := newTestRemote(t, fake)
-	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+	if err := r.prepare(context.Background(), "/tmp/local-syngo", func(context.Context, string, string, string) error { return nil }); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	if err := r.start(context.Background(), "tailscale0", time.Millisecond); err == nil {
@@ -380,7 +380,7 @@ func TestStopKillsADaemonWhoseStartReportedFailure(t *testing.T) {
 func TestStopKillsThePidThisRunStarted(t *testing.T) {
 	fake := &fakeRunner{answer: peerAnswers}
 	r := newTestRemote(t, fake)
-	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+	if err := r.prepare(context.Background(), "/tmp/local-syngo", func(context.Context, string, string, string) error { return nil }); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	if !strings.Contains(findCommand(t, fake, "rm"), r.pidFile()) {
@@ -416,7 +416,7 @@ func TestStopFallsBackToThePidFileThisRunWrote(t *testing.T) {
 		return peerAnswers(cmd)
 	}}
 	r := newTestRemote(t, fake)
-	if err := r.prepare(context.Background(), "/tmp/local-syncthis", func(context.Context, string, string, string) error { return nil }); err != nil {
+	if err := r.prepare(context.Background(), "/tmp/local-syngo", func(context.Context, string, string, string) error { return nil }); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	if err := r.start(context.Background(), "tailscale0", time.Millisecond); err == nil {

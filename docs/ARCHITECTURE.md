@@ -1,9 +1,9 @@
-# Syncthis architecture
+# Syngo architecture
 
 ## Layers
 
 ```
-cmd/syncthis        entry point: calls internal/cli.Execute and exits with its code
+cmd/syngo        entry point: calls internal/cli.Execute and exits with its code
 internal/domain     pure logic: no I/O, stdlib only
 internal/app        use cases, written against ports
 internal/app/ports  the interfaces the application needs from the outside world
@@ -26,7 +26,7 @@ internal/e2edocker  N daemons, one container each; opt-in, only _test.go files
 | `internal/cli` | `internal/app/...`, `internal/compose`, `internal/domain/...`, `internal/tui`, cobra |
 | `internal/tui` | itself, bubbletea, bubbles, lipgloss, and the same stdlib as any presentation code; nothing else of this module |
 | `internal/compose` | everything |
-| `cmd/syncthis` | `internal/cli` |
+| `cmd/syngo` | `internal/cli` |
 | `internal/testutil/...` | `internal/domain/...`, `internal/adapters/...`; imported only by `_test.go` files |
 | `internal/e2edocker` | anything; it is test-only and nothing can import it |
 
@@ -59,16 +59,16 @@ returns an `App`; every command asks the `App` for the service it needs.
 
 ## The terminal interface
 
-`syncthis tui` is a subcommand of the one binary, not a second one: `make dist`
-builds `./cmd/syncthis` alone, the packaging, the container image and the Nix
+`syngo tui` is a subcommand of the one binary, not a second one: `make dist`
+builds `./cmd/syngo` alone, the packaging, the container image and the Nix
 flake install that single file, and shell completion is generated from this
-command tree. `cmd/syncthis-bench` is the precedent for a second binary and it
+command tree. `cmd/syngo-bench` is the precedent for a second binary and it
 is a development tool that is not shipped.
 
 The interface is a presentation layer and the dependency table above is what
 makes that a rule rather than an intention. `internal/tui` may not import
 `internal/app`, `internal/domain` or `internal/compose`. It reaches the daemon
-through one interface it declares itself, `tui.Runner`, which runs a syncthis
+through one interface it declares itself, `tui.Runner`, which runs a syngo
 invocation and returns what it wrote to stdout and the code it exited with;
 `internal/cli` implements it by calling its own `ExecuteContext`. So every
 screen is a view of a `--json` document `docs/CLI.md` documents, every key is

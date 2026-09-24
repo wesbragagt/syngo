@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // ALPN is the protocol name negotiated during the TLS handshake. A peer
 // speaking another version fails the handshake instead of the Hello exchange.
-const ALPN = "syncthis/1"
+const ALPN = "syngo/1"
 
 // ServerTLS is the configuration the listener presents. Certificates are
 // self-signed, so chain verification is skipped: the device ID derived from

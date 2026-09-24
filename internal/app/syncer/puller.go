@@ -11,15 +11,15 @@ import (
 	"path"
 	"sync"
 
-	"github.com/wesbragagt/syncthis/internal/app/mergebase"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/pipeline"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/mergebase"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/counterfloor"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/pipeline"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // Pull tuning.
@@ -32,7 +32,7 @@ const (
 	// syncEvery is how many chunks are written before the partial file is
 	// flushed to disk.
 	syncEvery = 16
-	// tempDirMode is the permission of <root>/.syncthis/tmp.
+	// tempDirMode is the permission of <root>/.syngo/tmp.
 	tempDirMode fs.FileMode = 0o700
 )
 

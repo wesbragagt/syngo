@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // limitedChunkSize is the chunk size the bandwidth tests use: the production

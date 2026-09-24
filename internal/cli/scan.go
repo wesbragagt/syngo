@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // changeView is the JSON shape of one classified change.
@@ -128,7 +128,7 @@ func printScan(deps *Deps, r scan.Result) error {
 	}
 
 	for _, warning := range view.Warnings {
-		if _, err := fmt.Fprintln(deps.Stderr, "syncthis: skipped", warning); err != nil {
+		if _, err := fmt.Fprintln(deps.Stderr, "syngo: skipped", warning); err != nil {
 			return err
 		}
 	}

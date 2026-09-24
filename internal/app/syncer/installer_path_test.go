@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/syncer"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/syncer"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // hostilePaths are the paths a peer must never get the installer to write to.
@@ -21,8 +21,8 @@ var hostilePaths = []string{
 	"",
 	".",
 	"./a",
-	".syncthis/tmp/x",
-	".syncthisignore",
+	".syngo/tmp/x",
+	".syngoignore",
 	"a\x00b",
 }
 
@@ -87,7 +87,7 @@ func TestSymlink_RefusesATargetThatLeavesTheFolder(t *testing.T) {
 		{name: "absolute target", path: "link", target: "/etc"},
 		{name: "target climbing out", path: "link", target: "../.."},
 		{name: "target climbing out of a subdirectory", path: "a/link", target: "../../outside"},
-		{name: "target reaching the state directory", path: "link", target: ".syncthis"},
+		{name: "target reaching the state directory", path: "link", target: ".syngo"},
 		{name: "path outside the folder", path: "../link", target: "file.txt"},
 	}
 

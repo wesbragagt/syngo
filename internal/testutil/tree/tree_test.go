@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/testutil/tree"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/testutil/tree"
 )
 
 // write puts a file with content at rel under root, creating parents.
@@ -67,7 +67,7 @@ func TestReadDescribesFilesDirsAndSymlinks(t *testing.T) {
 func TestReadSkipsStateDirectory(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "a.txt", "a", 0o644)
-	write(t, root, ".syncthis/tmp/a.txt.part", "junk", 0o644)
+	write(t, root, ".syngo/tmp/a.txt.part", "junk", 0o644)
 
 	got := read(t, root)
 	for path := range got {

@@ -3,7 +3,7 @@ title: ADR 004 Change Default Chunk Size to 64 KiB
 date: 2026-09-22
 status: accepted
 tags:
-  - syncthis
+  - syngo
   - project
   - adr
   - chunking
@@ -18,7 +18,7 @@ tags:
 
 ## Context
 
-Syncthis uses content-defined chunking to detect when only part of a file has changed and transfer only those bytes. The average chunk size is a tradeoff between:
+Syngo uses content-defined chunking to detect when only part of a file has changed and transfer only those bytes. The average chunk size is a tradeoff between:
 
 - **Insertion cost:** A small change deep in a file requires retransmitting a few chunk boundaries around the insertion.
 - **Transfer cost for files with nothing to deduplicate:** Smaller chunks increase the number of boundaries to cut and the overhead of the chunk index.
@@ -116,7 +116,7 @@ See docs/BENCH.md § "Compatibility" (line 721) for full details.
 
 ## Related documents
 
-- [[syncthis-spec]] - Phase 5 benchmarks section, updated to reflect 64 KiB default
+- [[syngo-spec]] - Phase 5 benchmarks section, updated to reflect 64 KiB default
 - [[BENCH.md]] - Full measurement suite and decision analysis
 - [[tasks.md]] - Phase 5 chunk size evaluation
 

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/localfs"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/adapters/localfs"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // tree builds a small directory tree and returns its root.

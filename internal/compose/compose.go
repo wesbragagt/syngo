@@ -12,36 +12,36 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/adapters/identityfile"
-	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
-	"github.com/wesbragagt/syncthis/internal/adapters/localfs"
-	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
-	"github.com/wesbragagt/syncthis/internal/adapters/sysclock"
-	"github.com/wesbragagt/syncthis/internal/adapters/tailscalecli"
-	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
-	"github.com/wesbragagt/syncthis/internal/adapters/tokenbucket"
-	"github.com/wesbragagt/syncthis/internal/adapters/unixctl"
-	"github.com/wesbragagt/syncthis/internal/app/configbundle"
-	"github.com/wesbragagt/syncthis/internal/app/conflicts"
-	"github.com/wesbragagt/syncthis/internal/app/daemon"
-	"github.com/wesbragagt/syncthis/internal/app/folders"
-	"github.com/wesbragagt/syncthis/internal/app/mergebase"
-	"github.com/wesbragagt/syncthis/internal/app/network"
-	"github.com/wesbragagt/syncthis/internal/app/peers"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/repair"
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/app/syncer"
-	"github.com/wesbragagt/syncthis/internal/app/transfers"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
-	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/adapters/identityfile"
+	"github.com/wesbragagt/syngo/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syngo/internal/adapters/localfs"
+	"github.com/wesbragagt/syngo/internal/adapters/sqlitestore"
+	"github.com/wesbragagt/syngo/internal/adapters/sysclock"
+	"github.com/wesbragagt/syngo/internal/adapters/tailscalecli"
+	"github.com/wesbragagt/syngo/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syngo/internal/adapters/tokenbucket"
+	"github.com/wesbragagt/syngo/internal/adapters/unixctl"
+	"github.com/wesbragagt/syngo/internal/app/configbundle"
+	"github.com/wesbragagt/syngo/internal/app/conflicts"
+	"github.com/wesbragagt/syngo/internal/app/daemon"
+	"github.com/wesbragagt/syngo/internal/app/folders"
+	"github.com/wesbragagt/syngo/internal/app/mergebase"
+	"github.com/wesbragagt/syngo/internal/app/network"
+	"github.com/wesbragagt/syngo/internal/app/peers"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/repair"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/app/syncer"
+	"github.com/wesbragagt/syngo/internal/app/transfers"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/counterfloor"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // ErrNotInitialized is returned when the data directory holds no identity and
-// one is required. Commands map it to the "run syncthis init" exit code.
+// one is required. Commands map it to the "run syngo init" exit code.
 var ErrNotInitialized = identityfile.ErrNotInitialized
 
 // ErrPublicAddress is returned when the daemon is asked to listen on an
@@ -151,7 +151,7 @@ func Build(ctx context.Context, o Options) (*App, error) {
 	return assemble(ctx, dir, identity, o)
 }
 
-// InitSettings are the values `syncthis init` may write into the config.
+// InitSettings are the values `syngo init` may write into the config.
 type InitSettings struct {
 	// DeviceName names this device; it is only used when the identity is
 	// created, because the name is part of the certificate.

@@ -1,4 +1,4 @@
-// Package conflicts is what `syncthis conflict list`, `show`, `resolve` and
+// Package conflicts is what `syngo conflict list`, `show`, `resolve` and
 // `export` do: it reads the conflict records the puller wrote and carries out
 // the one decision only the user can make, which version of a diverged path to
 // keep.
@@ -18,10 +18,10 @@ import (
 	"path"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Errors reported to the user.

@@ -1,4 +1,4 @@
-// Command syncthis-bench runs one benchmark scenario end to end, as
+// Command syngo-bench runs one benchmark scenario end to end, as
 // described in docs/BENCH.md, and writes its result to the versioned results
 // directory. It parses flags and calls internal/bench/runner; every decision
 // about what a run does lives there.
@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/bench/runner"
+	"github.com/wesbragagt/syngo/internal/bench/runner"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr *os.File) int {
-	fs := flag.NewFlagSet("syncthis-bench", flag.ContinueOnError)
+	fs := flag.NewFlagSet("syngo-bench", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	scenario := fs.String("scenario", "", "network scenario: lan, tailscale-direct or tailscale-derp (required)")
@@ -46,7 +46,7 @@ func run(args []string, stdout, stderr *os.File) int {
 
 	parsedScenario, err := runner.ParseScenario(*scenario)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "syncthis-bench:", err)
+		_, _ = fmt.Fprintln(stderr, "syngo-bench:", err)
 		return 2
 	}
 
@@ -65,7 +65,7 @@ func run(args []string, stdout, stderr *os.File) int {
 		ConvergeTimeout: *convergeTimeout,
 	}
 	if err := runner.Validate(cfg); err != nil {
-		_, _ = fmt.Fprintln(stderr, "syncthis-bench:", err)
+		_, _ = fmt.Fprintln(stderr, "syngo-bench:", err)
 		return 2
 	}
 
@@ -75,7 +75,7 @@ func run(args []string, stdout, stderr *os.File) int {
 	start := time.Now()
 	outcome, err := runner.Run(ctx, cfg)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "syncthis-bench:", err)
+		_, _ = fmt.Fprintln(stderr, "syngo-bench:", err)
 		return 1
 	}
 

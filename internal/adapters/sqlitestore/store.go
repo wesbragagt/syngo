@@ -14,7 +14,7 @@ import (
 	// The pure-Go SQLite driver registers itself as "sqlite".
 	_ "modernc.org/sqlite"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 var _ ports.MetadataStore = (*Store)(nil)

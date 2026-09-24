@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/tui"
+	"github.com/wesbragagt/syngo/internal/tui"
 )
 
-// cliRunner is the adapter behind tui.Runner: it runs the syncthis command
+// cliRunner is the adapter behind tui.Runner: it runs the syngo command
 // tree in this process and hands back what the command wrote to stdout and the
 // code it would have exited with.
 //
@@ -47,11 +47,11 @@ func (nopReader) Read([]byte) (int, error) { return 0, io.EOF }
 
 // newTUICmd builds the "tui" command.
 //
-// The interface is a subcommand of syncthis rather than a second binary
-// because syncthis ships as one binary: `make dist` builds ./cmd/syncthis
+// The interface is a subcommand of syngo rather than a second binary
+// because syngo ships as one binary: `make dist` builds ./cmd/syngo
 // alone, the packaging, the container image and the Nix flake install that one
 // file, and shell completion is generated from this command tree. A separate
-// syncthis-tui would have to be added to all five. cmd/syncthis-bench is the
+// syngo-tui would have to be added to all five. cmd/syngo-bench is the
 // precedent for a second binary and it is a development tool that is not
 // shipped, which the TUI is not.
 func newTUICmd(deps *Deps) *cobra.Command {
@@ -65,14 +65,14 @@ func newTUICmd(deps *Deps) *cobra.Command {
 		Short: "Interactive terminal interface",
 		Long: "tui shows devices, folders, transfers, paths, conflicts and logs, and\n" +
 			"walks a new device through initialization and pairing. Every action it\n" +
-			"offers is one syncthis command; docs/TUI.md lists which.\n\n" +
+			"offers is one syngo command; docs/TUI.md lists which.\n\n" +
 			"It holds no state of its own: it reads the running daemon the way the\n" +
 			"commands do, so closing the terminal, losing an SSH session or killing\n" +
 			"the process leaves the daemon and every transfer in flight untouched.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if deps.Global.JSON {
-				return Errorf(ExitUsage, "syncthis tui: there is no JSON form of an interactive interface")
+				return Errorf(ExitUsage, "syngo tui: there is no JSON form of an interactive interface")
 			}
 			client := tui.Client{
 				Runner:  cliRunner{stderr: deps.Stderr},

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
 )
 
 func TestSum_KnownVector(t *testing.T) {
@@ -29,7 +29,7 @@ func TestSum_KnownVector(t *testing.T) {
 
 func TestSumReader_EqualsSumBytes(t *testing.T) {
 	h := blake3hash.New()
-	data := bytes.Repeat([]byte("syncthis"), 5000)
+	data := bytes.Repeat([]byte("syngo"), 5000)
 
 	fromReader, err := h.Sum(strings.NewReader(string(data)))
 	if err != nil {

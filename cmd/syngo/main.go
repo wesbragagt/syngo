@@ -1,10 +1,10 @@
-// Command syncthis is the Syncthis file synchronization CLI.
+// Command syngo is the Syngo file synchronization CLI.
 package main
 
 import (
 	"os"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 func main() {

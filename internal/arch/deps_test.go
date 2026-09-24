@@ -15,7 +15,7 @@ import (
 )
 
 // modulePath is the import prefix of this repository.
-const modulePath = "github.com/wesbragagt/syncthis"
+const modulePath = "github.com/wesbragagt/syngo"
 
 // sourceFile is one parsed Go file and the imports it declares.
 type sourceFile struct {
@@ -260,7 +260,7 @@ func TestTUIImportsNothingOfTheApplication(t *testing.T) {
 }
 
 func TestCmdImportsOnlyCLI(t *testing.T) {
-	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syncthis") {
+	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syngo") {
 		for _, imp := range f.imports {
 			if isThirdParty(imp) {
 				t.Errorf("%s imports third-party %q; the entry point only wires up the CLI", f.path, imp)
@@ -272,20 +272,20 @@ func TestCmdImportsOnlyCLI(t *testing.T) {
 	}
 }
 
-// TestBenchCmdImportsOnlyItsRunner keeps cmd/syncthis-bench as thin as
-// cmd/syncthis: it parses flags and calls internal/bench/runner, nothing
+// TestBenchCmdImportsOnlyItsRunner keeps cmd/syngo-bench as thin as
+// cmd/syngo: it parses flags and calls internal/bench/runner, nothing
 // else internal, and no third-party package (see docs/history/PLAN.md section 0's
 // closed dependency list).
 func TestBenchCmdImportsOnlyItsRunner(t *testing.T) {
-	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syncthis-bench") {
+	for _, f := range filesUnder(loadFiles(t, "internal", "cmd"), "cmd/syngo-bench") {
 		for _, imp := range f.imports {
 			if isThirdParty(imp) {
-				t.Errorf("%s imports third-party %q; cmd/syncthis-bench only wires up internal/bench/runner", f.path, imp)
+				t.Errorf("%s imports third-party %q; cmd/syngo-bench only wires up internal/bench/runner", f.path, imp)
 			}
 			if isInternal(imp) {
 				local := localPath(imp)
 				if local != "internal/bench/runner" && local != "internal/bench/report" {
-					t.Errorf("%s imports %q; cmd/syncthis-bench may only import internal/bench/runner and internal/bench/report", f.path, imp)
+					t.Errorf("%s imports %q; cmd/syngo-bench may only import internal/bench/runner and internal/bench/report", f.path, imp)
 				}
 			}
 		}

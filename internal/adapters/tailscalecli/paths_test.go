@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/tailscalecli"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/adapters/tailscalecli"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // readStatus reads one recorded `tailscale status --json` document.

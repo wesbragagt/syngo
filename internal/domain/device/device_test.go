@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 func TestIDFromPublicKey_Stable(t *testing.T) {

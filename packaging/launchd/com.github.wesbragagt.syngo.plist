@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Headless syncthis for one user, as a launchd user agent.
+  Headless syngo for one user, as a launchd user agent.
 
     mkdir -p ~/Library/LaunchAgents
-    cp packaging/launchd/com.github.wesbragagt.syncthis.plist ~/Library/LaunchAgents/
-    launchctl load -w ~/Library/LaunchAgents/com.github.wesbragagt.syncthis.plist
+    cp packaging/launchd/com.github.wesbragagt.syngo.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.github.wesbragagt.syngo.plist
 
   A LaunchAgent runs as the user who loads it, so the daemon owns the data
   directory it reads and the files it synchronizes. Replace USER below with
   that user's short name: launchd does not expand ~ or $HOME here.
 
-  The daemon must already have an identity: run `syncthis init` once first.
+  The daemon must already have an identity: run `syngo init` once first.
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.github.wesbragagt.syncthis</string>
+  <string>com.github.wesbragagt.syngo</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/syncthis</string>
+    <string>/usr/local/bin/syngo</string>
     <string>daemon</string>
     <string>run</string>
   </array>
@@ -28,8 +28,8 @@
        and the control socket. -->
   <key>EnvironmentVariables</key>
   <dict>
-    <key>SYNCTHIS_DATA_DIR</key>
-    <string>/Users/USER/Library/Application Support/syncthis</string>
+    <key>SYNGO_DATA_DIR</key>
+    <string>/Users/USER/Library/Application Support/syngo</string>
   </dict>
 
   <key>RunAtLoad</key>
@@ -48,8 +48,8 @@
   <key>WorkingDirectory</key>
   <string>/Users/USER</string>
   <key>StandardOutPath</key>
-  <string>/Users/USER/Library/Logs/syncthis.log</string>
+  <string>/Users/USER/Library/Logs/syngo.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/USER/Library/Logs/syncthis.log</string>
+  <string>/Users/USER/Library/Logs/syngo.log</string>
 </dict>
 </plist>

@@ -16,7 +16,7 @@ import (
 // rounds wrote, has two devices write one path at the same instant, and adds
 // a partition and a shaped link to the daemons it kills. The basic set is
 // creations and restarts alone, and is asked for with
-// SYNCTHIS_E2E_SOAK_CHAOS=basic for a run that needs no NET_ADMIN.
+// SYNGO_E2E_SOAK_CHAOS=basic for a run that needs no NET_ADMIN.
 type soakChaos struct {
 	full bool
 }
@@ -31,25 +31,25 @@ type soakSettings struct {
 // soakEnv reads the settings, or skips the test when it was not asked for.
 func soakEnv(t *testing.T) soakSettings {
 	t.Helper()
-	raw := os.Getenv("SYNCTHIS_E2E_SOAK_MINUTES")
+	raw := os.Getenv("SYNGO_E2E_SOAK_MINUTES")
 	if raw == "" {
-		t.Skip("the soak runs for as long as SYNCTHIS_E2E_SOAK_MINUTES says; see make e2e-docker-soak")
+		t.Skip("the soak runs for as long as SYNGO_E2E_SOAK_MINUTES says; see make e2e-docker-soak")
 	}
 	minutes, err := strconv.Atoi(raw)
 	if err != nil || minutes <= 0 {
-		t.Fatalf("SYNCTHIS_E2E_SOAK_MINUTES=%q is not a positive number of minutes", raw)
+		t.Fatalf("SYNGO_E2E_SOAK_MINUTES=%q is not a positive number of minutes", raw)
 	}
 	devices := 3
-	if raw := os.Getenv("SYNCTHIS_E2E_SOAK_DEVICES"); raw != "" {
+	if raw := os.Getenv("SYNGO_E2E_SOAK_DEVICES"); raw != "" {
 		devices, err = strconv.Atoi(raw)
 		if err != nil || devices < 2 {
-			t.Fatalf("SYNCTHIS_E2E_SOAK_DEVICES=%q is not a device count of two or more", raw)
+			t.Fatalf("SYNGO_E2E_SOAK_DEVICES=%q is not a device count of two or more", raw)
 		}
 	}
 	return soakSettings{
 		minutes: minutes,
 		devices: devices,
-		chaos:   soakChaos{full: os.Getenv("SYNCTHIS_E2E_SOAK_CHAOS") != "basic"},
+		chaos:   soakChaos{full: os.Getenv("SYNGO_E2E_SOAK_CHAOS") != "basic"},
 	}
 }
 

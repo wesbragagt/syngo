@@ -9,10 +9,10 @@ import (
 // published `--json` shapes and nothing else, so a field renamed there has to
 // break this test before it breaks a screen.
 
-// statusExample is the `syncthis status --json` document of docs/CLI.md.
+// statusExample is the `syngo status --json` document of docs/CLI.md.
 const statusExample = `{
   "schema_version": 1,
-  "device": {"id": "RCUFGP7", "name": "laptop", "data_dir": "/home/u/.local/share/syncthis"},
+  "device": {"id": "RCUFGP7", "name": "laptop", "data_dir": "/home/u/.local/share/syngo"},
   "daemon": {"running": true, "pid": 3776214, "listen": "127.0.0.1:22001",
              "started_at": "2026-09-21T08:32:15Z",
              "upload_limit": 0, "download_limit": 4194304,
@@ -80,7 +80,7 @@ func TestContract_StatusDocumentDecodes(t *testing.T) {
 	}
 }
 
-// pathExample is the `syncthis network path --json` document of docs/CLI.md.
+// pathExample is the `syngo network path --json` document of docs/CLI.md.
 const pathExample = `[
   {
     "peer_id": "ETI3RRZ",
@@ -107,7 +107,7 @@ func TestContract_NetworkPathDocumentDecodes(t *testing.T) {
 	}
 }
 
-// conflictExample is the `syncthis conflict list --json` document of
+// conflictExample is the `syngo conflict list --json` document of
 // docs/CLI.md.
 const conflictExample = `[
   {
@@ -158,16 +158,16 @@ func TestContract_FailureDocumentDecodes(t *testing.T) {
 	}
 }
 
-// initExample is the `syncthis init --json` document of docs/CLI.md.
+// initExample is the `syngo init --json` document of docs/CLI.md.
 const initExample = `{
   "device_id": "ZFBP44XEKUVRBOA2CSBDZ7QAUEW5DBCGZHBLOSB5C4XWX5UV35JQ",
   "name": "laptop",
-  "data_dir": "/home/u/.local/share/syncthis",
+  "data_dir": "/home/u/.local/share/syngo",
   "listen": "127.0.0.1:22000",
   "created": true
 }`
 
-// peerAddExample is the `syncthis peer add --json` document of docs/CLI.md.
+// peerAddExample is the `syngo peer add --json` document of docs/CLI.md.
 const peerAddExample = `{
   "id": "ETI3RRZCMWYFD54X22RLMR5SYEWJTA3UANTRKYNN3KAAX5ZGPAFA",
   "name": "nas",
@@ -179,7 +179,7 @@ const peerAddExample = `{
   "resolved_from": "nas"
 }`
 
-// folderAddExample is the `syncthis folder add --json` document of
+// folderAddExample is the `syngo folder add --json` document of
 // docs/CLI.md.
 const folderAddExample = `{
   "id": "docs",

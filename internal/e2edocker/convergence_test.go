@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // TestMesh_ThreeDevicesConverge is the base case the rest of the suite builds

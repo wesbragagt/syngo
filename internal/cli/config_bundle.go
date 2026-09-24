@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/configbundle"
-	"github.com/wesbragagt/syncthis/internal/compose"
+	"github.com/wesbragagt/syngo/internal/app/configbundle"
+	"github.com/wesbragagt/syngo/internal/compose"
 )
 
 // bundleFileMode is what `config export --output` writes with. The document

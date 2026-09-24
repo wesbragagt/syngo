@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/mergebase"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/chunker"
-	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/mergebase"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/chunker"
+	"github.com/wesbragagt/syngo/internal/domain/counterfloor"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // ErrRootMissing reports a folder root that does not exist or is not a

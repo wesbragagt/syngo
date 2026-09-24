@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/transfers"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/transfers"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // transferView is the JSON shape of one transfer. It repeats the field names

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // fuzzDeviceID is a syntactically valid device id, used wherever a seed needs
@@ -36,8 +36,8 @@ func FuzzManifestReply(f *testing.F) {
 		`[]`,
 		`{"entries":[{"path":"../escape"}]}`,
 		`{"entries":[{"path":"/abs"}]}`,
-		`{"entries":[{"path":".syncthis/x"}]}`,
-		`{"entries":[{"path":".syncthisignore"}]}`,
+		`{"entries":[{"path":".syngo/x"}]}`,
+		`{"entries":[{"path":".syngoignore"}]}`,
 		`{"entries":[{"path":"a","size":-1}]}`,
 		`{"entries":[{"path":"a","size":9223372036854775807}]}`,
 		`{"entries":[{"path":"l","kind":3,"link_target":"/etc/passwd"}]}`,

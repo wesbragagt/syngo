@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/blake3hash"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/adapters/blake3hash"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // Parameters of the transfer scale tests. Every one of them is a parameter
@@ -18,9 +18,9 @@ import (
 // machine has: a smaller run is still a real measurement as long as the
 // number it ran is the number it reports.
 const (
-	scaleTransferGiBEnv = "SYNCTHIS_SCALE_TRANSFER_GIB"
-	scaleCyclesEnv      = "SYNCTHIS_SCALE_CYCLES"
-	scaleRateSecondsEnv = "SYNCTHIS_SCALE_RATE_SECONDS"
+	scaleTransferGiBEnv = "SYNGO_SCALE_TRANSFER_GIB"
+	scaleCyclesEnv      = "SYNGO_SCALE_CYCLES"
+	scaleRateSecondsEnv = "SYNGO_SCALE_RATE_SECONDS"
 )
 
 // stageFile writes size bytes into dir/name and returns the path and the hash
@@ -346,7 +346,7 @@ func TestScale_InterruptionCyclesWithoutCorruption(t *testing.T) {
 	// the one thing in this test that is. The receiver creates the partial
 	// file before it saves the journal row that names it (newTemp, then
 	// SaveTransfer, in internal/app/syncer/puller.go), so a SIGKILL landing
-	// in that window leaves a file under .syncthis/tmp that no row points
+	// in that window leaves a file under .syngo/tmp that no row points
 	// at and nothing later deletes. It wastes disk and it is worth fixing,
 	// but it is not what this test claims: the installed tree above matched
 	// the sender hash for hash and the journal below is empty, so no
@@ -433,7 +433,7 @@ const (
 //
 // The window matters: 20 MiB at 4 MiB/s is five seconds, and a 5% assertion
 // over five seconds is an assertion about scheduling noise. This test runs
-// for SYNCTHIS_SCALE_RATE_SECONDS (120 by default) and measures the rate over
+// for SYNGO_SCALE_RATE_SECONDS (120 by default) and measures the rate over
 // everything after the first 15 seconds, so the number it checks is a
 // sustained rate.
 func TestScale_BandwidthWithinFivePercent(t *testing.T) {

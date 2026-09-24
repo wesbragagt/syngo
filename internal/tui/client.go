@@ -1,6 +1,6 @@
 // Package tui is the interactive terminal interface. It holds no
 // synchronization state of its own and no business logic: every screen is a
-// view of a `syncthis ... --json` document, and every action it offers is one
+// view of a `syngo ... --json` document, and every action it offers is one
 // command a user could have typed instead. docs/TUI.md lists the command
 // behind each key.
 //
@@ -35,7 +35,7 @@ const (
 	ExitTailnetGone       = 11
 )
 
-// Runner runs one syncthis invocation and reports what it wrote to stdout and
+// Runner runs one syngo invocation and reports what it wrote to stdout and
 // the code it exited with. It is the whole of the TUI's dependency on the rest
 // of the program: the TUI cannot reach the daemon except by asking for a
 // command that docs/CLI.md documents.
@@ -55,7 +55,7 @@ func (f RunnerFunc) Run(ctx context.Context, args []string) ([]byte, int, error)
 	return f(ctx, args)
 }
 
-// CmdError is a syncthis command that ran and failed. Code is the process exit
+// CmdError is a syngo command that ran and failed. Code is the process exit
 // code from docs/CLI.md and Message is what the command reported.
 type CmdError struct {
 	// Command is the invocation, for the error screen and for the log, so a
@@ -89,7 +89,7 @@ type Client struct {
 }
 
 // Argv is the full argument list of a call, the one a user would type after
-// `syncthis`. It exists so a screen can show the command behind a key.
+// `syngo`. It exists so a screen can show the command behind a key.
 func (c Client) Argv(args ...string) []string {
 	out := make([]string, 0, len(args)+3)
 	if c.DataDir != "" {
@@ -101,7 +101,7 @@ func (c Client) Argv(args ...string) []string {
 
 // Command renders a call the way a user would type it.
 func (c Client) Command(args ...string) string {
-	return "syncthis " + strings.Join(c.Argv(args...), " ")
+	return "syngo " + strings.Join(c.Argv(args...), " ")
 }
 
 // call runs one command with --json and decodes its document into out. A
@@ -162,7 +162,7 @@ func ExitCode(err error) int {
 }
 
 // Status reports the device, the daemon, every folder, every peer and the
-// transfer journal: `syncthis status --json`.
+// transfer journal: `syngo status --json`.
 func (c Client) Status(ctx context.Context) (Status, error) {
 	var out Status
 	err := c.call(ctx, &out, "status")
@@ -170,7 +170,7 @@ func (c Client) Status(ctx context.Context) (Status, error) {
 }
 
 // NetworkPath reports how traffic reaches every configured peer:
-// `syncthis network path --json`. It needs a local Tailscale client and exits
+// `syngo network path --json`. It needs a local Tailscale client and exits
 // 11 without one, which is not a failure of the TUI.
 func (c Client) NetworkPath(ctx context.Context) ([]NetPath, error) {
 	var out []NetPath
@@ -178,7 +178,7 @@ func (c Client) NetworkPath(ctx context.Context) ([]NetPath, error) {
 	return out, err
 }
 
-// Init creates the identity: `syncthis init --name NAME --listen ADDR`.
+// Init creates the identity: `syngo init --name NAME --listen ADDR`.
 // An empty name or address leaves the command's own default.
 func (c Client) Init(ctx context.Context, name, listen string) (InitResult, error) {
 	args := []string{"init"}
@@ -193,7 +193,7 @@ func (c Client) Init(ctx context.Context, name, listen string) (InitResult, erro
 	return out, err
 }
 
-// PeerAdd trusts the device at an address: `syncthis peer add HOST[:PORT]`.
+// PeerAdd trusts the device at an address: `syngo peer add HOST[:PORT]`.
 // deviceID, when given, pins the identity the peer must present. --yes is
 // passed because the confirmation has already been made in the TUI, on the
 // identity `peer test` showed; without it the command would exit 9, since
@@ -209,7 +209,7 @@ func (c Client) PeerAdd(ctx context.Context, host, deviceID string) (PeerAdded, 
 }
 
 // PeerTest runs the handshake against an address and reports the identity it
-// presented: `syncthis peer test HOST[:PORT]`. It is what the pairing screen
+// presented: `syngo peer test HOST[:PORT]`. It is what the pairing screen
 // shows before it asks whether to trust the device.
 //
 // A peer that has not been told about this device yet refuses the handshake
@@ -226,7 +226,7 @@ func (c Client) PeerTest(ctx context.Context, target string) (PeerTested, error)
 }
 
 // FolderAdd starts synchronizing a directory:
-// `syncthis folder add PATH --id ID`.
+// `syngo folder add PATH --id ID`.
 func (c Client) FolderAdd(ctx context.Context, path, id string) (FolderAdded, error) {
 	var out FolderAdded
 	err := c.call(ctx, &out, "folder", "add", path, "--id", id)
@@ -234,7 +234,7 @@ func (c Client) FolderAdd(ctx context.Context, path, id string) (FolderAdded, er
 }
 
 // FolderGrant authorizes one paired device for one folder:
-// `syncthis folder grant ID DEVICE-ID`.
+// `syngo folder grant ID DEVICE-ID`.
 func (c Client) FolderGrant(ctx context.Context, folderID, deviceID string) (Granted, error) {
 	var out Granted
 	err := c.call(ctx, &out, "folder", "grant", folderID, deviceID)
@@ -242,7 +242,7 @@ func (c Client) FolderGrant(ctx context.Context, folderID, deviceID string) (Gra
 }
 
 // FolderDevicesOf lists the devices authorized for a folder:
-// `syncthis folder devices ID`.
+// `syngo folder devices ID`.
 func (c Client) FolderDevicesOf(ctx context.Context, folderID string) (FolderDevices, error) {
 	var out FolderDevices
 	err := c.call(ctx, &out, "folder", "devices", folderID)
@@ -250,7 +250,7 @@ func (c Client) FolderDevicesOf(ctx context.Context, folderID string) (FolderDev
 }
 
 // ConflictList lists the paths both sides changed:
-// `syncthis conflict list --json`.
+// `syngo conflict list --json`.
 func (c Client) ConflictList(ctx context.Context) ([]Conflict, error) {
 	var out []Conflict
 	err := c.call(ctx, &out, "conflict", "list")
@@ -258,7 +258,7 @@ func (c Client) ConflictList(ctx context.Context) ([]Conflict, error) {
 }
 
 // ConflictShow describes one conflict and both versions as they are on disk:
-// `syncthis conflict show ID`.
+// `syngo conflict show ID`.
 func (c Client) ConflictShow(ctx context.Context, id string) (Conflict, error) {
 	var out Conflict
 	err := c.call(ctx, &out, "conflict", "show", id)
@@ -274,7 +274,7 @@ const (
 )
 
 // ConflictResolve says which version wins:
-// `syncthis conflict resolve ID --keep local|remote|both --yes`. The
+// `syngo conflict resolve ID --keep local|remote|both --yes`. The
 // confirmation the command would ask for is the one the screen already asked.
 func (c Client) ConflictResolve(ctx context.Context, id, keep string) (ConflictResolved, error) {
 	var out ConflictResolved
@@ -283,7 +283,7 @@ func (c Client) ConflictResolve(ctx context.Context, id, keep string) (ConflictR
 }
 
 // Rescan queues a full scan of one folder, or of every folder when id is
-// empty: `syncthis rescan [ID]`.
+// empty: `syngo rescan [ID]`.
 func (c Client) Rescan(ctx context.Context, folderID string) error {
 	args := []string{"rescan"}
 	if folderID != "" {
@@ -292,7 +292,7 @@ func (c Client) Rescan(ctx context.Context, folderID string) error {
 	return c.call(ctx, nil, args...)
 }
 
-// Pause stops scanning and syncing a folder: `syncthis pause [FOLDER]`.
+// Pause stops scanning and syncing a folder: `syngo pause [FOLDER]`.
 func (c Client) Pause(ctx context.Context, folderID string) error {
 	args := []string{"pause"}
 	if folderID != "" {
@@ -301,7 +301,7 @@ func (c Client) Pause(ctx context.Context, folderID string) error {
 	return c.call(ctx, nil, args...)
 }
 
-// Resume undoes Pause: `syncthis resume [FOLDER]`.
+// Resume undoes Pause: `syngo resume [FOLDER]`.
 func (c Client) Resume(ctx context.Context, folderID string) error {
 	args := []string{"resume"}
 	if folderID != "" {

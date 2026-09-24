@@ -3,7 +3,7 @@ package folder
 import (
 	"sort"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // Access is the set of devices allowed to synchronize one folder.

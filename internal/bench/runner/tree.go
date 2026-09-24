@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/bench/fixture"
+	"github.com/wesbragagt/syngo/internal/bench/fixture"
 )
 
 // entry is what treeSnapshot records about one file, enough to tell whether
@@ -18,7 +18,7 @@ type entry struct {
 }
 
 // treeSnapshot walks root and describes every regular file in it, keyed by
-// its path relative to root. The bench state directory ".syncthis" is
+// its path relative to root. The bench state directory ".syngo" is
 // skipped: it is bookkeeping, not synchronized content.
 func treeSnapshot(root string) (map[string]entry, error) {
 	out := make(map[string]entry)
@@ -27,7 +27,7 @@ func treeSnapshot(root string) (map[string]entry, error) {
 			return err
 		}
 		if info.IsDir() {
-			if info.Name() == ".syncthis" {
+			if info.Name() == ".syngo" {
 				return filepath.SkipDir
 			}
 			return nil

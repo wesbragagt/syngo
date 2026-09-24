@@ -3,7 +3,7 @@ package runner
 import (
 	"sync/atomic"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // byteCounter is an EventSink that sums the size of every completed transfer,

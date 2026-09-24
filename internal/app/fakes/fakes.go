@@ -1,6 +1,6 @@
 package fakes
 
-import "github.com/wesbragagt/syncthis/internal/app/ports"
+import "github.com/wesbragagt/syngo/internal/app/ports"
 
 // Compile-time checks that every fake satisfies its port.
 var (

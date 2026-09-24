@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/transfers"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/transfers"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // dialTo opens one connection from one node to another, outside the daemon's

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// buildStaticBinary compiles cmd/syncthis for goos/goarch into dest with
+// buildStaticBinary compiles cmd/syngo for goos/goarch into dest with
 // CGO_ENABLED=0.
 //
 // The static build is not an optimization. A dynamically linked build made on
@@ -21,13 +21,13 @@ func buildStaticBinary(ctx context.Context, dest, goos, goarch string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", dest, "./cmd/syncthis")
+	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", dest, "./cmd/syngo")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("build a static syncthis for %s/%s: %w: %s",
+		return fmt.Errorf("build a static syngo for %s/%s: %w: %s",
 			goos, goarch, err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
@@ -38,11 +38,11 @@ func buildStaticBinary(ctx context.Context, dest, goos, goarch string) error {
 func moduleDir(ctx context.Context) (string, error) {
 	out, err := exec.CommandContext(ctx, "go", "env", "GOMOD").Output()
 	if err != nil {
-		return "", fmt.Errorf("locate the syncthis module: %w", err)
+		return "", fmt.Errorf("locate the syngo module: %w", err)
 	}
 	gomod := strings.TrimSpace(string(out))
 	if gomod == "" || gomod == os.DevNull {
-		return "", fmt.Errorf("no go.mod in scope: run the benchmark from inside the syncthis checkout")
+		return "", fmt.Errorf("no go.mod in scope: run the benchmark from inside the syngo checkout")
 	}
 	return strings.TrimSuffix(gomod, "/go.mod"), nil
 }

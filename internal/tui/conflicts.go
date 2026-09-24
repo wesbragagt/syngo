@@ -76,7 +76,7 @@ func conflictCtx() (context.Context, context.CancelFunc) {
 // enter is what the screen runs when it is opened: the listing.
 func (c conflictsModel) enter() tea.Cmd { return c.list() }
 
-// list runs `syncthis conflict list --json`.
+// list runs `syngo conflict list --json`.
 func (c conflictsModel) list() tea.Cmd {
 	client := c.client
 	return func() tea.Msg {
@@ -87,7 +87,7 @@ func (c conflictsModel) list() tea.Cmd {
 	}
 }
 
-// show runs `syncthis conflict show ID`, which describes both files as they
+// show runs `syngo conflict show ID`, which describes both files as they
 // are on disk now rather than as they were when the conflict was recorded.
 func (c conflictsModel) show(id string) tea.Cmd {
 	client := c.client
@@ -99,7 +99,7 @@ func (c conflictsModel) show(id string) tea.Cmd {
 	}
 }
 
-// resolve runs `syncthis conflict resolve ID --keep local|remote|both`.
+// resolve runs `syngo conflict resolve ID --keep local|remote|both`.
 func (c conflictsModel) resolve(id, keep string) tea.Cmd {
 	client := c.client
 	return func() tea.Msg {
@@ -255,7 +255,7 @@ func (c conflictsModel) view(width int) string {
 }
 
 // listView is the list of unresolved conflicts, which is
-// `syncthis conflict list`.
+// `syngo conflict list`.
 func (c conflictsModel) listView(width int) string {
 	var b strings.Builder
 	b.WriteString(styleTitle.Render("conflicts") + "  " +
@@ -294,7 +294,7 @@ func (c conflictsModel) listView(width int) string {
 }
 
 // detailView is one conflict and both versions as they are on disk now, which
-// is `syncthis conflict show ID`.
+// is `syngo conflict show ID`.
 func (c conflictsModel) detailView(width int) string {
 	item := c.shown
 	var b strings.Builder

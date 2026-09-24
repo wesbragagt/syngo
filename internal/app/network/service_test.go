@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/network"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/network"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 func TestDetect_AbsentIsNotAnError(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 var _ ports.Limiter = (*Limiter)(nil)

@@ -11,12 +11,12 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/sqlitestore"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/adapters/sqlitestore"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // testHash is a valid 64 character content hash for the seeded file row.
@@ -372,7 +372,7 @@ func writeVersion7ChunkDB(t *testing.T) string {
 		`INSERT INTO transfers (id, folder_id, rel_path, peer_id, hash, size, mtime_ns, mode,
 			chunk_size, chunk_count, temp_path, state, created_at, updated_at)
 		 VALUES ('t1', 'docs', 'coming.bin', 'PEER', '` + strings.Repeat("bb", 32) +
-			`', 12288, 1, 420, 4096, 3, '/srv/docs/.syncthis/tmp/t1.part', 'pending', 1, 1)`,
+			`', 12288, 1, 420, 4096, 3, '/srv/docs/.syngo/tmp/t1.part', 'pending', 1, 1)`,
 		`INSERT INTO transfer_chunks (transfer_id, idx, hash, verified)
 		 VALUES ('t1', 0, '` + strings.Repeat("cc", 32) + `', 1)`,
 	} {

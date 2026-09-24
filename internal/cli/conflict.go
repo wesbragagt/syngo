@@ -8,12 +8,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesbragagt/syncthis/internal/app/conflicts"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/app/conflicts"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
 )
 
 // conflictView is the JSON shape of one conflict. local and conflict describe
@@ -108,7 +108,7 @@ func newConflictCmd(deps *Deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "conflict",
 		Short: "Inspect and resolve diverged files",
-		Long: "A conflict is a path both sides changed. Syncthis keeps both versions:\n" +
+		Long: "A conflict is a path both sides changed. Syngo keeps both versions:\n" +
 			"one stays at the path, the other is written beside it under a\n" +
 			"sync-conflict name. These commands show them and say which one wins.",
 		Args: noArgs,

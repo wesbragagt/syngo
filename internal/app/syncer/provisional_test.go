@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/syncplan"
+	"github.com/wesbragagt/syngo/internal/domain/counterfloor"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/syncplan"
 )
 
 // markProvisional turns a stored entry into one this device wrote from a

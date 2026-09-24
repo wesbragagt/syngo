@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // Coalescer merges a burst of filesystem events into the smallest set of

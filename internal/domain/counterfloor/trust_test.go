@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
+	"github.com/wesbragagt/syngo/internal/domain/counterfloor"
 )
 
 func TestTrust_StartsUnverified(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 
 // TestRun_ACancelledContextIsACleanExit is what a dropped SSH session or a
 // terminal that went away looks like from here. It must not be reported as a
-// syncthis failure, because nothing about synchronization failed.
+// syngo failure, because nothing about synchronization failed.
 func TestRun_ACancelledContextIsACleanExit(t *testing.T) {
 	runner := newFakeRunner().ok("status", runningStatus())
 	ctx, cancel := context.WithCancel(context.Background())

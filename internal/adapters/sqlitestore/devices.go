@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 // SaveDevice inserts or updates a known peer.

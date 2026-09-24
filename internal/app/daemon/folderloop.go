@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // eventBuffer is how many watch events a folder may queue while a scan runs.
@@ -70,7 +70,7 @@ type folderLoop struct {
 //     database is not the one the watermark was taken from.
 //
 // A full scan is therefore the answer whenever the watermark cannot be
-// trusted, and `syncthis rescan` asks for one at any time.
+// trusted, and `syngo rescan` asks for one at any time.
 type watermark struct {
 	seq   uint64
 	valid bool

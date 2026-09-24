@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/syncer"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/syncer"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // pauseAfter returns a connection that pauses the destination folder as soon
-// as it has served n chunks, the way `syncthis pause` does while a transfer
+// as it has served n chunks, the way `syngo pause` does while a transfer
 // runs.
 func pauseAfter(t *testing.T, src *source, d *dest, n int) *fakes.PeerConn {
 	t.Helper()
@@ -154,7 +154,7 @@ func TestSync_PausedFolderStartsNoTransfer(t *testing.T) {
 }
 
 // pausedTransfer leaves one paused transfer of big.bin in the journal, the way
-// `syncthis pause` does while a file is being pulled.
+// `syngo pause` does while a file is being pulled.
 func pausedTransfer(t *testing.T) *dest {
 	t.Helper()
 	src := newSource(t, folder.ModeSendReceive)

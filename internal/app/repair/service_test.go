@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/repair"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/repair"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // root is the folder path every test repairs.
@@ -347,7 +347,7 @@ func (e *env) transfers(t *testing.T) []transfer.Transfer {
 
 func TestRepair_PrunesAFailedTransferWithoutItsPartialFile(t *testing.T) {
 	e := newEnv(t)
-	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part",
+	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syngo/tmp/t1.part",
 		e.hasher.SumBytes([]byte("what the peer offered")))
 
 	report := e.run(t, false)
@@ -362,7 +362,7 @@ func TestRepair_PrunesAFailedTransferWithoutItsPartialFile(t *testing.T) {
 func TestRepair_PrunesAFailedTransferWhosePathConverged(t *testing.T) {
 	e := newEnv(t)
 	entry := e.addFile(t, "big.bin", "what the peer offered")
-	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part", entry.Hash)
+	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syngo/tmp/t1.part", entry.Hash)
 	e.fs.AddFile(tr.TempPath, []byte("half a download"), 0o600)
 
 	report := e.run(t, false)
@@ -380,7 +380,7 @@ func TestRepair_PrunesAFailedTransferWhosePathConverged(t *testing.T) {
 func TestRepair_KeepsAFailedTransferWorthLookingAt(t *testing.T) {
 	e := newEnv(t)
 	e.addFile(t, "big.bin", "what this device holds")
-	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part",
+	tr := e.addFailedTransfer(t, "t1", "big.bin", root+"/.syngo/tmp/t1.part",
 		e.hasher.SumBytes([]byte("what the peer offered")))
 	e.fs.AddFile(tr.TempPath, []byte("half a download"), 0o600)
 
@@ -399,7 +399,7 @@ func TestRepair_KeepsAFailedTransferWorthLookingAt(t *testing.T) {
 
 func TestRepair_DryRunListsPrunableTransfersWithoutDeletingThem(t *testing.T) {
 	e := newEnv(t)
-	e.addFailedTransfer(t, "t1", "big.bin", root+"/.syncthis/tmp/t1.part",
+	e.addFailedTransfer(t, "t1", "big.bin", root+"/.syngo/tmp/t1.part",
 		e.hasher.SumBytes([]byte("what the peer offered")))
 
 	report := e.run(t, true)
@@ -420,7 +420,7 @@ func TestRepair_PrunesAFinishedTransferWhoseRowOutlivedIt(t *testing.T) {
 	entry := e.addFile(t, "big.bin", "what the peer offered")
 	tr := transfer.NewInbound("t1", e.folder.ID, entry, "PEER1",
 		transfer.FixedChunks(entry.Size, transfer.MinChunkSize), transfer.MinChunkSize,
-		root+"/.syncthis/tmp/t1.part", e.clock.Now())
+		root+"/.syngo/tmp/t1.part", e.clock.Now())
 	tr.State = transfer.StateDone
 	if err := e.store.SaveTransfer(context.Background(), tr); err != nil {
 		t.Fatalf("save transfer: %v", err)

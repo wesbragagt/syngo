@@ -1,4 +1,4 @@
-# Syncthis benchmarks
+# Syngo benchmarks
 
 This document defines the hardware, the layout and the network scenarios a run
 is measured under, and records what the runs produced: the scale suite, the
@@ -15,7 +15,7 @@ be traced back to what produced it.
   network path as the scenario under test.
 - CPU, RAM, disk, OS and kernel version: unmeasured, to be filled in once the
   hardware is provisioned.
-- Both machines run the same OS image and the same Syncthis version for a
+- Both machines run the same OS image and the same Syngo version for a
   given corpus version.
 
 Until real hardware is picked, `internal/bench/report.HardwareProfile` records
@@ -38,13 +38,13 @@ layout makes visible.
 
 The corpus generator is `internal/bench/fixture`; the runner that drives a
 scenario end to end is `internal/bench/runner`, run through the
-`syncthis-bench` command below. `fixture.Generate` refuses to write into a
+`syngo-bench` command below. `fixture.Generate` refuses to write into a
 non-empty directory, so a corpus directory that already holds a tree from an
 earlier run is reused rather than regenerated.
 
 ## Network scenarios
 
-Three scenarios cover the paths Syncthis actually runs on. Each one is a
+Three scenarios cover the paths Syngo actually runs on. Each one is a
 network setup, not a code path: the same runner and the same corpus run
 against all three.
 
@@ -54,13 +54,13 @@ What it measures: convergence time and throughput with no NAT traversal and no
 relay, the fastest path available to the other two scenarios.
 
 Setup: both machines on the same local network segment, wired if possible.
-Syncthis binds to the LAN interface directly, Tailscale is not involved.
+Syngo binds to the LAN interface directly, Tailscale is not involved.
 
 ### Tailscale direct
 
 What it measures: convergence time and throughput over a real Tailscale
 tailnet when the two nodes hold a direct (peer-to-peer) connection, the path
-Syncthis expects in normal operation. See `TailnetDiscovery` in
+Syngo expects in normal operation. See `TailnetDiscovery` in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Setup: both machines joined to the same tailnet, `tailscale status --json`
@@ -70,7 +70,7 @@ listener binds to the Tailscale interface per the rule in ARCHITECTURE.md.
 ### Tailscale DERP
 
 What it measures: convergence time and throughput when NAT traversal fails and
-traffic falls back to a DERP relay, the path Syncthis falls back to when a
+traffic falls back to a DERP relay, the path Syngo falls back to when a
 direct connection is not available.
 
 Setup: same tailnet as the direct scenario, but with direct connections
@@ -79,7 +79,7 @@ firewall) so `tailscale status --json` reports a `relay` value for the peer.
 
 ## Running a scenario
 
-`syncthis-bench` (built from `cmd/syncthis-bench`) generates the corpus into
+`syngo-bench` (built from `cmd/syngo-bench`) generates the corpus into
 the versioned corpus directory, starts the devices a scenario needs, pairs
 them, shares a folder, waits for convergence, applies the mutation set
 (rename, delete, modify, editor save), waits again, measures a recovery by
@@ -94,7 +94,7 @@ The `lan` scenario is self-contained: it starts two devices in one process
 over loopback and needs nothing beyond the defaults.
 
 ```console
-$ go run ./cmd/syncthis-bench --scenario lan --name baseline
+$ go run ./cmd/syngo-bench --scenario lan --name baseline
 bench/results/v1/20260922T135004Z-lan-baseline.json
 scenario lan, name baseline, took 11s
 ```
@@ -126,9 +126,9 @@ convergence, recovery and the network path are real measurements rather than
 two results an operator compares by hand.
 
 ```console
-$ go run ./cmd/syncthis-bench --scenario tailscale-direct --name two-sided \
+$ go run ./cmd/syngo-bench --scenario tailscale-direct --name two-sided \
     --peer-host macpro-nixos \
-    --peer-dir '~/syncthis-bench-remote' \
+    --peer-dir '~/syngo-bench-remote' \
     --corpus-dir bench/corpus/v1 --results-dir bench/results/v1
 bench/results/v1/20260922T145929Z-tailscale-direct-two-sided.json
 scenario tailscale-direct, name two-sided, took 19s
@@ -146,7 +146,7 @@ directory removed when the run ends.
 - `ssh <peer-host>` works from this machine with no passphrase and no prompt:
   the runner uses `BatchMode=yes` and fails rather than waiting for one.
 - `--peer-dir` names one directory on the peer machine. The run creates
-  nothing outside it: the binary lands in `<dir>/bin/syncthis`, the data
+  nothing outside it: the binary lands in `<dir>/bin/syngo`, the data
   directory in `<dir>/data`, the folder root in `<dir>/root`, and the daemon's
   pid and log in `<dir>/daemon.pid` and `<dir>/daemon.log`. A `--peer-dir` of
   `/`, `~`, or one holding `..` is refused.
@@ -226,7 +226,7 @@ condition, and they live in `internal/e2e` alongside the tests they share a
 harness with.
 
 They are opt-in the same way the container suite is. Without
-`SYNCTHIS_SCALE=1` every one of them skips, so `make test` compiles them and
+`SYNGO_SCALE=1` every one of them skips, so `make test` compiles them and
 pays nothing else for them.
 
 ```console
@@ -466,7 +466,7 @@ files are rewritten at the same size faster than the timestamp resolution.
 Repeated `SIGKILL` can orphan a partial file. The receiver creates the
 `.part` file before it saves the journal row that names it (`newTemp` then
 `SaveTransfer` in `internal/app/syncer/puller.go`), so a kill in that window
-leaves a file under `.syncthis/tmp` that no row refers to and nothing later
+leaves a file under `.syngo/tmp` that no row refers to and nothing later
 deletes. One run of 1,000 cycles left one such file, zero bytes long. It is
 wasted disk, not corruption: the installed tree matched the sender hash for
 hash and the journal was empty. The cycle test reports the count instead of
@@ -528,7 +528,7 @@ These are ordinary tests run repeatedly, not a separate harness.
 ```console
 $ go test ./internal/e2e/ -run 'TestTwoWay_IndependentEditsConverge$' \
     -count=200 -p 1
-ok  	github.com/wesbragagt/syncthis/internal/e2e	75.342s
+ok  	github.com/wesbragagt/syngo/internal/e2e	75.342s
 ```
 
 **200 of 200 trials converged.** Each trial pairs two devices, converges a
@@ -539,10 +539,10 @@ copy exists, and that neither device recorded a conflict row. Date: 2026-09-23.
 ### Three devices
 
 ```console
-$ SYNCTHIS_E2E_DOCKER=1 SYNCTHIS_E2E_IMAGE=syncthis-e2e:dev \
+$ SYNGO_E2E_DOCKER=1 SYNGO_E2E_IMAGE=syngo-e2e:dev \
     go test ./internal/e2edocker/ \
     -run 'TestMesh_ConcurrentDisjointEditsConverge$' -count=20 -p 1
-ok  	github.com/wesbragagt/syncthis/internal/e2edocker	898.305s
+ok  	github.com/wesbragagt/syngo/internal/e2edocker	898.305s
 ```
 
 **20 of 20 runs converged, over 200 rounds and 3,000 changes.** Each run starts
@@ -573,7 +573,7 @@ Two of them cost seconds and run in `make test`
 disk and minutes of wall time and are opt-in with the rest of the scale suite
 (`internal/e2e/bench_scale_test.go`, run by `make scale`, sized by
 `SCALE_BIGFILE_GIB`, default 10). The sixth is a corpus run of
-`syncthis-bench`.
+`syngo-bench`.
 
 Every one of them configures the daemon with the timings and the chunk size a
 shipped daemon runs at: a 500 ms debounce, a 30 s sync interval, a 10 minute
@@ -652,7 +652,7 @@ responder's own poll, and half of it is the one-way figure.
 ```
 
 The path was direct, not relayed, confirmed while the daemons were connected:
-`syncthis network path` reported `direct` with an endpoint of
+`syngo network path` reported `direct` with an endpoint of
 `192.168.68.75:41641`, a LAN address, because both machines sit on the same
 subnet. `tailscale status --json` agreed: a non-empty `CurAddr`. The `Relay:
 "iad"` field on the same peer is its home DERP region, not the path in use.
@@ -709,7 +709,7 @@ the receiver copies the file into its new name locally.
 #### 5,000-file status latency
 
 A daemon over 200 directories of 25 files. Once it reported the folder scanned
-and idle, 50 of those files were rewritten and `syncthis status --json` was run
+and idle, 50 of those files were rewritten and `syngo status --json` was run
 as a real command, repeatedly, from the moment of the change. Date: 2026-09-23.
 
 ```
@@ -904,7 +904,7 @@ same seed and the same spec produce the same bytes on any machine;
 With no recorded Phase 0 result to compare against, the comparison made here
 is between two revisions of the code over one corpus: `4522f9c`, the last
 commit before the Phase 5 chunker landed, and `949b08e`. Both were run with
-`syncthis-bench --scenario lan` against the same
+`syngo-bench --scenario lan` against the same
 `bench/corpus/v1`, three runs each, alternating.
 
 | Run | Convergence | Bytes | Peak RSS |

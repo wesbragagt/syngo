@@ -390,7 +390,7 @@ func (m Model) keyHelp() string {
 // failed, so the same thing can be tried outside the TUI.
 func (m Model) fatalView() string {
 	var b strings.Builder
-	b.WriteString(styleErr.Render("syncthis could not read this device") + "\n\n")
+	b.WriteString(styleErr.Render("syngo could not read this device") + "\n\n")
 	if m.fatal == nil {
 		return b.String()
 	}
@@ -433,7 +433,7 @@ func short(id string) string {
 }
 
 // Run starts the TUI against the given streams and returns when the user
-// quits. It is the whole entry point: cmd/syncthis's `tui` subcommand calls it
+// quits. It is the whole entry point: cmd/syngo's `tui` subcommand calls it
 // with the process streams and a Runner that invokes the command line.
 //
 // Nothing about this process is load-bearing for synchronization. It opens no
@@ -460,7 +460,7 @@ func Run(ctx context.Context, opts Options, in io.Reader, out io.Writer) error {
 // cancelled context is the process being asked to stop, and a killed program
 // is Bubble Tea's answer to the same thing; neither is a failure of
 // synchronization, and reporting one would make a dropped SSH session look
-// like a syncthis error in a log or an exit code.
+// like a syngo error in a log or an exit code.
 func cleanExit(err error) error {
 	switch {
 	case err == nil,

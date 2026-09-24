@@ -4,7 +4,7 @@ package status
 import (
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
 )
 
 // SchemaVersion is the version of the status JSON document. Fields may be

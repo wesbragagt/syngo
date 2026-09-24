@@ -57,7 +57,7 @@ func (m Model) pathFor(peerID string) (NetPath, bool) {
 // that is currently wrong.
 func (m Model) dashboardView() string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("syncthis") + "  " +
+	b.WriteString(styleTitle.Render("syngo") + "  " +
 		m.status.Device.Name + " " + styleDim.Render("("+short(m.status.Device.ID)+")") + "\n")
 	b.WriteString(styleDim.Render(m.status.Device.DataDir) + "\n\n")
 	b.WriteString(m.daemonLine() + "\n\n")

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	statusreport "github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/cli"
+	statusreport "github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // folderJSON is the folder object `folder add`, `folder set` and `folder list`

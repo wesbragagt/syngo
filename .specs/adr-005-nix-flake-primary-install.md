@@ -3,7 +3,7 @@ title: ADR 005 Nix Flake as Primary Supported Install Path
 date: 2026-09-22
 status: accepted
 tags:
-  - syncthis
+  - syngo
   - project
   - adr
   - packaging
@@ -18,7 +18,7 @@ tags:
 
 ## Context
 
-Syncthis is designed to run as a long-lived daemon on developer workstations, NAS devices, containers, and headless servers. Installation and configuration are critical to the user experience. The initial approach considered multiple packaging strategies:
+Syngo is designed to run as a long-lived daemon on developer workstations, NAS devices, containers, and headless servers. Installation and configuration are critical to the user experience. The initial approach considered multiple packaging strategies:
 
 - Direct archive distributions (tarballs) for Linux and macOS
 - Distribution-specific packages (RPM, Deb, Homebrew)
@@ -40,10 +40,10 @@ The Nix flake approach handles Linux x86_64, Linux ARM64, macOS x86_64, and macO
 
 **Adopt the Nix flake (in `flake.nix`) as the primary supported install and configuration path for all platforms.**
 
-Syncthis will provide:
+Syngo will provide:
 
 1. **A Nix flake** with:
-   - A derivation building Syncthis from source
+   - A derivation building Syngo from source
    - Pinned dependencies (Go 1.26, standard library dependencies)
    - Output attributes for `defaultPackage`, `devShell`, and `packages`
    
@@ -76,7 +76,7 @@ Syncthis will provide:
 - **Users on non-NixOS systems must use archives or build from source.** This is acceptable for v1; distribution packages (Homebrew, Deb, RPM) are a future decision if demand is demonstrated.
 - **Home-manager module is untested at launch.** It is published as a convenience but comes with no SLA; NixOS module is the supported path.
 - **Maintenance burden of the Nix module.** Changes to systemd integration, configuration schema, or database paths require keeping the module in sync. This is mitigated by keeping the daemon's configuration format stable.
-- **Lock-in risk for Nix-heavy workflows.** If Nix becomes a liability, uninstalling Syncthis means removing the flake from the user's `flake.nix`. This is no worse than any other flake-based tool.
+- **Lock-in risk for Nix-heavy workflows.** If Nix becomes a liability, uninstalling Syngo means removing the flake from the user's `flake.nix`. This is no worse than any other flake-based tool.
 
 ## Alternatives considered
 
@@ -90,7 +90,7 @@ Rejected: the Nix user base (particularly NixOS + Tailscale users) is the declar
 
 ### Docker/OCI container as primary
 
-Rejected: Docker adds complexity for the primary use case (a daemon on a workstation or NAS), and most NixOS deployments use `pkgs.syncthis` in a configuration module, not containers. Containers are useful for specific deployments (Kubernetes, compose stacks) but not the common path.
+Rejected: Docker adds complexity for the primary use case (a daemon on a workstation or NAS), and most NixOS deployments use `pkgs.syngo` in a configuration module, not containers. Containers are useful for specific deployments (Kubernetes, compose stacks) but not the common path.
 
 ### Manual service integration (no Nix module)
 
@@ -116,6 +116,6 @@ NixOS and home-manager integration:
 
 ## Related documents
 
-- [[syncthis-spec]] - Phase 7 packaging section
+- [[syngo-spec]] - Phase 7 packaging section
 - [[tasks.md]] - Phase 7 multi-device hardening scope
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/domain/pipeline"
+	"github.com/wesbragagt/syngo/internal/domain/pipeline"
 )
 
 func TestBudget_HoldsWhatIsInFlightUnderTheLimit(t *testing.T) {

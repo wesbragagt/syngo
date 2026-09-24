@@ -1,4 +1,4 @@
-module github.com/wesbragagt/syncthis
+module github.com/wesbragagt/syngo
 
 go 1.26
 

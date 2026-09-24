@@ -3,7 +3,7 @@ package e2e
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // TestPause_AConnectionMadeWhilePausedStillPullsAfterResume is D3: a paused

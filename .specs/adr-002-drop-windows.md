@@ -3,7 +3,7 @@ title: ADR 002 Drop Windows Support Entirely
 date: 2026-09-22
 status: accepted
 tags:
-  - syncthis
+  - syngo
   - project
   - adr
   - windows
@@ -18,7 +18,7 @@ tags:
 
 ## Context
 
-Syncthis targets personal file synchronization across devices. The initial release scope included support for Linux, macOS, and other platforms where Tailscale runs. The specification included Windows support as a future goal, but operational constraints and measured priorities have shifted focus.
+Syngo targets personal file synchronization across devices. The initial release scope included support for Linux, macOS, and other platforms where Tailscale runs. The specification included Windows support as a future goal, but operational constraints and measured priorities have shifted focus.
 
 The build system, packaging, and testing infrastructure were designed with multi-platform support in mind, but the actual development effort and maintenance burden of Windows support extends beyond the current prototype timeline.
 
@@ -32,7 +32,7 @@ The build system, packaging, and testing infrastructure were designed with multi
 - Specification and documentation
 - Non-goals and scope statements
 
-Syncthis will be packaged for Linux and macOS only. Both are supported through the Nix flake (the primary install path) and archive-based distributions for platforms without Nix.
+Syngo will be packaged for Linux and macOS only. Both are supported through the Nix flake (the primary install path) and archive-based distributions for platforms without Nix.
 
 ## Consequences
 
@@ -45,7 +45,7 @@ Syncthis will be packaged for Linux and macOS only. Both are supported through t
 
 ### Negative
 
-- Users on Windows cannot run Syncthis natively.
+- Users on Windows cannot run Syngo natively.
 - Any future Windows port must start from scratch and decides Windows support again as a separate decision.
 - Breaking change for any user who anticipated Windows support in a future release.
 
@@ -68,6 +68,6 @@ Rejected because leaving it in the spec as "future work" signals availability an
 
 ## Related documents
 
-- [[syncthis-spec]] - Updated to remove Windows from initial and future scope
+- [[syngo-spec]] - Updated to remove Windows from initial and future scope
 - [[tasks.md]] - Phase 7 packaging no longer mentions Windows
 

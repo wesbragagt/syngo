@@ -1,24 +1,24 @@
 ---
-title: Syncthis Tasks
+title: Syngo Tasks
 date: 2026-09-21
 status: active
 tags:
-  - syncthis
+  - syngo
   - project
   - tasks
   - tracking
 ---
 
-# Syncthis tasks
+# Syngo tasks
 
-Track every actionable piece of work for the Syncthis build. Mark a task complete only when it is implemented, tested, and recorded in the benchmark corpus.
+Track every actionable piece of work for the Syngo build. Mark a task complete only when it is implemented, tested, and recorded in the benchmark corpus.
 
 ## How to use this file
 
 - One checkbox per task.
 - Group work by phase. Do not start a later phase until the current phase meets its exit metrics.
 - Update this file whenever scope, order, or tasks change.
-- Reference the spec in [[syncthis-spec]] and the architecture decision in [[adr-001-go-tech-stack]].
+- Reference the spec in [[syngo-spec]] and the architecture decision in [[adr-001-go-tech-stack]].
 
 ## Architecture foundation
 
@@ -35,7 +35,7 @@ These tasks must land before most application work. They are not a phase on thei
 
 ## Phase 0: Baseline
 
-Goal: measure syncthis itself with a repeatable corpus and a repeatable runner.
+Goal: measure syngo itself with a repeatable corpus and a repeatable runner.
 
 Scope decision: no competitor measurement and no comparison. The benchmark
 records our own numbers. See docs/BENCH.md.
@@ -48,7 +48,7 @@ records our own numbers. See docs/BENCH.md.
 - [x] Run Syncthing against the corpus and record numbers. Dropped: no competitor measurement.
 - [x] Run Obsidian Sync where allowed and record numbers. Dropped: no competitor measurement.
 - [x] Store the corpus and results under a versioned directory.
-- [x] Define the target metrics Syncthis must beat. Dropped: no comparison.
+- [x] Define the target metrics Syngo must beat. Dropped: no comparison.
 
 ## Phase 1: Local single-device engine
 
@@ -172,7 +172,7 @@ Goal: beat the baseline on the target workload.
 - [x] Benchmark 5,000-file status under two seconds after incremental change.
       Rescoped from 100,000 by adr-006. Measured 2026-09-23 by
       `TestScale_BenchStatusLatency`: over 5,000 files with 50 of them
-      rewritten, 103 `syncthis status --json` calls made while the daemon took
+      rewritten, 103 `syngo status --json` calls made while the daemon took
       the change in answered in at most 15.4 ms, the change was reported
       525 ms after it was made, and 10 calls afterwards had a median of 3.5 ms.
       Every number is the real command including process start. See
@@ -185,7 +185,7 @@ Goal: beat the baseline on the target workload.
 Goal: a usable terminal interface without a GUI.
 
 - [x] Define the local daemon API used by both the CLI and TUI.
-- [x] Build the interactive TUI with Bubble Tea. `syncthis tui`, in internal/tui; see docs/TUI.md and the architecture note in docs/ARCHITECTURE.md.
+- [x] Build the interactive TUI with Bubble Tea. `syngo tui`, in internal/tui; see docs/TUI.md and the architecture note in docs/ARCHITECTURE.md.
 - [x] Add guided initialization and pairing.
 - [x] Show live device, folder, queue, path, and error views.
 - [x] Add conflict review and version restore screens. Restoring a version is `conflict resolve --keep local|remote|both`, the only three the command line has; the screen adds no fourth. There is no per-file version history in this program to restore from, so "version restore" means those three and nothing more.
@@ -388,14 +388,14 @@ Goal: ship a reliable multi-device Tailscale-first system.
 
 Always tracked, never deferred.
 
-- [x] Update [[syncthis-spec]] when scope or design changes.
+- [x] Update [[syngo-spec]] when scope or design changes.
       - spec and ADRs reconciled 2026-09-22: Windows dropped (adr-002), competitor benchmarking dropped (adr-003), chunk size changed to 64 KiB (adr-004), Nix flake primary (adr-005)
 - [x] Add an ADR when a decision is rejected, replaced, or measured.
       - ADRs 002-005 added 2026-09-22: Windows support (002), competitor benchmarking (003), chunk size (004), Nix packaging (005)
 - [x] Record benchmark results in the corpus after every phase. Current through Phase 5 as of 2026-09-22: bench/results/v1/ holds pre/post runs for the chunking and pipeline work; docs/BENCH.md carries every dated measurement. Re-check after the next phase closes.
 - [x] Review the architecture boundaries after each phase. Current as of 2026-09-22: `go test ./internal/arch/...` holds 8 checks, including the TUI import boundary added this phase, all passing. Re-check after the next phase closes.
-- [x] Keep the CLI, TUI, and JSON surface area in sync. Current as of 2026-09-22: docs/TUI.md maps every TUI key to its `syncthis` command; docs/CLI.md documents every --json shape the TUI decodes. Re-check whenever either surface changes.
+- [x] Keep the CLI, TUI, and JSON surface area in sync. Current as of 2026-09-22: docs/TUI.md maps every TUI key to its `syngo` command; docs/CLI.md documents every --json shape the TUI decodes. Re-check whenever either surface changes.
 
 ---
 
-> Note link: https://notes.dory-pentatonic.ts.net/notes/projects/syncthis/tasks/
+> Note link: https://notes.dory-pentatonic.ts.net/notes/projects/syngo/tasks/

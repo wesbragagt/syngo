@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/ignore"
+	"github.com/wesbragagt/syngo/internal/domain/ignore"
 )
 
 // FuzzMatcher compiles arbitrary ignore files and matches arbitrary paths

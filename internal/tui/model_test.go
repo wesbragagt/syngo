@@ -80,7 +80,7 @@ func TestModel_NoIdentityStartsTheGuidedSetup(t *testing.T) {
 		t.Fatalf("screen is %v, want the guided setup", m.screen)
 	}
 	view := m.View()
-	if !strings.Contains(view, "syncthis setup") {
+	if !strings.Contains(view, "syngo setup") {
 		t.Errorf("the setup screen did not render:\n%s", view)
 	}
 	if !strings.Contains(view, "init") {
@@ -102,7 +102,7 @@ func TestModel_AFailureThatIsNotExitThreeIsFatal(t *testing.T) {
 	if !strings.Contains(view, "database is locked") || !strings.Contains(view, "exit code 1") {
 		t.Errorf("the error screen hides the reason or the code:\n%s", view)
 	}
-	if !strings.Contains(view, "syncthis --data-dir /tmp/data status") {
+	if !strings.Contains(view, "syngo --data-dir /tmp/data status") {
 		t.Errorf("the error screen does not name the command that failed:\n%s", view)
 	}
 }
@@ -171,7 +171,7 @@ func TestClient_AddsTheGlobalFlags(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("invocation was %v, want %v", got, want)
 	}
-	if c.Command("status") != "syncthis --data-dir /tmp/data status" {
+	if c.Command("status") != "syngo --data-dir /tmp/data status" {
 		t.Errorf("Command reported %q", c.Command("status"))
 	}
 }

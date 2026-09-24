@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syngo/internal/adapters/tcpwire"
 )
 
 func TestBinderKeepsThePortItFirstBound(t *testing.T) {

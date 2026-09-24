@@ -18,10 +18,10 @@ type setupStep int
 
 const (
 	// stepName asks for the device name, and stepListen for the address
-	// peers connect to. Together they are `syncthis init`.
+	// peers connect to. Together they are `syngo init`.
 	stepName setupStep = iota
 	stepListen
-	// stepFolderPath and stepFolderID are `syncthis folder add`.
+	// stepFolderPath and stepFolderID are `syngo folder add`.
 	stepFolderPath
 	stepFolderID
 	// stepDaemon waits for a daemon. Nothing the TUI can run starts one:
@@ -354,7 +354,7 @@ func folderIDFromPath(path string) string {
 	return base
 }
 
-// The commands the walk runs, one method each, named after the syncthis
+// The commands the walk runs, one method each, named after the syngo
 // command they are.
 
 func (s setupModel) runInit() tea.Cmd {
@@ -416,7 +416,7 @@ func (s setupModel) grant() tea.Cmd {
 	}
 }
 
-// commandFor is the syncthis command the current step runs, shown above the
+// commandFor is the syngo command the current step runs, shown above the
 // field so the walk teaches the command line rather than hiding it.
 func (s setupModel) commandFor(step setupStep) string {
 	switch step {
@@ -453,7 +453,7 @@ func orPlaceholder(value, placeholder string) string {
 // view renders the walk.
 func (s setupModel) view(width int) string {
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("syncthis setup") + "  " +
+	b.WriteString(styleTitle.Render("syngo setup") + "  " +
 		styleDim.Render(sprintf("step %d of %d", int(s.step)+1, int(stepDone)+1)) + "\n\n")
 
 	switch s.step {

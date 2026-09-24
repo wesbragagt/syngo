@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/fsnotifywatch"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/adapters/fsnotifywatch"
+	"github.com/wesbragagt/syngo/internal/app/ports"
 )
 
 // eventTimeout bounds how long a test waits for a filesystem event.
@@ -145,7 +145,7 @@ func TestWatch_NewSubdirIsWatched(t *testing.T) {
 
 func TestWatch_IgnoresReservedDir(t *testing.T) {
 	root := t.TempDir()
-	reserved := filepath.Join(root, ".syncthis", "tmp")
+	reserved := filepath.Join(root, ".syngo", "tmp")
 	if err := os.MkdirAll(reserved, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

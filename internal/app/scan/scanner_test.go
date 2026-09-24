@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/domain/manifest"
-	"github.com/wesbragagt/syncthis/internal/domain/transfer"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/manifest"
+	"github.com/wesbragagt/syngo/internal/domain/transfer"
 )
 
 // root is the folder path every test scans.
@@ -406,13 +406,13 @@ func TestScan_IgnoreFileAndConfiguredPatterns(t *testing.T) {
 	}
 }
 
-func TestScan_SyncthisDirAlwaysIgnored(t *testing.T) {
+func TestScan_SyngoDirAlwaysIgnored(t *testing.T) {
 	e := newEnv(t, func(f *folder.Folder) {
 		f.IncludeHidden = true
-		f.IgnorePatterns = []string{"!.syncthis/"}
+		f.IgnorePatterns = []string{"!.syngo/"}
 	})
 	e.write("a.txt", "alpha")
-	e.write(".syncthis/tmp/part.bin", "partial")
+	e.write(".syngo/tmp/part.bin", "partial")
 
 	res := e.scan(t, scan.Options{})
 

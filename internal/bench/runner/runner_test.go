@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/bench/fixture"
-	"github.com/wesbragagt/syncthis/internal/bench/report"
-	"github.com/wesbragagt/syncthis/internal/bench/runner"
+	"github.com/wesbragagt/syngo/internal/bench/fixture"
+	"github.com/wesbragagt/syngo/internal/bench/report"
+	"github.com/wesbragagt/syngo/internal/bench/runner"
 )
 
 func TestParseScenario(t *testing.T) {
@@ -83,7 +83,7 @@ func TestValidate_TailscaleWithEverythingSet(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Scenario = report.ScenarioTailscaleDirect
 	cfg.PeerHost = "macpro-nixos"
-	cfg.PeerDir = "~/syncthis-bench-remote"
+	cfg.PeerDir = "~/syngo-bench-remote"
 	cfg.LocalDataDir = t.TempDir()
 	if err := runner.Validate(cfg); err != nil {
 		t.Fatalf("Validate(tailscale-direct, fully configured) = %v, want nil", err)
@@ -108,7 +108,7 @@ func TestValidate_TailscaleRefusesLANDataDirFlags(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Scenario = report.ScenarioTailscaleDirect
 	cfg.PeerHost = "macpro-nixos"
-	cfg.PeerDir = "~/syncthis-bench-remote"
+	cfg.PeerDir = "~/syngo-bench-remote"
 	cfg.LocalDataDir = t.TempDir()
 	cfg.DataDirA = t.TempDir()
 	if err := runner.Validate(cfg); err == nil {
@@ -238,17 +238,17 @@ func hasUnmeasured(unmeasured []string, field string) bool {
 
 // TestRun_TailscaleLive runs a real two-machine scenario. It reaches the
 // network and drives another computer, so it never runs by default: set
-// SYNCTHIS_BENCH_PEER_HOST to the ssh host of a peer machine on the same
-// tailnet, and optionally SYNCTHIS_BENCH_PEER_DIR to the directory it may
+// SYNGO_BENCH_PEER_HOST to the ssh host of a peer machine on the same
+// tailnet, and optionally SYNGO_BENCH_PEER_DIR to the directory it may
 // use there.
 func TestRun_TailscaleLive(t *testing.T) {
-	host := os.Getenv("SYNCTHIS_BENCH_PEER_HOST")
+	host := os.Getenv("SYNGO_BENCH_PEER_HOST")
 	if host == "" {
-		t.Skip("set SYNCTHIS_BENCH_PEER_HOST to run the two-machine scenario against a real peer")
+		t.Skip("set SYNGO_BENCH_PEER_HOST to run the two-machine scenario against a real peer")
 	}
-	peerDir := os.Getenv("SYNCTHIS_BENCH_PEER_DIR")
+	peerDir := os.Getenv("SYNGO_BENCH_PEER_DIR")
 	if peerDir == "" {
-		peerDir = "~/syncthis-bench-remote"
+		peerDir = "~/syngo-bench-remote"
 	}
 
 	dir := t.TempDir()

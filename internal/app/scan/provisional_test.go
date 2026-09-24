@@ -3,8 +3,8 @@ package scan_test
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/app/scan"
-	"github.com/wesbragagt/syncthis/internal/domain/counterfloor"
+	"github.com/wesbragagt/syngo/internal/app/scan"
+	"github.com/wesbragagt/syngo/internal/domain/counterfloor"
 )
 
 // TestScan_VersionsWrittenBeforeAPeerConfirmsTheFloorAreProvisional covers the

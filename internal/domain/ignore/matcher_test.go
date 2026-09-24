@@ -3,7 +3,7 @@ package ignore_test
 import (
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/domain/ignore"
+	"github.com/wesbragagt/syngo/internal/domain/ignore"
 )
 
 func TestMatcher(t *testing.T) {

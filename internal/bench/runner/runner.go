@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/bench/fixture"
-	"github.com/wesbragagt/syncthis/internal/bench/report"
+	"github.com/wesbragagt/syngo/internal/bench/fixture"
+	"github.com/wesbragagt/syngo/internal/bench/report"
 )
 
 // DefaultTailnetInterface is the interface both daemons bind to in the
@@ -262,7 +262,7 @@ func readExistingCorpus(dir string) (fixture.Result, error) {
 
 // copyTree copies every regular file under src into dst, creating
 // directories as needed. It is how a run turns the read-only corpus into a
-// folder root a device may write to (mutations, .syncthis) without touching
+// folder root a device may write to (mutations, .syngo) without touching
 // the corpus itself.
 func copyTree(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {

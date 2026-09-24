@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/app/ports"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/app/ports"
+	"github.com/wesbragagt/syngo/internal/domain/device"
 )
 
 var _ ports.Identity = (*Identity)(nil)
@@ -119,7 +119,7 @@ func create(dir, name string) (*Identity, error) {
 	template := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "syncthis",
+			CommonName:   "syngo",
 			Organization: []string{name},
 		},
 		NotBefore:             now.Add(-time.Hour),

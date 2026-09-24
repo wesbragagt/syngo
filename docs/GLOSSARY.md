@@ -1,4 +1,4 @@
-# Syncthis glossary
+# Syngo glossary
 
 The words this project uses for its own concepts, in the order they come up
 when a folder is configured, scanned, planned against a peer and downloaded.
@@ -7,7 +7,7 @@ documents use these words without redefining them.
 
 ## Devices and folders
 
-**Device.** One installation of syncthis: one data directory, one key pair, one
+**Device.** One installation of syngo: one data directory, one key pair, one
 daemon. A device is what peers know each other as, and a machine may host more
 than one by giving each its own data directory. See
 [STATE.md](STATE.md#data-directory).
@@ -16,11 +16,11 @@ than one by giving each its own data directory. See
 SubjectPublicKeyInfo. It is how a peer is named everywhere. `Short()` is its
 first 7 characters, used in logs and conflict copy names; `Display()` writes it
 in dashed groups of 13 characters, and both forms are accepted wherever an ID
-is typed. See [CLI.md](CLI.md#syncthis-peer-add-hostport).
+is typed. See [CLI.md](CLI.md#syngo-peer-add-hostport).
 
 **Folder.** A directory plus an id shared by every device that synchronizes it,
 a mode, a delete policy, its ignore patterns and its sync windows. See
-[CLI.md](CLI.md#syncthis-folder-add-path---id-id).
+[CLI.md](CLI.md#syngo-folder-add-path---id-id).
 
 **Folder ID.** The name two devices agree to call the same folder by, matching
 `[a-z0-9][a-z0-9._-]{0,63}`. The paths on the two devices need not be alike;
@@ -30,7 +30,7 @@ the id is what is on the wire.
 `sendonly` serves its contents and never pulls, `receiveonly` pulls and never
 serves. It is a per-device setting, so one device may be `sendonly` for a
 folder the other has as `receiveonly`. See
-[CLI.md](CLI.md#syncthis-folder-set-id---mode-m---delete-policy-p---sync-window-w---clear-sync-windows).
+[CLI.md](CLI.md#syngo-folder-set-id---mode-m---delete-policy-p---sync-window-w---clear-sync-windows).
 
 **Delete policy.** What happens locally when a peer deleted a path:
 `propagate` deletes it here too, `never` keeps the local file and reports the
@@ -55,7 +55,7 @@ scanning nor syncing, it is waiting for its next window.
 **Symlink policy.** What a scan does with a symbolic link it finds: `store`
 records it as an entry of kind symlink, `skip` leaves it out of the manifest.
 
-**Ignore rules.** The patterns in `<folder>/.syncthisignore`, gitignore-style.
+**Ignore rules.** The patterns in `<folder>/.syngoignore`, gitignore-style.
 They belong to the device that wrote them: a path they cover is never scanned,
 never sent and never pulled, and the file itself is neither synchronized nor
 accepted from a peer. See [STATE.md](STATE.md#folder-state-directory).
@@ -73,7 +73,7 @@ tell "deleted" from "never had it".
 
 **Valid path.** `manifest.ValidRelPath` is the one statement of which paths a
 manifest may name: relative, slash-separated, no `.` or `..` or empty segment,
-no NUL byte, and not the reserved `.syncthis` or `.syncthisignore`. It is pure
+no NUL byte, and not the reserved `.syngo` or `.syngoignore`. It is pure
 domain code because three layers apply it to the same peer input: the wire
 refuses such a manifest, `syncplan.Plan` skips the entry with reason
 `invalid-path`, and `syncer.Installer` refuses the call. `ValidLinkTarget` does
@@ -115,20 +115,20 @@ without conflicting again.
 
 **Scan.** Walking a folder and bringing the manifest in line with the disk. A
 full scan covers the whole root; a partial one covers the subtrees the watcher
-reported. See [CLI.md](CLI.md#syncthis-scan-id---dry-run).
+reported. See [CLI.md](CLI.md#syngo-scan-id---dry-run).
 
 **Change.** What a scan found for one path: a create, a modify, a delete or a
 rename. A rename is a delete and a create that share a content hash.
 
 **Plan.** What `syncplan.Plan` returns for a folder: one action per path the
-peer has. The actions are listed in [CLI.md](CLI.md#syncthis-sync-plan-folder---peer-id).
+peer has. The actions are listed in [CLI.md](CLI.md#syngo-sync-plan-folder---peer-id).
 
 **Action.** One decision of a plan: `pull`, `mkdir`, `symlink`, `chmod`,
 `replace`, `delete`, `conflict` or `none`.
 
 **Reason.** Why a plan reached its action, for example `missing-locally`,
 `remote-newer`, `both-modified` or `invalid-path`. Every reason is listed with
-the actions in [CLI.md](CLI.md#syncthis-sync-plan-folder---peer-id).
+the actions in [CLI.md](CLI.md#syngo-sync-plan-folder---peer-id).
 
 ## Downloading
 
@@ -147,7 +147,7 @@ interrupted download resume instead of start over. See
 [STATE.md](STATE.md#journal-semantics).
 
 **Partial file.** The `.part` file a transfer writes into
-`<folder>/.syncthis/tmp`. It lives inside the folder so the finished file is
+`<folder>/.syngo/tmp`. It lives inside the folder so the finished file is
 renamed onto its target without crossing a filesystem boundary.
 
 **Install.** Putting a finished download in place: the permission bits and the
@@ -172,7 +172,7 @@ written beside it as a **conflict copy** named
 `<stem>.sync-conflict-<date>-<time>-<author short id><ext>`, and the copy syncs
 like any other file, so both devices end up with both versions. `conflict
 resolve` is what closes one. See
-[CLI.md](CLI.md#syncthis-conflict-list-folder---all).
+[CLI.md](CLI.md#syngo-conflict-list-folder---all).
 
 **Conflict copy.** The file the losing version is written to. Its name comes
 from that version alone, the time it was modified and the device that wrote it,
@@ -184,7 +184,7 @@ other.
 **Resolution.** Saying which version wins, with `conflict resolve --keep
 local|remote|both`. The winner is renamed onto the path; `both` changes nothing
 on disk and only closes the conflict. See
-[CLI.md](CLI.md#syncthis-conflict-resolve-id---keep-localremoteboth).
+[CLI.md](CLI.md#syngo-conflict-resolve-id---keep-localremoteboth).
 
 **Three-way merge.** The optional exception to keep-both, turned on by
 `text_merge`. Two versions of one text file, both at most a megabyte and both
@@ -192,7 +192,7 @@ descending from a **merge base** this device still holds, are merged line by
 line: a region only one side changed is taken from that side. Two sides that
 changed the same region, content that is not text, and anything else it cannot
 answer keep both versions instead. See
-[CLI.md](CLI.md#syncthis-config-set-flags).
+[CLI.md](CLI.md#syngo-config-set-flags).
 
 **Merge base.** The version two concurrent edits both came from, which a
 three-way merge runs against. It is the newest recorded version of the path
@@ -208,7 +208,7 @@ and `conflict resolve` exits 8 unless it is closed with `--keep both`.
 
 **Peer.** Another device this one knows: its device ID, its name, the address
 to dial and whether its identity was verified by a human. See
-[CLI.md](CLI.md#syncthis-peer-add-hostport).
+[CLI.md](CLI.md#syngo-peer-add-hostport).
 
 **Pairing.** Running `peer add` on both devices, so each has the other in its
 `devices` table. A device that is not paired is refused after the handshake,
@@ -220,31 +220,31 @@ returns the peer's device ID and name, and whether the peer already accepts
 this device. `peer add` and `peer test` are built on it.
 
 **Tailnet.** The private network a Tailscale installation gives its devices,
-addressed out of `100.64.0.0/10`. Syncthis is written for one: bind the daemon
+addressed out of `100.64.0.0/10`. Syngo is written for one: bind the daemon
 to the `tailscale0` interface and no other network can reach the peer port. See
-[CLI.md](CLI.md#syncthis-daemon-run).
+[CLI.md](CLI.md#syngo-daemon-run).
 
 **MagicDNS.** Tailscale's name service for a tailnet, which makes a device
 reachable by its hostname. A hostname may be given to `peer add` wherever an
 address is expected; it is resolved through the local Tailscale client before
 system DNS, and the address that answers is what gets stored. See
-[CLI.md](CLI.md#syncthis-peer-add-hostport).
+[CLI.md](CLI.md#syngo-peer-add-hostport).
 
 **Tailnet peer.** A device the local Tailscale client knows about, which
 `network peers` lists with its hostname, MagicDNS name, tailnet addresses and
-online state. It is not a syncthis peer until `peer add` has trusted it on both
+online state. It is not a syngo peer until `peer add` has trusted it on both
 sides: network reachability and folder access are separate decisions. See
-[CLI.md](CLI.md#syncthis-network-peers).
+[CLI.md](CLI.md#syngo-network-peers).
 
 ## Running
 
 **Data directory.** The private directory of one device: `config.json`, the key
 pair and certificate, `state.db`, and, while a daemon runs, `control.sock` and
-`daemon.pid`. Resolved from `--data-dir`, `$SYNCTHIS_DATA_DIR`,
-`$XDG_DATA_HOME/syncthis` or `~/.local/share/syncthis`. See
+`daemon.pid`. Resolved from `--data-dir`, `$SYNGO_DATA_DIR`,
+`$XDG_DATA_HOME/syngo` or `~/.local/share/syngo`. See
 [STATE.md](STATE.md#data-directory).
 
-**State directory.** `<folder>/.syncthis` inside a synchronized folder: the
+**State directory.** `<folder>/.syngo` inside a synchronized folder: the
 partial files of its transfers. It is never scanned and never synchronized. See
 [STATE.md](STATE.md#folder-state-directory).
 
@@ -252,7 +252,7 @@ partial files of its transfers. It is never scanned and never synchronized. See
 `config import` reads: the device settings, the folders with their ignore
 patterns and sync windows, and the known peers. It carries no identity
 material, so it describes a configuration, not a device. See
-[CLI.md](CLI.md#syncthis-config-export---output-file).
+[CLI.md](CLI.md#syngo-config-export---output-file).
 
 **Control socket.** `<data-dir>/control.sock`, mode 0600, the unix socket a
 running daemon answers commands on. It is also the lock on the data directory:
@@ -265,4 +265,4 @@ configuration change from waiting for the next rescan tick.
 
 **Daemon.** The process that watches the folders, rescans them, serves peers
 and answers the control socket. Exactly one daemon owns a data directory. See
-[CLI.md](CLI.md#syncthis-daemon-run).
+[CLI.md](CLI.md#syngo-daemon-run).

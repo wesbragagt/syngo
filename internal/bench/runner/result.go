@@ -5,7 +5,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/wesbragagt/syncthis/internal/bench/report"
+	"github.com/wesbragagt/syngo/internal/bench/report"
 )
 
 // hardwareProfile records the machine a run executed on, per

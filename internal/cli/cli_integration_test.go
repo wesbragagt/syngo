@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesbragagt/syncthis/internal/cli"
+	"github.com/wesbragagt/syngo/internal/cli"
 )
 
 // env is a temporary data directory plus a folder root to synchronize.
@@ -36,7 +36,7 @@ func (e env) run(stdin string, args ...string) (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
-// init runs `syncthis init` and fails the test if it does not succeed.
+// init runs `syngo init` and fails the test if it does not succeed.
 func (e env) init(t *testing.T) {
 	t.Helper()
 	if code, _, stderr := e.run("", "init", "--name", "testdev"); code != cli.ExitOK {

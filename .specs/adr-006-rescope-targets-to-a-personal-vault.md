@@ -3,7 +3,7 @@ title: ADR 006 Rescope the Scale and Reliability Targets to a Personal Vault
 date: 2026-09-23
 status: accepted
 tags:
-  - syncthis
+  - syngo
   - project
   - adr
   - scale
@@ -18,7 +18,7 @@ tags:
 
 ## Context
 
-The exit metrics in [[syncthis-spec]] and the matching lines in [[tasks.md]] were
+The exit metrics in [[syngo-spec]] and the matching lines in [[tasks.md]] were
 written as if this were a product sold to fleets: a 100,000-file folder, a 1 TB
 mirror, a 30-day soak, 10,000 forced network interruptions, and 99.99%
 automatic convergence measured two ways. None of those numbers came from the
@@ -78,7 +78,7 @@ number.** Eight targets change.
 Larger than any folder the owner syncs, with headroom: a vault of a few
 thousand markdown files plus attachments, and room to double. The scale fixture
 keeps its shape, 200 directories, and holds 25 files each instead of 500.
-`SYNCTHIS_SCALE_FILES_EACH` still runs the same tests over a larger tree on a
+`SYNGO_SCALE_FILES_EACH` still runs the same tests over a larger tree on a
 machine with time to spare, and a run that uses another number says so in its
 own output.
 
@@ -174,7 +174,7 @@ behavioural test would pass.
 
 ## Related documents
 
-- [[syncthis-spec]] - exit metrics for Phases 1, 3, 4, 5 and 7 rewritten to these numbers
+- [[syngo-spec]] - exit metrics for Phases 1, 3, 4, 5 and 7 rewritten to these numbers
 - [[tasks.md]] - the eight task lines, with the measurement each one now carries
 - [[BENCH.md]] - the measured results and the commands that produced them
 - [[adr-003-drop-competitor-benchmarking]] - the earlier decision to narrow measurement scope to our own claims

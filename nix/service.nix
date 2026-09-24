@@ -1,8 +1,8 @@
-# The one place that says what the syncthis daemon unit is. The NixOS module
+# The one place that says what the syngo daemon unit is. The NixOS module
 # and the home-manager module both build their unit from here, so the restart
 # policy, the stop signal and the hardening cannot drift apart.
 #
-# It encodes exactly what packaging/systemd/syncthis.service already encoded.
+# It encodes exactly what packaging/systemd/syngo.service already encoded.
 { lib }:
 
 rec {
@@ -10,12 +10,12 @@ rec {
   # a system service keeps state under /var/lib, a user service under
   # $XDG_DATA_HOME.
   mkOptions = { defaultPackage, defaultDataDir }: {
-    enable = lib.mkEnableOption "the syncthis file synchronization daemon";
+    enable = lib.mkEnableOption "the syngo file synchronization daemon";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = defaultPackage;
-      description = "The syncthis package to run.";
+      description = "The syngo package to run.";
     };
 
     dataDir = lib.mkOption {
@@ -23,7 +23,7 @@ rec {
       default = defaultDataDir;
       description = ''
         The directory the daemon opens: identity, config.json, state.db and
-        the control socket. Passed as SYNCTHIS_DATA_DIR.
+        the control socket. Passed as SYNGO_DATA_DIR.
       '';
     };
 
@@ -64,8 +64,8 @@ rec {
   # [Service]: it is the section systemd reads it from, and without it a
   # crash-looping daemon stops coming back.
   unitSection = {
-    Description = "syncthis file synchronization daemon";
-    Documentation = "https://github.com/wesbragagt/syncthis";
+    Description = "syngo file synchronization daemon";
+    Documentation = "https://github.com/wesbragagt/syngo";
     After = [ "network-online.target" ];
     Wants = [ "network-online.target" ];
     StartLimitIntervalSec = 0;
@@ -73,7 +73,7 @@ rec {
 
   # The [Service] section, minus anything only a system service can set.
   serviceSection = cfg: {
-    Environment = [ "SYNCTHIS_DATA_DIR=${cfg.dataDir}" ];
+    Environment = [ "SYNGO_DATA_DIR=${cfg.dataDir}" ];
     ExecStart = execStart cfg;
     Restart = cfg.restart;
     RestartSec = cfg.restartSec;

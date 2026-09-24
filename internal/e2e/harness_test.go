@@ -12,21 +12,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesbragagt/syncthis/internal/adapters/jsonconfig"
-	"github.com/wesbragagt/syncthis/internal/adapters/tcpwire"
-	"github.com/wesbragagt/syncthis/internal/app/fakes"
-	"github.com/wesbragagt/syncthis/internal/app/status"
-	"github.com/wesbragagt/syncthis/internal/compose"
-	"github.com/wesbragagt/syncthis/internal/domain/bandwidth"
-	"github.com/wesbragagt/syncthis/internal/domain/device"
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
-	"github.com/wesbragagt/syncthis/internal/testutil/tree"
+	"github.com/wesbragagt/syngo/internal/adapters/jsonconfig"
+	"github.com/wesbragagt/syngo/internal/adapters/tcpwire"
+	"github.com/wesbragagt/syngo/internal/app/fakes"
+	"github.com/wesbragagt/syngo/internal/app/status"
+	"github.com/wesbragagt/syngo/internal/compose"
+	"github.com/wesbragagt/syngo/internal/domain/bandwidth"
+	"github.com/wesbragagt/syngo/internal/domain/device"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/testutil/tree"
 )
 
 // Test timings. They are short so a cycle happens within a test, and long
 // enough that a loaded machine still makes progress. The waiting times are
 // multiplied by timeoutScale, which the race build raises on its own and
-// SYNCTHIS_E2E_TIMEOUT_SCALE raises further: a machine running something else
+// SYNGO_E2E_TIMEOUT_SCALE raises further: a machine running something else
 // at the same time can need several times longer for a folder to converge.
 const (
 	testChunkSize      = 16 << 10
@@ -52,15 +52,15 @@ var (
 )
 
 // timeoutScale multiplies every waiting time: what this build needs, times
-// what SYNCTHIS_E2E_TIMEOUT_SCALE asks for on top of it.
+// what SYNGO_E2E_TIMEOUT_SCALE asks for on top of it.
 var timeoutScale = buildTimeoutScale * envTimeoutScale()
 
-// envTimeoutScale reads SYNCTHIS_E2E_TIMEOUT_SCALE, a whole number of times to
+// envTimeoutScale reads SYNGO_E2E_TIMEOUT_SCALE, a whole number of times to
 // stretch every waiting time by, for a machine too loaded to keep up with the
 // defaults. Anything unset, unreadable or below one means no stretching: a
 // scale is only ever allowed to give the tests more room, never less.
 func envTimeoutScale() time.Duration {
-	scale, err := strconv.Atoi(os.Getenv("SYNCTHIS_E2E_TIMEOUT_SCALE"))
+	scale, err := strconv.Atoi(os.Getenv("SYNGO_E2E_TIMEOUT_SCALE"))
 	if err != nil || scale < 1 {
 		return 1
 	}

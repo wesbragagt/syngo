@@ -9,7 +9,7 @@ import (
 	// database is compiled in.
 	_ "time/tzdata"
 
-	"github.com/wesbragagt/syncthis/internal/domain/folder"
+	"github.com/wesbragagt/syngo/internal/domain/folder"
 )
 
 // berlin is the zone the daylight saving cases are pinned against.

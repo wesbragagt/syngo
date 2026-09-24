@@ -1,5 +1,5 @@
 {
-  description = "syncthis, folder synchronization between your own devices";
+  description = "syngo, folder synchronization between your own devices";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -8,7 +8,7 @@
 
   outputs = { self, nixpkgs, flake-utils }:
     let
-      # The stamp `syncthis version` reports. The Makefile takes it from
+      # The stamp `syngo version` reports. The Makefile takes it from
       # `git describe --tags --always --dirty` and `git rev-parse --short`; a
       # flake build has no git, so it uses what the flake itself knows about
       # the checkout. A build from a dirty tree is marked as one, the same way
@@ -19,25 +19,25 @@
       version = self.shortRev or self.dirtyShortRev or "dev";
       commit = nixpkgs.lib.removeSuffix "-dirty" version;
     in
-    # The systems syncthis is built for. x86_64-darwin is left out because
+    # The systems syngo is built for. x86_64-darwin is left out because
     # this nixpkgs has dropped it; the Linux three are the `make dist`
     # targets that Nix can build.
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ]
       (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          syncthis = pkgs.callPackage ./nix/package.nix { inherit version commit; };
+          syngo = pkgs.callPackage ./nix/package.nix { inherit version commit; };
           vmTests = import ./nix/vm-tests.nix { inherit self pkgs; };
         in
         {
           packages = {
-            inherit syncthis;
-            default = syncthis;
+            inherit syngo;
+            default = syngo;
           };
 
           apps.default = {
             type = "app";
-            program = "${pkgs.lib.getExe syncthis}";
+            program = "${pkgs.lib.getExe syngo}";
           };
 
           devShells.default = pkgs.mkShell {
@@ -50,7 +50,7 @@
           };
 
           checks = {
-            package = syncthis;
+            package = syngo;
           } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # The NixOS module has to evaluate, not just parse: a bad option
             # type or a reference to a package that does not exist on this
@@ -63,7 +63,7 @@
                   boot.loader.grub.devices = [ "nodev" ];
                   fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
                   system.stateVersion = lib.versions.majorMinor lib.version;
-                  services.syncthis = {
+                  services.syngo = {
                     enable = true;
                     interface = "tailscale0";
                   };
@@ -78,10 +78,10 @@
           };
         })
     // {
-      nixosModules.syncthis = import ./nix/nixos-module.nix { inherit self; };
-      nixosModules.default = self.nixosModules.syncthis;
+      nixosModules.syngo = import ./nix/nixos-module.nix { inherit self; };
+      nixosModules.default = self.nixosModules.syngo;
 
-      homeManagerModules.syncthis = import ./nix/hm-module.nix { inherit self; };
-      homeManagerModules.default = self.homeManagerModules.syncthis;
+      homeManagerModules.syngo = import ./nix/hm-module.nix { inherit self; };
+      homeManagerModules.default = self.homeManagerModules.syngo;
     };
 }
