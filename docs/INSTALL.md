@@ -692,6 +692,34 @@ and `--mode receiveonly --delete-policy never` on the nas. The nas then takes
 every change the laptop makes and never removes a file, and nothing the nas
 holds travels back.
 
+### Syncing a notes vault, or anything with dotfiles
+
+Hidden files are off by default, so a directory like an Obsidian vault syncs
+its notes but not its `.obsidian` folder: no theme, no plugin settings, no
+plugin data. Add `--include-hidden` at creation time to carry dotfiles too:
+
+```console
+$ syncthis --data-dir /tmp/sdemo/a/data folder add /tmp/sdemo/a/vault --id vault --include-hidden
+```
+
+`--include-hidden` cannot be changed later with `folder set`; today the only
+way to turn it on for a folder that already exists is to remove it and add it
+again, which drops that folder's database rows. Decide before the first
+`folder add` if dotfiles matter to you.
+
+Some of what `--include-hidden` carries is per-machine noise, not something
+you want travelling between devices: window layout, a second sync plugin, a
+local cache. `<folder>/.syncthisignore` filters it out, gitignore-style, and
+belongs to this one device alone — it is never synced, so each device that
+should skip the same paths needs its own copy:
+
+```
+.obsidian/workspace.json
+.obsidian/plugins/*/data.json
+.obsidian/plugins/obsidian-livesync/
+.trash/
+```
+
 ### 4. Confirm convergence
 
 Write a file on one side and read the other's report. One `jq` line covers it:

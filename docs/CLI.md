@@ -99,7 +99,8 @@ The ignore rules are the patterns given here plus the lines of
 installed: a path this device ignores is not pulled from a peer either, so an
 ignored file cannot arrive, be recorded, and be read as deleted by the next
 scan. `.syncthis` and `.syncthisignore` are always ignored and are never
-accepted from a peer.
+accepted from a peer. [INSTALL.md](INSTALL.md#syncing-a-notes-vault-or-anything-with-dotfiles)
+has a worked example for a folder full of dotfiles, such as a notes vault.
 
 ```console
 $ syncthis folder add ~/docs --id docs --json
