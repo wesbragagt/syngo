@@ -14,7 +14,7 @@ buildGoModule {
 
   src = lib.cleanSource ../.;
 
-  vendorHash = "sha256-oEqT0lsii+rfTaNpmCUa293A1OePJ/8LVqqwFflnFRw=";
+  vendorHash = "sha256-tVDofrjd2IuJbAOMbN8mDE/QluOhq26rpHW45u4F5PQ=";
 
   # Every dependency is pure Go. Without cgo the binary carries no dynamic
   # interpreter, which is what makes a copy of it runnable off the Nix store.
