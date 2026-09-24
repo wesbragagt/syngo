@@ -27,17 +27,33 @@ it appears.
 
 Add the flake as an input and import the NixOS module.
 
-This repository is not published yet: it has no git remote, so there is no
-`github:` URL to fetch and every snippet below points at a local checkout
-instead. Clone it somewhere and use that path. Once the repository is
-published, `syngo.url = "github:wesbragagt/syngo";` replaces the `path:`
-line in every snippet on this page and nothing else changes.
+The repository is `github.com/wesbragagt/syngo`, and it is **private**. A
+plain `github:wesbragagt/syngo` input fails: Nix asks the GitHub API for the
+repository anonymously and gets a 404, not a permission error, because GitHub
+does not admit a private repository exists to a caller it has not
+authenticated.
+
+```console
+$ nix flake lock
+error: unable to download 'https://api.github.com/repos/wesbragagt/syngo/commits/HEAD': HTTP error 404
+```
+
+Nix needs a GitHub token to fetch it, on every machine that evaluates this
+flake. Put one in `~/.config/nix/nix.conf` (create the file if it does not
+exist) — a fine-grained personal access token scoped to just this repository
+is enough, contents read-only:
+
+```
+access-tokens = github.com=github_pat_your_token_here
+```
+
+Then the input is the real one:
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    syngo.url = "path:/home/you/src/syngo";
+    syngo.url = "github:wesbragagt/syngo";
   };
 
   outputs = { self, nixpkgs, syngo }: {
@@ -56,6 +72,18 @@ line in every snippet on this page and nothing else changes.
   };
 }
 ```
+
+Confirmed working with a token set as above:
+
+```console
+$ nix flake lock
+• Added input 'syngo':
+    'github:wesbragagt/syngo/5e3c88f...' (2026-09-24)
+```
+
+Working from a local checkout instead needs no token: `syngo.url =
+"path:/home/you/src/syngo";` in place of the `github:` line, everything else
+unchanged. That is the whole difference between the two.
 
 Then build the system the way you always do:
 
@@ -156,7 +184,28 @@ unit going active after `init`.
 
 ### Without a flake input
 
-To try the binary without adding an input, run the checkout:
+`nix run` needs the same token the flake input does, whenever the source is
+`github:`. It reads `access-tokens` from `nix.conf`, the same setting
+[above](#nixos-through-the-flake), or one can be handed to a single command:
+
+```console
+$ nix run --extra-access-tokens "github.com=$(gh auth token)" github:wesbragagt/syngo -- version
+syngo 1c442b0 (1c442b0, go1.26.7)
+```
+
+Confirmed against the real repository: that is HEAD at the time this line was
+run. Once `access-tokens` is set in `nix.conf`, the plain form works:
+
+```console
+$ nix run github:wesbragagt/syngo -- version
+```
+
+Nix caches what a flake reference points at; `nix run` and `nix build` accept
+`--refresh` to make sure `github:wesbragagt/syngo` with no ref really means the
+latest commit rather than whatever this machine last resolved it to. Add
+`?ref=<branch>` to the URL to pin a branch instead of tracking the default.
+
+A local checkout needs no token at all:
 
 ```console
 $ nix run path:/home/you/src/syngo -- version
@@ -173,10 +222,7 @@ syngo 6e76ddb-dirty (6e76ddb, go1.26.7)
 
 That is HEAD of the checkout, with the `-dirty` suffix because the tree it was
 run against had uncommitted changes, the same suffix `git describe --dirty`
-adds. Add `?ref=<branch>` to pick a branch.
-
-Once the repository is published this is `nix run github:wesbragagt/syngo
--- version`.
+adds.
 
 ## Home-manager
 
@@ -191,7 +237,7 @@ under real home-manager.
 
 ```nix
 {
-  inputs.syngo.url = "path:/home/you/src/syngo";
+  inputs.syngo.url = "github:wesbragagt/syngo";  # needs a token; see above
 
   # inside your home-manager configuration
   imports = [ syngo.homeManagerModules.default ];
