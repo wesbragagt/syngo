@@ -25,8 +25,8 @@ automatic convergence measured two ways. None of those numbers came from the
 workload this program exists to carry.
 
 The real workload is one person's notes vault, today on Obsidian Live Sync,
-synchronized between a few machines they own over Tailscale: icebox,
-macpro-nixos, and possibly a NAS or a third machine later. The vault is a few
+synchronized between a few machines they own over Tailscale, with possibly a
+NAS or a third machine later. The vault is a few
 hundred to a few thousand markdown files plus attachments, well under a
 gigabyte in total. The changes are small and frequent: a note saved while
 typing, a few kilobytes at a time. The devices are personal machines that are

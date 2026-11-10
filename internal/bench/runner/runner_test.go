@@ -61,7 +61,7 @@ func TestValidate_LAN(t *testing.T) {
 
 func TestValidate_LANRefusesTailscaleFlags(t *testing.T) {
 	cfg := baseConfig()
-	cfg.PeerHost = "macpro-nixos"
+	cfg.PeerHost = "peer-host"
 	if err := runner.Validate(cfg); err == nil {
 		t.Fatal("Validate(lan with --peer-host) = nil, want an error")
 	}
@@ -82,7 +82,7 @@ func TestValidate_TailscaleNeedsPeerHostAndPeerDir(t *testing.T) {
 func TestValidate_TailscaleWithEverythingSet(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Scenario = report.ScenarioTailscaleDirect
-	cfg.PeerHost = "macpro-nixos"
+	cfg.PeerHost = "peer-host"
 	cfg.PeerDir = "~/syngo-bench-remote"
 	cfg.LocalDataDir = t.TempDir()
 	if err := runner.Validate(cfg); err != nil {
@@ -96,7 +96,7 @@ func TestValidate_TailscaleRefusesAnEscapingPeerDir(t *testing.T) {
 	for _, dir := range []string{"~", "~/", "/", "bench/../..", "~/bench/../elsewhere"} {
 		cfg := baseConfig()
 		cfg.Scenario = report.ScenarioTailscaleDirect
-		cfg.PeerHost = "macpro-nixos"
+		cfg.PeerHost = "peer-host"
 		cfg.PeerDir = dir
 		if err := runner.Validate(cfg); err == nil {
 			t.Errorf("Validate with --peer-dir %q = nil, want a refusal", dir)
@@ -107,7 +107,7 @@ func TestValidate_TailscaleRefusesAnEscapingPeerDir(t *testing.T) {
 func TestValidate_TailscaleRefusesLANDataDirFlags(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Scenario = report.ScenarioTailscaleDirect
-	cfg.PeerHost = "macpro-nixos"
+	cfg.PeerHost = "peer-host"
 	cfg.PeerDir = "~/syngo-bench-remote"
 	cfg.LocalDataDir = t.TempDir()
 	cfg.DataDirA = t.TempDir()

@@ -84,7 +84,7 @@ func peerAnswers(cmd recordedCommand) ([]byte, error) {
 // newTestRemote returns a driver wired to fake, already resolved.
 func newTestRemote(t *testing.T, fake *fakeRunner) *remoteDevice {
 	t.Helper()
-	r, err := newRemoteDevice("macpro-nixos", "~/syngo-bench-remote", fake)
+	r, err := newRemoteDevice("peer-host", "~/syngo-bench-remote", fake)
 	if err != nil {
 		t.Fatalf("newRemoteDevice: %v", err)
 	}
@@ -102,26 +102,26 @@ func TestNewRemoteDeviceRefusesAMissingPeerHost(t *testing.T) {
 
 func TestNewRemoteDeviceRefusesAnEscapingDirectory(t *testing.T) {
 	for _, dir := range []string{"", "/", "~", "~/", "~/bench/../elsewhere", "../bench"} {
-		if _, err := newRemoteDevice("macpro-nixos", dir, &fakeRunner{}); err == nil {
+		if _, err := newRemoteDevice("peer-host", dir, &fakeRunner{}); err == nil {
 			t.Errorf("newRemoteDevice with dir %q = nil, want a refusal", dir)
 		}
 	}
 }
 
 func TestSSHArgsRunOneScriptInBatchMode(t *testing.T) {
-	args := sshArgs("macpro-nixos", "pwd")
+	args := sshArgs("peer-host", "pwd")
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "BatchMode=yes") {
 		t.Errorf("ssh args %q carry no BatchMode=yes; a run must fail rather than wait for a prompt", joined)
 	}
-	if args[len(args)-1] != "pwd" || args[len(args)-2] != "macpro-nixos" {
+	if args[len(args)-1] != "pwd" || args[len(args)-2] != "peer-host" {
 		t.Errorf("ssh args = %q, want the host then the script last", args)
 	}
 }
 
 func TestSCPArgsNameTheRemotePath(t *testing.T) {
-	args := scpArgs("/tmp/syngo", "macpro-nixos", "/home/bench/dir/bin/syngo")
-	if got := args[len(args)-1]; got != "macpro-nixos:/home/bench/dir/bin/syngo" {
+	args := scpArgs("/tmp/syngo", "peer-host", "/home/bench/dir/bin/syngo")
+	if got := args[len(args)-1]; got != "peer-host:/home/bench/dir/bin/syngo" {
 		t.Errorf("scp destination = %q, want host:path", got)
 	}
 	if got := args[len(args)-2]; got != "/tmp/syngo" {
@@ -175,7 +175,7 @@ func TestPrepareKeepsEveryPathUnderTheOperatorsDirectory(t *testing.T) {
 
 func TestPrepareRefusesAnUnreachablePeer(t *testing.T) {
 	fake := &fakeRunner{answer: func(recordedCommand) ([]byte, error) {
-		return nil, errors.New("ssh: connect to host macpro-nixos port 22: No route to host")
+		return nil, errors.New("ssh: connect to host peer-host port 22: No route to host")
 	}}
 	r := newTestRemote(t, fake)
 
@@ -186,7 +186,7 @@ func TestPrepareRefusesAnUnreachablePeer(t *testing.T) {
 	if err == nil {
 		t.Fatal("prepare against an unreachable peer = nil, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "ssh") || !strings.Contains(err.Error(), "macpro-nixos") {
+	if !strings.Contains(err.Error(), "ssh") || !strings.Contains(err.Error(), "peer-host") {
 		t.Errorf("error %q does not say which host did not answer ssh", err)
 	}
 	if len(fake.lines()) != 1 {
@@ -340,7 +340,7 @@ func TestResolveRefusesAPeerDirectoryTooCloseToTheRoot(t *testing.T) {
 		}
 		return nil, nil
 	}}
-	r, err := newRemoteDevice("macpro-nixos", "bench", fake)
+	r, err := newRemoteDevice("peer-host", "bench", fake)
 	if err != nil {
 		t.Fatalf("newRemoteDevice: %v", err)
 	}

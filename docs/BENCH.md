@@ -95,7 +95,7 @@ over loopback and needs nothing beyond the defaults.
 
 ```console
 $ go run ./cmd/syngo-bench --scenario lan --name baseline
-bench/results/v1/20260922T135004Z-lan-baseline.json
+bench/results/v1/<timestamp>-lan-baseline.json
 scenario lan, name baseline, took 11s
 ```
 
@@ -127,12 +127,12 @@ two results an operator compares by hand.
 
 ```console
 $ go run ./cmd/syngo-bench --scenario tailscale-direct --name two-sided \
-    --peer-host macpro-nixos \
+    --peer-host peer-host \
     --peer-dir '~/syngo-bench-remote' \
     --corpus-dir bench/corpus/v1 --results-dir bench/results/v1
-bench/results/v1/20260922T145929Z-tailscale-direct-two-sided.json
+bench/results/v1/<timestamp>-tailscale-direct-two-sided.json
 scenario tailscale-direct, name two-sided, took 19s
-unmeasured: bytes_transferred: every byte moved from this machine to macpro-nixos, ...
+unmeasured: bytes_transferred: every byte moved from this machine to peer-host, ...
 ```
 
 The operator gives three things: the scenario, the peer host and the peer
@@ -264,33 +264,31 @@ write error halfway through.
 
 ### Measured results
 
-Machine: `icebox`, AMD Ryzen 7 9700X (8 cores, 16 threads), 60 GiB RAM, NVMe
-(`/dev/nvme0n1p2`, 190 GiB free at the time of the run), NixOS, Linux 7.0.3
-x86_64, Go 1.26.7. Date: 2026-09-22. Commit: `f108c41`. Run with `make scale`
-at the default parameters unless a row says otherwise.
+The scale suite was run with `make scale` at the default parameters unless a
+row says otherwise. Commit: `f108c41`.
 
 Memory is resident set size read from `/proc/<pid>/status`. There is no
 portable way to read another process's RSS from the standard library, so on a
 platform that does not provide `/proc` these tests skip with that as the
 reason rather than passing.
 
-The file counts and the mirror size were rescoped on 2026-09-23 to the folder
-this program actually carries, a personal notes vault; adr-006 records why and
-what each number was before. The rows marked 2026-09-23 were re-measured at the
-new scale on the same machine.
+The file counts and the mirror size were rescoped to the folder this program
+actually carries, a personal notes vault; adr-006 records why and what each
+number was before. The affected rows were re-measured at the new scale on the
+same machine.
 
 | Claim | Measured | Verdict |
 | --- | --- | --- |
-| 5,000-file folder reconciles safely | see below (2026-09-23) | pass |
-| Idle memory under 100 MB over 5,000 files | 32.8 MiB settled (2026-09-23) | pass |
-| 2 GiB mirror resumes after restart without a retransfer | 0 payload bytes pulled (2026-09-23) | pass |
+| 5,000-file folder reconciles safely | see below | pass |
+| Idle memory under 100 MB over 5,000 files | 32.8 MiB settled | pass |
+| 2 GiB mirror resumes after restart without a retransfer | 0 payload bytes pulled | pass |
 | 10 GiB transfer with bounded memory | 25.2 MiB peak receiver RSS | pass |
 | 1,000 interruption cycles without corruption | see below | pass |
 | Bandwidth within 5% of the limit | -0.13% over 1m44s | pass |
 
 #### 5,000-file reconcile
 
-200 directories of 25 files, 767 KiB in total. Date: 2026-09-23.
+200 directories of 25 files, 767 KiB in total.
 
 ```
 built 5000 files in 200 directories (767.2 KiB) in 34.263678ms
@@ -308,8 +306,8 @@ test wrote, entry by entry, and checks that `FolderStats` reports exactly
 also has to classify the mutation exactly: 500 modifications, 50 deletions, 50
 creations and no renames.
 
-The same test at the old 100,000-file default, measured 2026-09-22, recorded
-the tree in 3.53 s, reconciled 12,002 changes in 908 ms and found nothing on a
+The same test at the old 100,000-file default recorded the tree in 3.53 s,
+reconciled 12,002 changes in 908 ms and found nothing on a
 repeat in 504 ms. Nothing about that run was wrong; it was measuring a folder
 nobody here syncs. `make scale SCALE_FILES_EACH=500` runs it again.
 
@@ -323,7 +321,7 @@ rename, which would make the expected counts wrong.
 
 A daemon over a 5,000-file folder, left idle for five minutes after it
 reported the folder scanned and no change pending, settles at **32.8 MiB**
-resident against a 100 MiB limit. Date: 2026-09-23.
+resident against a 100 MiB limit.
 
 ```
 peak resident memory including the startup scan: 33.7 MiB
@@ -337,8 +335,7 @@ not a single sample and not the reading right after the scan. The per-file
 figure is high here because at 5,000 files the reading is almost all fixed
 overhead; the marginal cost is the 1.45 KiB per file measured below.
 
-The same test at 100,000 files, measured 2026-09-22, settled at **148.8 MiB**
-and failed:
+The same test at 100,000 files settled at **148.8 MiB** and failed:
 
 ```
 peak resident memory including the startup scan: 174.0 MiB
@@ -378,7 +375,7 @@ test into a description of the current behaviour instead of a check on it.
 The Phase 3 claim is that a mirror resumes after a restart instead of pulling
 the folder again. The size is the vault-scale target of adr-006: 2 GiB of
 notes and attachments, which is an attachment-heavy version of the folder this
-program carries, twice over. Date: 2026-09-23.
+program carries, twice over.
 
 ```
 built a vault of 4062 files (4000 notes, 62 attachments of 32.0 MiB)
@@ -534,7 +531,7 @@ ok  	github.com/wesbragagt/syngo/internal/e2e	75.342s
 **200 of 200 trials converged.** Each trial pairs two devices, converges a
 folder, then edits a different path on each device at the same time. The
 assertions are that both edits survive with their own content, that no conflict
-copy exists, and that neither device recorded a conflict row. Date: 2026-09-23.
+copy exists, and that neither device recorded a conflict row.
 
 ### Three devices
 
@@ -551,7 +548,6 @@ devices write five paths apiece at the same instant, some of the writes being
 deletes of what an earlier round wrote. Each round must end with the three
 devices holding the same tree and no conflict row anywhere, and each run ends
 by checking the cluster invariants and that every path holds its last write.
-Date: 2026-09-23.
 
 ### What this is not
 
@@ -586,19 +582,16 @@ measured below: every change travels the watcher, scan, notify and pull path.
 
 ### Measured results
 
-Machine: `icebox`, AMD Ryzen 7 9700X (8 cores, 16 threads), 60 GiB RAM, NVMe
-(`/dev/nvme0n1p2`, 190 GiB free at the time of the run), NixOS, Linux 7.0.3
-x86_64, Go 1.26.7. Date: 2026-09-22. Commits: `949b08e` for the rows measured
-before the chunk size change, and the commit that made it for the three rows
-re-measured at the 64 KiB default (the insertion, the small edit and the
-document save).
+Commits: `949b08e` for the rows measured before the chunk size change, and
+the commit that made it for the three rows re-measured at the 64 KiB default
+(the insertion, the small edit and the document save).
 
 | Claim | Measured | Verdict |
 | --- | --- | --- |
-| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 514 ms one way between icebox and macpro-nixos over a confirmed direct path (2026-09-23); 507.3 ms median over loopback | pass |
+| Ordinary document change converges under 1 s on a healthy Tailscale direct path | 514 ms one way between two machines over a confirmed direct path; 507.3 ms median over loopback | pass |
 | 1 MiB inserted into a 10 GB file transfers less than 2 MiB after caching | 1,254,397 bytes (1.20 MiB) at the 64 KiB default | pass |
 | A 10 GB rename transfers zero payload bytes | 0 bytes | pass |
-| 5,000-file status under two seconds after incremental change | 15.4 ms slowest, 3.5 ms median (2026-09-23) | pass |
+| 5,000-file status under two seconds after incremental change | 15.4 ms slowest, 3.5 ms median | pass |
 | Small edits use at least 90% fewer bytes than a whole-file transfer | 99.90% fewer | pass |
 | Compare against the Phase 0 baseline corpus | +1.0% convergence, same bytes | done, see below |
 
@@ -631,31 +624,30 @@ in, and is what makes the verdict in the table a pass.
 
 #### Ordinary document change convergence: two machines over Tailscale
 
-Date: 2026-09-23. Machines: `icebox` (AMD Ryzen 7 9700X, NixOS) and
-`macpro-nixos`, both on the same tailnet and the same LAN segment. Commit
+Two machines, both on the same tailnet and the same LAN segment. Commit
 `bf8e3cb`, built with `make release`.
 
 The two clocks disagree by 38 to 67 ms, and the disagreement is noisy, so a
 one-way number taken by comparing timestamps across the two machines would
 carry more error than the tailnet hop it is trying to measure. This is
-measured as a round trip on one clock instead: `icebox` writes a token into
-`ping.md`, a loop on `macpro-nixos` copies whatever token it reads into
-`pong.md`, and `icebox` times from its write to reading its own token back.
+measured as a round trip on one clock instead: machine A writes a token into
+`ping.md`, a loop on machine B copies whatever token it reads into
+`pong.md`, and machine A times from its write to reading its own token back.
 Both legs are ordinary syncs, so the round trip is two convergences plus the
 responder's own poll, and half of it is the one-way figure.
 
 ```
-8 round trips of a small note, icebox -> macpro-nixos -> icebox:
+8 round trips of a small note, machine A -> machine B -> machine A:
   round trips: 1029 1028 1032 1026 1029 1027 1026 1029 ms
   median 1028 ms round trip, so about 514 ms one way
   min 1026 ms, max 1032 ms
 ```
 
 The path was direct, not relayed, confirmed while the daemons were connected:
-`syngo network path` reported `direct` with an endpoint of
-`192.168.68.75:41641`, a LAN address, because both machines sit on the same
-subnet. `tailscale status --json` agreed: a non-empty `CurAddr`. The `Relay:
-"iad"` field on the same peer is its home DERP region, not the path in use.
+`syngo network path` reported `direct` with a LAN endpoint because both
+machines sit on the same subnet. `tailscale status --json` agreed: a non-empty
+`CurAddr`. The peer's `Relay` field identifies its home DERP region, not the
+path in use.
 
 **The tailnet costs about 7 ms.** Loopback converges in 507 ms and two real
 machines in 514 ms, so the claim holds with roughly 486 ms of headroom. Almost
@@ -710,7 +702,7 @@ the receiver copies the file into its new name locally.
 
 A daemon over 200 directories of 25 files. Once it reported the folder scanned
 and idle, 50 of those files were rewritten and `syngo status --json` was run
-as a real command, repeatedly, from the moment of the change. Date: 2026-09-23.
+as a real command, repeatedly, from the moment of the change.
 
 ```
 built 5000 files in 200 directories (767.2 KiB) in 34.666281ms
@@ -727,7 +719,7 @@ the process and a round trip over the control socket. The change itself was
 visible in `status` 525 ms after it was made, almost all of it the 500 ms
 debounce.
 
-The same benchmark at the old 100,000-file default, measured 2026-09-22,
+The same benchmark at the old 100,000-file default
 answered in at most 302 ms during the change and 24.8 ms once settled, and
 reported the change 1.53 s after it was made. Both runs pass; adr-006 records
 why the smaller folder is the one the claim is about.
@@ -751,8 +743,7 @@ chunk size change made a small edit sixteen times cheaper.
 
 ### Choosing the default chunk size
 
-Date: 2026-09-22. Machine as above. Measured by
-`TestScale_BenchChunkSizeInsertionSweep` and
+Measured by `TestScale_BenchChunkSizeInsertionSweep` and
 `TestScale_BenchChunkSizeTransferCost` in `internal/e2e/bench_chunksize_test.go`,
 over a 1 GiB file, run with:
 

@@ -8,9 +8,9 @@ import (
 // tailscaleStatusJSON is the shape `tailscale status --json` prints: one peer
 // holding a direct endpoint, one falling back to a relay.
 const tailscaleStatusJSON = `{
-  "Self": {"HostName": "icebox", "DNSName": "icebox.tail1234.ts.net."},
+  "Self": {"HostName": "local-host", "DNSName": "local-host.tail1234.ts.net."},
   "Peer": {
-    "nodekey:aaa": {"HostName": "macpro-nixos", "DNSName": "macpro-nixos.tail1234.ts.net.",
+    "nodekey:aaa": {"HostName": "peer-host", "DNSName": "peer-host.tail1234.ts.net.",
                     "CurAddr": "100.64.0.7:41641", "Relay": "ord", "Active": true},
     "nodekey:bbb": {"HostName": "phone", "DNSName": "phone.tail1234.ts.net.",
                     "CurAddr": "", "Relay": "sfo", "Active": false}
@@ -18,7 +18,7 @@ const tailscaleStatusJSON = `{
 }`
 
 func TestParseTailscalePeerPathFindsAPeerByName(t *testing.T) {
-	for _, name := range []string{"macpro-nixos", "MACPRO-NIXOS", "macpro-nixos.tail1234.ts.net"} {
+	for _, name := range []string{"peer-host", "PEER-HOST", "peer-host.tail1234.ts.net"} {
 		got, err := parseTailscalePeerPath([]byte(tailscaleStatusJSON), name)
 		if err != nil {
 			t.Fatalf("parseTailscalePeerPath(%q): %v", name, err)
@@ -33,7 +33,7 @@ func TestParseTailscalePeerPathRefusesAnUnknownPeer(t *testing.T) {
 	if _, err := parseTailscalePeerPath([]byte(tailscaleStatusJSON), "nowhere"); err == nil {
 		t.Fatal("parseTailscalePeerPath of an unknown peer = nil, want an error")
 	}
-	if _, err := parseTailscalePeerPath([]byte("not json"), "macpro-nixos"); err == nil {
+	if _, err := parseTailscalePeerPath([]byte("not json"), "peer-host"); err == nil {
 		t.Fatal("parseTailscalePeerPath of garbage = nil, want an error")
 	}
 }

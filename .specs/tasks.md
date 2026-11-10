@@ -165,7 +165,7 @@ Goal: beat the baseline on the target workload.
 - [x] Implement adaptive concurrency based on disk and network measurements.
 - [x] Implement rename detection without re-uploading content.
 - [x] Replace full scans with journal watermarks where possible.
-- [x] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured 2026-09-23 between icebox and macpro-nixos over a confirmed direct tailnet path: 1028 ms median round trip over 8 trials, so about 514 ms one way, against 507 ms over loopback. The tailnet costs about 7 ms; the rest is the 500 ms debounce. See docs/BENCH.md.
+- [x] Benchmark ordinary document change convergence under one second on a healthy Tailscale direct path. Measured between two devices over a confirmed direct tailnet path: 1028 ms median round trip over 8 trials, so about 514 ms one way, against 507 ms over loopback. The tailnet costs about 7 ms; the rest is the 500 ms debounce. See docs/BENCH.md.
 - [x] Benchmark a 1 MiB insertion into a 10 GB file transfers less than 2 MiB after caching. Measured 1,254,397 bytes into a 10 GiB file at the 64 KiB default, and under the budget at all six insertion positions swept over a 1 GiB file. See docs/BENCH.md.
 - [x] Evaluate lowering `DefaultChunkSize`, or making it size-adaptive, to close the 2 MiB insertion budget. Done: lowered from 1 MiB to 64 KiB, size-adaptive rejected on the data. Measured at eight averages and six insertion positions, against the throughput, memory and chunk index cost of an ordinary large-file transfer. See "Choosing the default chunk size" in docs/BENCH.md.
 - [x] Benchmark a 10 GB rename transfers zero payload bytes.
@@ -392,7 +392,7 @@ Always tracked, never deferred.
       - spec and ADRs reconciled 2026-09-22: Windows dropped (adr-002), competitor benchmarking dropped (adr-003), chunk size changed to 64 KiB (adr-004), Nix flake primary (adr-005)
 - [x] Add an ADR when a decision is rejected, replaced, or measured.
       - ADRs 002-005 added 2026-09-22: Windows support (002), competitor benchmarking (003), chunk size (004), Nix packaging (005)
-- [x] Record benchmark results in the corpus after every phase. Current through Phase 5 as of 2026-09-22: bench/results/v1/ holds pre/post runs for the chunking and pipeline work; docs/BENCH.md carries every dated measurement. Re-check after the next phase closes.
+- [x] Record benchmark results in the corpus after every phase. Current through Phase 5: bench/results/v1/ holds pre/post runs for the chunking and pipeline work; docs/BENCH.md carries the measurements. Re-check after the next phase closes.
 - [x] Review the architecture boundaries after each phase. Current as of 2026-09-22: `go test ./internal/arch/...` holds 8 checks, including the TUI import boundary added this phase, all passing. Re-check after the next phase closes.
 - [x] Keep the CLI, TUI, and JSON surface area in sync. Current as of 2026-09-22: docs/TUI.md maps every TUI key to its `syngo` command; docs/CLI.md documents every --json shape the TUI decodes. Re-check whenever either surface changes.
 
