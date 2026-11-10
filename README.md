@@ -11,6 +11,23 @@ reach each other wherever they are.
 
 ## Build
 
+With Nix installed, build the binary from this checkout and run it:
+
+```console
+$ nix build --extra-experimental-features 'nix-command flakes' .#syngo
+$ ./result/bin/syngo version
+```
+
+The binary is at `result/bin/syngo`. The flake supports x86_64 Linux,
+aarch64 Linux and aarch64 macOS. To build and run it without creating a
+`result` link, use:
+
+```console
+$ nix run --extra-experimental-features 'nix-command flakes' .#syngo -- version
+```
+
+With Go and Make installed, build without Nix:
+
 ```console
 $ make build      # writes bin/syngo, stamped with git describe
 $ bin/syngo version
