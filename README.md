@@ -9,80 +9,57 @@ an interrupted download resumes where it stopped.
 It is written for a tailnet: point the daemon at `tailscale0` and the devices
 reach each other wherever they are.
 
-## Build
+## Get started
 
-With Nix installed, build the binary from this checkout and run it:
+Run these steps on both devices. They need Nix, a checkout of this repository,
+and network access to each other. The Nix flake supports x86_64 Linux,
+aarch64 Linux and aarch64 macOS.
+
+### 1. Build
 
 ```console
 $ nix build --extra-experimental-features 'nix-command flakes' .#syngo
-$ ./result/bin/syngo version
+$ export PATH="$PWD/result/bin:$PATH"
 ```
 
-The binary is at `result/bin/syngo`. The flake supports x86_64 Linux,
-aarch64 Linux and aarch64 macOS. To build and run it without creating a
-`result` link, use:
+Alternatively, run a command without a `result` link with
+`nix run --extra-experimental-features 'nix-command flakes' .#syngo -- version`.
+
+### 2. Start each device
+
+Choose a different name for each device. Save the device ID printed by `init`
+and give it to the other device's owner. Keep the daemon running.
 
 ```console
-$ nix run --extra-experimental-features 'nix-command flakes' .#syngo -- version
+$ syngo init --name laptop --listen 0.0.0.0:22000
+$ syngo daemon run
 ```
 
-With Go and Make installed, build without Nix:
+Open another terminal on each device and add `result/bin` to its `PATH` as in
+step 1. Allow TCP port 22000 between the devices. On a tailnet, use each
+device's Tailscale address.
+
+### 3. Pair and share a folder
+
+On each device, replace `PEER_ADDRESS` and `PEER_ID` with the other device's
+reachable address and the ID it printed. Use the same folder ID on both
+devices. The folder paths may differ.
 
 ```console
-$ make build      # writes bin/syngo, stamped with git describe
-$ bin/syngo version
+$ syngo peer add PEER_ADDRESS:22000 --device-id PEER_ID
+$ mkdir -p "$HOME/syngo-docs"
+$ syngo folder add "$HOME/syngo-docs" --id docs
+$ syngo folder grant docs PEER_ID
+$ syngo status
 ```
 
-`make test` runs the whole tree; `make e2e` runs the end-to-end tests, which
-start two daemons on loopback, with the race detector; `make lint` runs gofmt,
-`go vet` and golangci-lint when it is installed.
+Both devices must pair and grant access before the folder can sync. To join an
+existing device, run these steps on the new device, then add and grant the new
+device on the existing one. The existing device can use its existing folder.
+Put a file in either `syngo-docs` folder and check that it appears on the other.
 
-`make e2e-docker` runs the container suite: every device gets a container, an
-address and a filesystem of its own, so a test can kill a daemon, cut a link
-between two devices or slow one down, and then check that the folders agree
-again. It needs docker, builds the image itself, and is opt-in; `make test`
-compiles it and skips it. `make e2e-docker-soak MINUTES=30` keeps a cluster
-changing and breaking for half an hour, with rewrites, deletes, renames,
-same-path collisions, killed daemons, partitions and shaped links, and `make
-e2e-docker-clean` removes what a run that was interrupted left behind.
-
-## Quick start
-
-Two devices on one machine, each with its own data directory and folder.
-
-```console
-$ mkdir -p /tmp/a/data /tmp/a/docs /tmp/b/data /tmp/b/docs
-$ bin/syngo --data-dir /tmp/a/data init --name laptop --listen 127.0.0.1:22001
-$ bin/syngo --data-dir /tmp/b/data init --name nas    --listen 127.0.0.1:22002
-$ bin/syngo --data-dir /tmp/a/data folder add /tmp/a/docs --id docs
-$ bin/syngo --data-dir /tmp/b/data folder add /tmp/b/docs --id docs
-
-$ bin/syngo --data-dir /tmp/a/data daemon run &
-$ bin/syngo --data-dir /tmp/b/data daemon run &
-$ sleep 2      # both daemons return before their listener is up
-
-$ bin/syngo --data-dir /tmp/a/data peer add 127.0.0.1:22002 --yes
-$ bin/syngo --data-dir /tmp/b/data peer add 127.0.0.1:22001 --yes
-
-$ A=$(bin/syngo --data-dir /tmp/a/data status --json | jq -r .device.id)
-$ B=$(bin/syngo --data-dir /tmp/b/data status --json | jq -r .device.id)
-$ bin/syngo --data-dir /tmp/a/data folder grant docs "$B"
-$ bin/syngo --data-dir /tmp/b/data folder grant docs "$A"
-
-$ echo "hello from A" > /tmp/a/docs/greeting.txt
-$ sleep 10; cat /tmp/b/docs/greeting.txt
-hello from A
-```
-
-Pairing a device and sharing a folder with it are two decisions: a folder is
-served to no device until `folder grant` names one, so without the two grants
-above the devices connect and move nothing. `peer add` tells the running daemon
-to reload, so both sides connect at once; the same happens after `folder add`,
-`folder set`, `folder remove` and `folder grant`. Nothing has to be restarted.
-
-That is the whole thing on loopback. The install for a real device, the same
-walkthrough with the output each step prints, the Tailscale path and the exit
-codes are in [docs/INSTALL.md](docs/INSTALL.md#run-and-verify).
+See [docs/INSTALL.md](docs/INSTALL.md) for service setup and other install
+methods. With Go and Make, `make build` writes `bin/syngo`.
 
 ## What it does
 
